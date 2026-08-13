@@ -4,7 +4,7 @@ import Fastify from 'fastify';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateInitData } from './auth.js';
-import { activateChatBoard, addChecklistItem, addTaskAttachment, addTaskComment, boardForUser, boardMembers, boardsForUser, claimAssignmentNotification, connectChatBoard, createInvite, createProject, createTask, deleteChecklistItem, finishAssignmentNotification, freezeChatBoard, incompleteChecklistCount, login, migrateChatBoard, pendingNotificationForTask, projectsForBoard, redeemBoardLink, renameBoard, revokeInvites, sessionUser, sessionUserId, setTaskArchived, taskCollaboration, tasksForAssignee, tasksForBoard, updateChecklistItem, updateProject, updateTask, type AttachmentInput, type Database, type TaskInput } from './db.js';
+import { activateChatBoard, addChecklistItem, addTaskAttachment, addTaskComment, boardForUser, boardMembers, boardsForUser, claimAssignmentNotification, connectChatBoard, createInvite, createProject, createTask, deleteChecklistItem, finishAssignmentNotification, freezeChatBoard, incompleteChecklistCount, login, migrateChatBoard, pendingNotificationForTask, projectsForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskCollaboration, taskFilterState, tasksForAssignee, tasksForBoard, updateChecklistItem, updateProject, updateTask, type AttachmentInput, type Database, type TaskInput } from './db.js';
 import type { Config } from './config.js';
 import { isChatAdmin, telegramCall } from './telegram.js';
 
@@ -29,7 +29,7 @@ export function buildApp(config: Config, db: Database) {
       const telegram = validateInitData(request.body?.initData ?? '', config.botToken, config.initDataMaxAgeSeconds);
       const session = await login(db, telegram, config.sessionMaxAgeSeconds, config.sessionSecret);
       reply.setCookie('session', session.token, { path: '/', httpOnly: true, secure: config.production, sameSite: 'strict', maxAge: config.sessionMaxAgeSeconds });
-      return { ok: true };
+      return { ok: true, userId: session.userId };
     } catch (error) {
       request.log.warn({ reason: error instanceof Error ? error.message : 'unknown' }, 'Telegram authentication rejected');
       return reply.code(401).send({ error: 'invalid Telegram launch' });
@@ -102,6 +102,17 @@ export function buildApp(config: Config, db: Database) {
   app.get<{Params: {id: string}}>('/api/boards/:id/members', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     return { members: await boardMembers(db, id, request.params.id) };
+  });
+  app.get<{Params: {id: string}}>('/api/boards/:id/task-filters', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    return { filters: await taskFilterState(db, id, request.params.id) };
+  });
+  app.put<{Params: {id: string}, Body: {filters?: unknown}}>('/api/boards/:id/task-filters', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const filters = request.body?.filters;
+    if (!filters || typeof filters !== 'object' || Array.isArray(filters) || JSON.stringify(filters).length > 2000) return reply.code(400).send({ error: 'invalid filters' });
+    const saved = await saveTaskFilterState(db, id, request.params.id, filters);
+    return saved ? { filters: saved } : reply.code(404).send({ error: 'board not found' });
   });
   app.get<{Params: {id: string}, Querystring: {archived?: string}}>('/api/boards/:id/projects', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
