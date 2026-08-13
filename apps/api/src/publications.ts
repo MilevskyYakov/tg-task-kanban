@@ -142,8 +142,9 @@ export async function deliverPendingPublications(db: Database, botToken: string,
   return true;
 }
 
-export function startPublicationScheduler(db: Database, botToken: string, botUsername: string) {
+export function startPublicationScheduler(db: Database, botToken: string, botUsername: string, onError: (error: unknown) => void) {
   const tick = async () => { await queueDuePublications(db); while (await deliverPendingPublications(db, botToken, botUsername)) {} };
-  const timer = setInterval(() => void tick(), 30_000); timer.unref(); void tick();
+  const run = () => void tick().catch(onError);
+  const timer = setInterval(run, 30_000); timer.unref(); run();
   return () => clearInterval(timer);
 }

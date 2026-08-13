@@ -4,7 +4,6 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: postgres://task:${POSTGRES_PASSWORD}@db:5432/task
       HOST: 0.0.0.0
     depends_on:
       db:
