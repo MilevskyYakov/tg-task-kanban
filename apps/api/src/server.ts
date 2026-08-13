@@ -2,8 +2,10 @@ import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 import { createDatabase, runRecurrenceScheduler } from './db.js';
 import { startPublicationScheduler } from './publications.js';
+import { ProxyAgent, setGlobalDispatcher } from 'undici';
 
 const config = loadConfig();
+if (config.telegramApiProxy) setGlobalDispatcher(new ProxyAgent(config.telegramApiProxy));
 const db = createDatabase(config.databaseUrl);
 const app = buildApp(config, db);
 const tick = async () => { try { await runRecurrenceScheduler(db); } catch (error) { app.log.error({ error }, 'recurrence scheduler failed'); } };

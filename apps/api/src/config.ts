@@ -10,6 +10,7 @@ export type Config = {
   webhookSecret: string;
   publicUrl: string;
   botUsername: string;
+  telegramApiProxy?: string;
 };
 
 function positiveInteger(name: string, fallback: number): number {
@@ -38,6 +39,7 @@ export function loadConfig(): Config {
     production: process.env.NODE_ENV === 'production',
     webhookSecret,
     publicUrl: (process.env.PUBLIC_URL ?? 'https://task.kairos-ai.ru').replace(/\/$/, ''),
-    botUsername: (process.env.BOT_USERNAME ?? 'kairostask_bot').replace(/^@/, '')
+    botUsername: (process.env.BOT_USERNAME ?? 'kairostask_bot').replace(/^@/, ''),
+    telegramApiProxy: process.env.TELEGRAM_API_PROXY || undefined
   };
 }
