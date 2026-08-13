@@ -58,6 +58,13 @@ export async function boardForUser(db: Database, userId: string, boardId: string
   return result.rows[0] ?? null;
 }
 
+export async function boardMembers(db: Database, userId: string, boardId: string) {
+  const result = await db.query(`SELECT u.id, u.first_name, u.username FROM memberships viewer
+    JOIN memberships member ON member.board_id = viewer.board_id JOIN users u ON u.id = member.user_id
+    WHERE viewer.board_id = $1 AND viewer.user_id = $2 ORDER BY u.first_name`, [boardId, userId]);
+  return result.rows;
+}
+
 export async function renameBoard(db: Database, userId: string, boardId: string, name: string) {
   const result = await db.query(`UPDATE boards b SET name = $3 FROM memberships m
     WHERE b.id = $1 AND m.board_id = b.id AND m.user_id = $2 AND m.role IN ('owner', 'admin') RETURNING b.id, b.type, b.name`,
@@ -123,4 +130,119 @@ export async function revokeInvites(db: Database, userId: string, boardId: strin
     WHERE l.board_id = $1 AND l.kind = 'invite' AND l.revoked_at IS NULL AND b.id = l.board_id
       AND m.board_id = b.id AND m.user_id = $2 RETURNING l.token_hash`, [boardId, userId]);
   return result.rowCount ?? 0;
+}
+
+export type TaskStatus = 'todo' | 'in_progress' | 'waiting' | 'done';
+export type TaskPriority = 'normal' | 'urgent';
+export type TaskInput = {
+  title?: string;
+  description?: string | null;
+  projectId?: string | null;
+  assigneeUserId?: string | null;
+  status?: TaskStatus;
+  priority?: TaskPriority;
+  deadline?: string | null;
+  waitReason?: string | null;
+  waitCheckAt?: string | null;
+};
+
+export async function projectsForBoard(db: Database, userId: string, boardId: string, archived = false) {
+  const result = await db.query(`SELECT p.id, p.name, p.archived_at FROM projects p
+    JOIN memberships m ON m.board_id = p.board_id
+    WHERE p.board_id = $1 AND m.user_id = $2 AND ($3 OR p.archived_at IS NULL)
+    ORDER BY p.name`, [boardId, userId, archived]);
+  return result.rows;
+}
+
+export async function createProject(db: Database, userId: string, boardId: string, name: string) {
+  const result = await db.query(`INSERT INTO projects (id, board_id, name, created_by)
+    SELECT $3, b.id, $4, $2 FROM boards b JOIN memberships m ON m.board_id = b.id
+    WHERE b.id = $1 AND b.status = 'active' AND m.user_id = $2
+    RETURNING id, name, archived_at`, [boardId, userId, randomUUID(), name]);
+  return result.rows[0] ?? null;
+}
+
+export async function updateProject(db: Database, userId: string, boardId: string, projectId: string, input: {name?: string; archived?: boolean}) {
+  const result = await db.query(`UPDATE projects p SET name = COALESCE($4, p.name),
+      archived_at = CASE WHEN $5::boolean IS NULL THEN p.archived_at WHEN $5 THEN now() ELSE NULL END
+    FROM boards b, memberships m WHERE p.id = $1 AND p.board_id = $2 AND b.id = p.board_id
+      AND b.status = 'active' AND m.board_id = b.id AND m.user_id = $3
+    RETURNING p.id, p.name, p.archived_at`, [projectId, boardId, userId, input.name ?? null, input.archived ?? null]);
+  return result.rows[0] ?? null;
+}
+
+const taskColumns = `t.id, t.board_id, t.project_id, t.creator_user_id, t.assignee_user_id,
+  t.title, t.description, t.status, t.priority, t.deadline, t.wait_reason, t.wait_check_at,
+  t.archived_at, t.created_at, t.updated_at,
+  (t.status <> 'done' AND t.deadline < now()) AS overdue,
+  (t.status = 'waiting' AND t.wait_check_at <= now()) AS wait_check_due`;
+
+export async function tasksForBoard(db: Database, userId: string, boardId: string, archived = false) {
+  const result = await db.query(`SELECT ${taskColumns} FROM tasks t
+    JOIN memberships m ON m.board_id = t.board_id
+    WHERE t.board_id = $1 AND m.user_id = $2 AND ($3 OR t.archived_at IS NULL)
+    ORDER BY t.priority = 'urgent' DESC, t.created_at DESC`, [boardId, userId, archived]);
+  return result.rows;
+}
+
+export async function tasksForAssignee(db: Database, userId: string) {
+  const result = await db.query(`SELECT ${taskColumns}, b.name AS board_name FROM tasks t
+    JOIN boards b ON b.id = t.board_id JOIN memberships m ON m.board_id = b.id AND m.user_id = $1
+    WHERE t.assignee_user_id = $1 AND t.archived_at IS NULL AND b.status = 'active'
+    ORDER BY t.priority = 'urgent' DESC, t.deadline NULLS LAST, t.created_at DESC`, [userId]);
+  return result.rows;
+}
+
+export async function createTask(db: Database, userId: string, boardId: string, input: TaskInput) {
+  if (input.status && input.status !== 'todo') return null;
+  const result = await db.query(`INSERT INTO tasks (id, board_id, project_id, creator_user_id, assignee_user_id,
+      title, description, status, priority, deadline, wait_reason, wait_check_at)
+    SELECT $3, b.id, $4, $2, $5, $6, $7, $8, $9, $10, $11, $12
+    FROM boards b JOIN memberships creator ON creator.board_id = b.id
+    LEFT JOIN projects p ON p.id = $4 AND p.board_id = b.id AND p.archived_at IS NULL
+    LEFT JOIN memberships assignee ON assignee.board_id = b.id AND assignee.user_id = $5
+    WHERE b.id = $1 AND b.status = 'active' AND creator.user_id = $2
+      AND ($4::uuid IS NULL OR p.id IS NOT NULL) AND ($5::bigint IS NULL OR assignee.user_id IS NOT NULL)
+    RETURNING *`, [boardId, userId, randomUUID(), input.projectId ?? null, input.assigneeUserId ?? null,
+      input.title!, input.description ?? null, input.status ?? 'todo', input.priority ?? 'normal',
+      input.deadline ?? null, input.waitReason ?? null, input.waitCheckAt ?? null]);
+  return result.rows[0] ?? null;
+}
+
+export async function updateTask(db: Database, userId: string, boardId: string, taskId: string, input: TaskInput) {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const current = await client.query<any>(`SELECT t.* FROM tasks t JOIN boards b ON b.id = t.board_id
+      WHERE t.id = $1 AND t.board_id = $2 AND t.archived_at IS NULL AND b.status = 'active' FOR UPDATE`, [taskId, boardId]);
+    const task = current.rows[0];
+    if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) { await client.query('ROLLBACK'); return null; }
+    const status = input.status ?? task.status;
+    if (status === 'done' && task.status !== 'done' && task.assignee_user_id !== userId) { await client.query('ROLLBACK'); return null; }
+    if (task.status === 'done' && status !== 'done' && task.creator_user_id !== userId) { await client.query('ROLLBACK'); return null; }
+    if (status === 'waiting' && !(input.waitReason === undefined ? task.wait_reason : input.waitReason)?.trim()) { await client.query('ROLLBACK'); return null; }
+    const projectId = input.projectId === undefined ? task.project_id : input.projectId;
+    const assigneeId = input.assigneeUserId === undefined ? task.assignee_user_id : input.assigneeUserId;
+    if (projectId && !(await client.query('SELECT 1 FROM projects WHERE id = $1 AND board_id = $2 AND archived_at IS NULL', [projectId, boardId])).rowCount) { await client.query('ROLLBACK'); return null; }
+    if (assigneeId && !(await client.query('SELECT 1 FROM memberships WHERE board_id = $1 AND user_id = $2', [boardId, assigneeId])).rowCount) { await client.query('ROLLBACK'); return null; }
+    const waiting = status === 'waiting';
+    const result = await client.query(`UPDATE tasks SET project_id = $3, assignee_user_id = $4, title = $5,
+      description = $6, status = $7, priority = $8, deadline = $9, wait_reason = $10,
+      wait_check_at = $11, updated_at = now() WHERE id = $1 AND board_id = $2 RETURNING *`,
+      [taskId, boardId, projectId, assigneeId, input.title ?? task.title, input.description === undefined ? task.description : input.description,
+        status, input.priority ?? task.priority, input.deadline === undefined ? task.deadline : input.deadline,
+        waiting ? (input.waitReason === undefined ? task.wait_reason : input.waitReason) : null,
+        waiting ? (input.waitCheckAt === undefined ? task.wait_check_at : input.waitCheckAt) : null]);
+    await client.query('COMMIT');
+    return result.rows[0];
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}
+
+export async function setTaskArchived(db: Database, userId: string, boardId: string, taskId: string, archived: boolean) {
+  const result = await db.query(`UPDATE tasks t SET archived_at = CASE WHEN $4 THEN now() ELSE NULL END, updated_at = now() FROM boards b
+    WHERE t.id = $1 AND t.board_id = $2 AND b.id = t.board_id AND b.status = 'active'
+      AND (t.creator_user_id = $3 OR t.assignee_user_id = $3)
+      AND (($4 AND t.archived_at IS NULL) OR (NOT $4 AND t.archived_at IS NOT NULL)) RETURNING t.id`,
+    [taskId, boardId, userId, archived]);
+  return result.rowCount === 1;
 }
