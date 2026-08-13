@@ -4,7 +4,7 @@ import Fastify from 'fastify';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateInitData } from './auth.js';
-import { activateChatBoard, boardForUser, boardMembers, boardsForUser, connectChatBoard, createInvite, createProject, createRecurrence, createTask, freezeChatBoard, login, migrateChatBoard, projectsForBoard, recurrencesForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskFilterState, tasksForAssignee, tasksForBoard, updateProject, updateRecurrence, updateTask, updateTaskAndFuture, type Database, type RecurrenceInput, type TaskInput } from './db.js';
+import { activateChatBoard, addChecklistItem, addTaskAttachment, addTaskComment, boardForUser, boardMembers, boardsForUser, claimAssignmentNotification, connectChatBoard, createInvite, createProject, createRecurrence, createTask, deleteChecklistItem, finishAssignmentNotification, freezeChatBoard, incompleteChecklistCount, login, migrateChatBoard, pendingNotificationForTask, projectsForBoard, recurrencesForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskCollaboration, taskFilterState, tasksForAssignee, tasksForBoard, updateChecklistItem, updateProject, updateRecurrence, updateTask, updateTaskAndFuture, type AttachmentInput, type Database, type RecurrenceInput, type TaskInput } from './db.js';
 import type { Config } from './config.js';
 import { isChatAdmin, telegramCall } from './telegram.js';
 import { renderPublication, schedulesForBoard, updateSchedule, validTimezone as validPublicationTimezone, type PublicationKind, type PublicationSchedule } from './publications.js';
@@ -16,6 +16,7 @@ type ChatMemberUpdate = {
   new_chat_member: { status: string; user: { is_bot: boolean } };
 };
 type TelegramUpdate = { my_chat_member?: ChatMemberUpdate; message?: { chat: { id: number }; migrate_to_chat_id?: number; migrate_from_chat_id?: number } };
+type TaskPatchInput = TaskInput & { confirmIncompleteChecklist?: boolean };
 const present = (status: string) => status === 'member' || status === 'administrator';
 
 export function buildApp(config: Config, db: Database) {
@@ -180,7 +181,21 @@ export function buildApp(config: Config, db: Database) {
     if (body?.status === 'waiting' && !body.waitReason?.trim()) return 'wait reason is required';
     if ((body?.waitReason || body?.waitCheckAt) && body.status !== 'waiting') return 'wait fields require waiting status';
     for (const value of [body?.deadline, body?.waitCheckAt]) if (value && Number.isNaN(Date.parse(value))) return 'invalid date';
+    if (body?.notifyAssignee !== undefined && typeof body.notifyAssignee !== 'boolean') return 'notifyAssignee must be boolean';
     return { ...body!, ...(title ? { title } : {}) };
+  };
+  const sendAssignmentNotification = async (taskId: string) => {
+    const notificationId = await pendingNotificationForTask(db, taskId);
+    if (!notificationId) return null;
+    const notification = await claimAssignmentNotification(db, notificationId);
+    if (!notification) return null;
+    try {
+      await telegramCall(config.botToken, 'sendMessage', { chat_id: notification.telegram_id, text: `Вам назначена задача: ${notification.title}` });
+      await finishAssignmentNotification(db, notificationId); return null;
+    } catch (error) {
+      await finishAssignmentNotification(db, notificationId, error instanceof Error ? error.message : 'Telegram delivery failed');
+      return 'Задача сохранена, но уведомление не доставлено';
+    }
   };
   const recurrenceInput = (body: RecurrenceInput | undefined, partial = false): RecurrenceInput | string => {
     const task = taskInput(body, partial); if (typeof task === 'string') return task;
@@ -198,15 +213,21 @@ export function buildApp(config: Config, db: Database) {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     const input = taskInput(request.body); if (typeof input === 'string') return reply.code(400).send({ error: input });
     const task = await createTask(db, id, request.params.id, input);
-    return task ?? reply.code(404).send({ error: 'board, project or assignee not found' });
+    if (!task) return reply.code(404).send({ error: 'board, project or assignee not found' });
+    return { ...task, notificationWarning: input.notifyAssignee ? await sendAssignmentNotification(task.id) : null };
   });
-  app.patch<{Params: {id: string; taskId: string}, Querystring: {scope?: string}, Body: TaskInput}>('/api/boards/:id/tasks/:taskId', async (request, reply) => {
+  app.patch<{Params: {id: string; taskId: string}, Querystring: {scope?: string}, Body: TaskPatchInput}>('/api/boards/:id/tasks/:taskId', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     const input = taskInput(request.body, true); if (typeof input === 'string') return reply.code(400).send({ error: input });
+    if (input.status === 'done' && !request.body.confirmIncompleteChecklist) {
+      const incomplete = await incompleteChecklistCount(db, id, request.params.id, request.params.taskId);
+      if (incomplete) return reply.code(409).send({ error: 'incomplete checklist confirmation required', incompleteChecklist: incomplete });
+    }
     const task = request.query.scope === 'future'
       ? await updateTaskAndFuture(db, id, request.params.id, request.params.taskId, input)
       : await updateTask(db, id, request.params.id, request.params.taskId, input);
-    return task ?? reply.code(403).send({ error: 'task action is not allowed' });
+    if (!task) return reply.code(403).send({ error: 'task action is not allowed' });
+    return { ...task, notificationWarning: input.notifyAssignee ? await sendAssignmentNotification(task.id) : null };
   });
   app.delete<{Params: {id: string; taskId: string}}>('/api/boards/:id/tasks/:taskId', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
@@ -217,6 +238,46 @@ export function buildApp(config: Config, db: Database) {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     return await setTaskArchived(db, id, request.params.id, request.params.taskId, false)
       ? { archived: false } : reply.code(403).send({ error: 'task action is not allowed' });
+  });
+
+  app.get<{Params: {id: string; taskId: string}}>('/api/boards/:id/tasks/:taskId/collaboration', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    return await taskCollaboration(db, id, request.params.id, request.params.taskId) ?? reply.code(404).send({ error: 'task not found' });
+  });
+  app.post<{Params: {id: string; taskId: string}, Body: {body?: string}}>('/api/boards/:id/tasks/:taskId/comments', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const body = request.body?.body?.trim();
+    if (!body || body.length > 4000) return reply.code(400).send({ error: 'comment must contain 1-4000 characters' });
+    return await addTaskComment(db, id, request.params.id, request.params.taskId, body) ?? reply.code(404).send({ error: 'task not found' });
+  });
+  app.post<{Params: {id: string; taskId: string}, Body: {text?: string}}>('/api/boards/:id/tasks/:taskId/checklist', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const text = request.body?.text?.trim();
+    if (!text || text.length > 500) return reply.code(400).send({ error: 'checklist text must contain 1-500 characters' });
+    return await addChecklistItem(db, id, request.params.id, request.params.taskId, text) ?? reply.code(403).send({ error: 'checklist action is not allowed' });
+  });
+  app.patch<{Params: {id: string; taskId: string; itemId: string}, Body: {text?: string; completed?: boolean; position?: number}}>('/api/boards/:id/tasks/:taskId/checklist/:itemId', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const text = request.body?.text?.trim();
+    if (request.body?.text !== undefined && (!text || text.length > 500)) return reply.code(400).send({ error: 'checklist text must contain 1-500 characters' });
+    if (request.body?.completed !== undefined && typeof request.body.completed !== 'boolean') return reply.code(400).send({ error: 'completed must be boolean' });
+    if (request.body?.position !== undefined && (!Number.isInteger(request.body.position) || request.body.position < 0)) return reply.code(400).send({ error: 'position must be a non-negative integer' });
+    return await updateChecklistItem(db, id, request.params.id, request.params.taskId, request.params.itemId, { ...request.body, text }) ?? reply.code(403).send({ error: 'checklist action is not allowed' });
+  });
+  app.delete<{Params: {id: string; taskId: string; itemId: string}}>('/api/boards/:id/tasks/:taskId/checklist/:itemId', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    return await deleteChecklistItem(db, id, request.params.id, request.params.taskId, request.params.itemId) ? { deleted: true } : reply.code(403).send({ error: 'checklist action is not allowed' });
+  });
+  app.post<{Params: {id: string; taskId: string}, Body: AttachmentInput}>('/api/boards/:id/tasks/:taskId/attachments', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const input = request.body;
+    if (input?.kind === 'url') {
+      try { const url = new URL(input.url ?? ''); if (!['http:', 'https:'].includes(url.protocol)) throw new Error(); input.url = url.toString(); }
+      catch { return reply.code(400).send({ error: 'valid HTTP(S) URL is required' }); }
+    } else if (input?.kind === 'telegram') {
+      if (!input.telegramFileId || !input.telegramFileUniqueId || input.telegramFileId.length > 1024 || input.telegramFileUniqueId.length > 256) return reply.code(400).send({ error: 'Telegram file metadata is required' });
+    } else return reply.code(400).send({ error: 'attachment kind must be url or telegram' });
+    return await addTaskAttachment(db, id, request.params.id, request.params.taskId, input) ?? reply.code(404).send({ error: 'task not found' });
   });
 
   app.get<{Params: {id: string}}>('/api/boards/:id/recurrences', async (request, reply) => {

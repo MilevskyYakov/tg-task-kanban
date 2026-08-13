@@ -9,12 +9,14 @@ type Project = { id: string; name: string; archived_at?: string };
 type Member = { id: string; first_name: string; username?: string };
 type Schedule = { kind: 'daily' | 'weekly'; enabled: boolean; weekdays: number[]; local_time: string; timezone: string; included_statuses: TaskStatus[] };
 type Recurrence = { id: string; title: string; frequency: 'daily' | 'weekdays' | 'weekly' | 'monthly'; local_time: string; timezone: string; next_occurrence_at?: string; paused_at?: string; archived_at?: string };
+type Collaboration = { comments: {id: string; body: string; author_name: string; created_at: string}[]; checklist: {id: string; text: string; position: number; completed_at?: string}[]; attachments: {id: string; kind: 'url' | 'telegram'; url?: string; file_name?: string; created_at: string}[]; timeline: {id: string; action: string; actor_name: string; created_at: string}[] };
 type View = 'boards' | 'tasks' | string;
 type TaskView = 'list' | 'kanban';
 
+class ApiError extends Error { constructor(message: string, readonly status: number) { super(message); } }
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, options);
-  if (!response.ok) throw new Error((await response.json() as {error?: string}).error ?? 'request failed');
+  if (!response.ok) throw new ApiError((await response.json() as {error?: string}).error ?? 'request failed', response.status);
   return response.json() as Promise<T>;
 }
 const json = (method: string, body: unknown): RequestInit => ({ method, headers: {'content-type': 'application/json'}, body: JSON.stringify(body) });
@@ -35,6 +37,9 @@ function App() {
   const [description, setDescription] = useState('');
   const [deadline, setDeadline] = useState('');
   const [priority, setPriority] = useState<Task['priority']>('normal');
+  const [notifyAssignee, setNotifyAssignee] = useState(false);
+  const [openTask, setOpenTask] = useState<Task>();
+  const [collaboration, setCollaboration] = useState<Collaboration>();
   const [showArchive, setShowArchive] = useState(false);
   const [userId, setUserId] = useState('');
   const [taskView, setTaskView] = useState<TaskView>('list');
@@ -97,11 +102,14 @@ function App() {
   };
   const create = async () => {
     if (!board || !title.trim()) return;
-    await action(() => api(`/api/boards/${board.id}/tasks`, json('POST', {
-      title: title.trim(), description: description.trim() || null, projectId: project || null,
-      assigneeUserId: assignee || null, deadline: deadline ? new Date(deadline).toISOString() : null, priority
-    })), 'Задача создана');
-    setTitle(''); setDescription(''); setProject(''); setAssignee(''); setDeadline(''); setPriority('normal');
+    try {
+      const task = await api<Task & {notificationWarning?: string}>(`/api/boards/${board.id}/tasks`, json('POST', {
+        title: title.trim(), description: description.trim() || null, projectId: project || null,
+        assigneeUserId: assignee || null, deadline: deadline ? new Date(deadline).toISOString() : null, priority, notifyAssignee
+      }));
+      await loadBoard(board.id); setMessage(task.notificationWarning ?? 'Задача создана');
+      setTitle(''); setDescription(''); setProject(''); setAssignee(''); setDeadline(''); setPriority('normal'); setNotifyAssignee(false);
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Ошибка'); }
   };
   const move = async (task: Task, status: TaskStatus) => {
     if (task.status === status) return;
@@ -112,8 +120,14 @@ function App() {
     if (check && !waitCheckAt) { setMessage('Дата проверки: YYYY-MM-DD'); return; }
     const previous = tasks;
     try {
-      await optimisticUpdate(previous, previous.map((item) => item.id === task.id ? { ...item, status } : item), setTasks,
-        () => api(`/api/boards/${task.board_id}/tasks/${task.id}`, json('PATCH', { status, waitReason, waitCheckAt })));
+      const update = async (confirmIncompleteChecklist = false) => { await api(`/api/boards/${task.board_id}/tasks/${task.id}`, json('PATCH', { status, waitReason, waitCheckAt, confirmIncompleteChecklist })); };
+      await optimisticUpdate(previous, previous.map((item) => item.id === task.id ? { ...item, status } : item), setTasks, async () => {
+        try { await update(); }
+        catch (error) {
+          if (!(error instanceof ApiError) || error.status !== 409 || !window.confirm('В чек-листе остались незавершённые пункты. Всё равно закрыть задачу?')) throw error;
+          await update(true);
+        }
+      });
       if (board) await loadBoard(board.id);
       setMessage(statusName[status]);
     } catch (error) {
@@ -128,7 +142,17 @@ function App() {
     const nextProject = window.prompt(`ID проекта (пусто — без проекта)\n${projects.map((item) => `${item.id}: ${item.name}`).join('\n')}`, task.project_id ?? '')?.trim(); if (nextProject === undefined) return;
     const nextAssignee = window.prompt(`ID исполнителя (пусто — без ответственного)\n${members.map((item) => `${item.id}: ${item.first_name}`).join('\n')}`, task.assignee_user_id ?? '')?.trim(); if (nextAssignee === undefined) return;
     const scope = task.recurrence_template_id && window.confirm('Изменить этот и все будущие повторы?') ? '?scope=future' : '';
-    await action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}${scope}`, json('PATCH', { title: nextTitle, description: nextDescription || null, deadline: nextDeadline ? new Date(`${nextDeadline}T00:00:00`).toISOString() : null, priority: nextPriority, projectId: nextProject || null, assigneeUserId: nextAssignee || null })), 'Задача обновлена');
+    const notifyAssignee = Boolean(nextAssignee && nextAssignee !== task.assignee_user_id && window.confirm('Уведомить нового исполнителя?'));
+    await action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}${scope}`, json('PATCH', { title: nextTitle, description: nextDescription || null, deadline: nextDeadline ? new Date(`${nextDeadline}T00:00:00`).toISOString() : null, priority: nextPriority, projectId: nextProject || null, assigneeUserId: nextAssignee || null, notifyAssignee })), 'Задача обновлена');
+  };
+  const openCollaboration = async (task: Task) => {
+    try { setOpenTask(task); setCollaboration(await api(`/api/boards/${task.board_id}/tasks/${task.id}/collaboration`)); }
+    catch (error) { setMessage(error instanceof Error ? error.message : 'Ошибка'); }
+  };
+  const collaborationAction = async (path: string, options: RequestInit) => {
+    if (!openTask) return;
+    await action(() => api(path, options), 'Сохранено', false);
+    setCollaboration(await api(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/collaboration`));
   };
   const addProject = async () => {
     if (!board) return;
@@ -189,7 +213,7 @@ function App() {
       <div className="meta">{task.project_name && <small>{task.project_name}</small>}<small>{task.assignee_name ?? 'Без ответственного'}</small>{task.deadline && <small>До {new Date(task.deadline).toLocaleDateString('ru-RU')}</small>}</div>
       {task.overdue && <small className="flag">Дедлайн прошёл</small>}{task.wait_check_due && <small className="flag">Пора проверить ожидание</small>}{task.wait_reason && <small>Ждём: {task.wait_reason}</small>}
     </div>
-    {board && <div className="actions">{task.archived_at ? <button onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}/reopen`, {method: 'POST'}), 'Задача восстановлена')}>Восстановить</button> : <>
+    {board && <div className="actions"><button onClick={() => openCollaboration(task)}>Обсуждение</button>{task.archived_at ? <button onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}/reopen`, {method: 'POST'}), 'Задача восстановлена')}>Восстановить</button> : <>
       <label className="status-control">Статус<select aria-label={`Статус задачи ${task.title}`} value={task.status} onChange={(event) => void move(task, event.target.value as TaskStatus)}>{statuses.map((status) => <option key={status} value={status}>{statusName[status]}</option>)}</select></label>
       <button onClick={() => editTask(task)}>Изменить</button><button onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}`, {method: 'DELETE'}), 'Задача архивирована')}>В архив</button>
     </>}</div>}
@@ -212,6 +236,8 @@ function App() {
       <label className="checkbox"><input type="checkbox" checked={filters.unassigned} onChange={(event) => setFilter('unassigned', event.target.checked)}/> Без ответственного</label>
       <button className="secondary" onClick={() => setFilters(defaultFilters)}>Сбросить</button>
     </div></details></>;
+
+  if (openTask && collaboration) return <main><button className="back" onClick={() => { setOpenTask(undefined); setCollaboration(undefined); }}>← К доске</button><header><p className="eyebrow">КАРТОЧКА ЗАДАЧИ</p><h1>{openTask.title}</h1></header><section className="collaboration"><h2>Чек-лист</h2>{collaboration.checklist.map((item) => <label key={item.id}><input type="checkbox" checked={Boolean(item.completed_at)} onChange={() => collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/checklist/${item.id}`, json('PATCH', {completed: !item.completed_at}))}/>{item.text}</label>)}<button onClick={() => { const text = window.prompt('Новый пункт')?.trim(); if (text) void collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/checklist`, json('POST', {text})); }}>Добавить пункт</button><h2>Комментарии</h2>{collaboration.comments.map((item) => <p key={item.id}><strong>{item.author_name}</strong> · {new Date(item.created_at).toLocaleString('ru-RU')}<br/>{item.body}</p>)}<button onClick={() => { const body = window.prompt('Комментарий')?.trim(); if (body) void collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/comments`, json('POST', {body})); }}>Комментировать</button><h2>Вложения</h2>{collaboration.attachments.map((item) => <p key={item.id}>{item.url ? <a href={item.url}>{item.url}</a> : item.file_name ?? 'Telegram-файл'}</p>)}<button onClick={() => { const url = window.prompt('Ссылка')?.trim(); if (url) void collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/attachments`, json('POST', {kind: 'url', url})); }}>Добавить ссылку</button><h2>История</h2>{collaboration.timeline.map((item) => <p key={item.id}>{item.actor_name} · {item.action} · {new Date(item.created_at).toLocaleString('ru-RU')}</p>)}</section></main>;
   const saveSchedule = async (schedule: Schedule, previewOnly = false) => {
     if (!board) return;
     const result = await api<Schedule | {messages: string[]}>(`/api/boards/${board.id}/publications/${schedule.kind}${previewOnly ? '/preview' : ''}`, json(previewOnly ? 'POST' : 'PUT', schedule));
@@ -223,7 +249,7 @@ function App() {
   if (state === 'error') return <main><section><h1>Не удалось войти</h1><p>{message || 'Закройте приложение и откройте его снова через бота.'}</p></section></main>;
   if (state === 'loading') return <main><section><p>Загрузка…</p></section></main>;
   if (view === 'tasks') return <main><button className="back" onClick={() => setView('boards')}>← Доски</button><header><p className="eyebrow">ВСЕ МОИ ЗАДАЧИ</p><h1>Моя работа</h1></header>{taskList}{!tasks.length && <p>Назначенных задач пока нет.</p>}</main>;
-  if (board) return <main><button className="back" onClick={() => setView('boards')}>← Доски</button><header><p className="eyebrow">{board.type === 'chat' ? 'ЧАТ-ДОСКА' : 'ЛИЧНАЯ ДОСКА'}</p><h1>{board.name}</h1></header>{publicationSettings}{board.status === 'frozen' ? <p className="notice">Бот больше не в чате. Данные сохранены, действия заморожены.</p> : board.status === 'draft' ? <section><p>Завершите настройку, чтобы команда начала работу.</p><button onClick={activate}>Активировать</button></section> : <><form className="create-task" onSubmit={(event) => { event.preventDefault(); void create(); }}><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Название задачи" maxLength={200} required/><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Описание"/><select value={project} onChange={(event) => setProject(event.target.value)}><option value="">Без проекта</option>{projects.filter((item) => !item.archived_at).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><select value={assignee} onChange={(event) => setAssignee(event.target.value)}><option value="">Без ответственного</option>{members.map((member) => <option key={member.id} value={member.id}>{member.first_name}</option>)}</select><input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)}/><select value={priority} onChange={(event) => setPriority(event.target.value as Task['priority'])}><option value="normal">Обычный</option><option value="urgent">Срочный</option></select><button>Создать</button></form><section className="recurrences"><div className="project-row"><strong>Повторы</strong><button className="secondary" onClick={addRecurrence}>Добавить повтор</button></div>{recurrences.map((item) => <article className="recurrence" key={item.id}><span>{item.frequency} · {item.local_time} · {item.timezone}</span><strong>{item.title}</strong>{item.next_occurrence_at && <small>Следующий: {new Date(item.next_occurrence_at).toLocaleString('ru-RU')}</small>}<div className="actions">{!item.archived_at && <button onClick={() => action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {paused: !item.paused_at})), item.paused_at ? 'Повтор продолжен' : 'Повтор на паузе')}>{item.paused_at ? 'Продолжить' : 'Пауза'}</button>}<button onClick={() => action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {archived: true})), 'Повтор архивирован')}>В архив</button></div></article>)}</section><div className="project-row"><div>{projects.map((item) => <span key={item.id}><button className="link" onClick={() => item.archived_at ? action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: false})), 'Проект восстановлен') : editProject(item)}>{item.name}{item.archived_at ? ' · восстановить' : ''}</button>{!item.archived_at && <button className="link" onClick={() => action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: true})), 'Проект архивирован')}>×</button>}</span>)}</div><button className="secondary" onClick={addProject}>+ Проект</button></div><button className="secondary" onClick={() => { const next = !showArchive; setShowArchive(next); void loadBoard(board.id, next); }}>{showArchive ? 'Только активные' : 'Показать архив'}</button>{taskControls}{taskView === 'kanban' && !showArchive ? kanban : taskList}{!filteredTasks.length && <p>{filters.search ? 'Ничего не найдено.' : 'Задач в этом срезе пока нет.'}</p>}</>}{board.type === 'chat' && board.status !== 'frozen' && <button className="secondary" onClick={() => action(async () => { const result = await api<{url: string}>(`/api/boards/${board.id}/invites`, {method: 'POST'}); await navigator.clipboard.writeText(result.url); }, 'Ссылка скопирована', false)}>Скопировать приглашение</button>}{message && <p role="status">{message}</p>}</main>;
+  if (board) return <main><button className="back" onClick={() => setView('boards')}>← Доски</button><header><p className="eyebrow">{board.type === 'chat' ? 'ЧАТ-ДОСКА' : 'ЛИЧНАЯ ДОСКА'}</p><h1>{board.name}</h1></header>{publicationSettings}{board.status === 'frozen' ? <p className="notice">Бот больше не в чате. Данные сохранены, действия заморожены.</p> : board.status === 'draft' ? <section><p>Завершите настройку, чтобы команда начала работу.</p><button onClick={activate}>Активировать</button></section> : <><form className="create-task" onSubmit={(event) => { event.preventDefault(); void create(); }}><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Название задачи" maxLength={200} required/><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Описание"/><select value={project} onChange={(event) => setProject(event.target.value)}><option value="">Без проекта</option>{projects.filter((item) => !item.archived_at).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><select value={assignee} onChange={(event) => setAssignee(event.target.value)}><option value="">Без ответственного</option>{members.map((member) => <option key={member.id} value={member.id}>{member.first_name}</option>)}</select><input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)}/><select value={priority} onChange={(event) => setPriority(event.target.value as Task['priority'])}><option value="normal">Обычный</option><option value="urgent">Срочный</option></select><label className="checkbox"><input type="checkbox" checked={notifyAssignee} disabled={!assignee} onChange={(event) => setNotifyAssignee(event.target.checked)}/> Уведомить исполнителя</label><button>Создать</button></form><section className="recurrences"><div className="project-row"><strong>Повторы</strong><button className="secondary" onClick={addRecurrence}>Добавить повтор</button></div>{recurrences.map((item) => <article className="recurrence" key={item.id}><span>{item.frequency} · {item.local_time} · {item.timezone}</span><strong>{item.title}</strong>{item.next_occurrence_at && <small>Следующий: {new Date(item.next_occurrence_at).toLocaleString('ru-RU')}</small>}<div className="actions">{!item.archived_at && <button onClick={() => action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {paused: !item.paused_at})), item.paused_at ? 'Повтор продолжен' : 'Повтор на паузе')}>{item.paused_at ? 'Продолжить' : 'Пауза'}</button>}<button onClick={() => action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {archived: true})), 'Повтор архивирован')}>В архив</button></div></article>)}</section><div className="project-row"><div>{projects.map((item) => <span key={item.id}><button className="link" onClick={() => item.archived_at ? action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: false})), 'Проект восстановлен') : editProject(item)}>{item.name}{item.archived_at ? ' · восстановить' : ''}</button>{!item.archived_at && <button className="link" onClick={() => action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: true})), 'Проект архивирован')}>×</button>}</span>)}</div><button className="secondary" onClick={addProject}>+ Проект</button></div><button className="secondary" onClick={() => { const next = !showArchive; setShowArchive(next); void loadBoard(board.id, next); }}>{showArchive ? 'Только активные' : 'Показать архив'}</button>{taskControls}{taskView === 'kanban' && !showArchive ? kanban : taskList}{!filteredTasks.length && <p>{filters.search ? 'Ничего не найдено.' : 'Задач в этом срезе пока нет.'}</p>}</>}{board.type === 'chat' && board.status !== 'frozen' && <button className="secondary" onClick={() => action(async () => { const result = await api<{url: string}>(`/api/boards/${board.id}/invites`, {method: 'POST'}); await navigator.clipboard.writeText(result.url); }, 'Ссылка скопирована', false)}>Скопировать приглашение</button>}{message && <p role="status">{message}</p>}</main>;
   return <main><header><p className="eyebrow">KAIROS TASKS</p><h1>Мои доски</h1><button className="tasks" onClick={() => { setMessage(''); setView('tasks'); }}>Все мои задачи</button></header><div className="board-list">{boards.map((item) => <button className="board" key={item.id} onClick={() => { setMessage(''); setView(item.id); }}><span>{item.type === 'chat' ? 'ЧАТ' : 'ЛИЧНАЯ'}{item.status === 'frozen' ? ' · ЗАМОРОЖЕНА' : ''}</span><strong>{item.name}</strong><small>{item.type === 'chat' ? 'Командное пространство' : 'Только ваши задачи'}</small></button>)}</div></main>;
 }
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
