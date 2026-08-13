@@ -144,6 +144,7 @@ export type TaskInput = {
   deadline?: string | null;
   waitReason?: string | null;
   waitCheckAt?: string | null;
+  notifyAssignee?: boolean;
 };
 
 export async function projectsForBoard(db: Database, userId: string, boardId: string, archived = false) {
@@ -195,7 +196,10 @@ export async function tasksForAssignee(db: Database, userId: string) {
 
 export async function createTask(db: Database, userId: string, boardId: string, input: TaskInput) {
   if (input.status && input.status !== 'todo') return null;
-  const result = await db.query(`INSERT INTO tasks (id, board_id, project_id, creator_user_id, assignee_user_id,
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(`INSERT INTO tasks (id, board_id, project_id, creator_user_id, assignee_user_id,
       title, description, status, priority, deadline, wait_reason, wait_check_at)
     SELECT $3, b.id, $4, $2, $5, $6, $7, $8, $9, $10, $11, $12
     FROM boards b JOIN memberships creator ON creator.board_id = b.id
@@ -206,7 +210,15 @@ export async function createTask(db: Database, userId: string, boardId: string, 
     RETURNING *`, [boardId, userId, randomUUID(), input.projectId ?? null, input.assigneeUserId ?? null,
       input.title!, input.description ?? null, input.status ?? 'todo', input.priority ?? 'normal',
       input.deadline ?? null, input.waitReason ?? null, input.waitCheckAt ?? null]);
-  return result.rows[0] ?? null;
+    const task = result.rows[0];
+    if (!task) { await client.query('ROLLBACK'); return null; }
+    await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, after_data)
+      VALUES ($1, $2, $3, $4, 'created', $5)`, [randomUUID(), boardId, task.id, userId, task]);
+    if (input.notifyAssignee && task.assignee_user_id) await client.query(`INSERT INTO task_assignment_notifications
+      (id, task_id, assignee_user_id) VALUES ($1, $2, $3)`, [randomUUID(), task.id, task.assignee_user_id]);
+    await client.query('COMMIT');
+    return task;
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 
 export async function updateTask(db: Database, userId: string, boardId: string, taskId: string, input: TaskInput) {
@@ -233,16 +245,151 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
         status, input.priority ?? task.priority, input.deadline === undefined ? task.deadline : input.deadline,
         waiting ? (input.waitReason === undefined ? task.wait_reason : input.waitReason) : null,
         waiting ? (input.waitCheckAt === undefined ? task.wait_check_at : input.waitCheckAt) : null]);
+    await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, before_data, after_data)
+      VALUES ($1, $2, $3, $4, 'updated', $5, $6)`, [randomUUID(), boardId, taskId, userId, task, result.rows[0]]);
+    if (input.notifyAssignee && input.assigneeUserId && input.assigneeUserId !== task.assignee_user_id) {
+      await client.query(`INSERT INTO task_assignment_notifications (id, task_id, assignee_user_id)
+        VALUES ($1, $2, $3)`, [randomUUID(), taskId, input.assigneeUserId]);
+    }
     await client.query('COMMIT');
     return result.rows[0];
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 
 export async function setTaskArchived(db: Database, userId: string, boardId: string, taskId: string, archived: boolean) {
-  const result = await db.query(`UPDATE tasks t SET archived_at = CASE WHEN $4 THEN now() ELSE NULL END, updated_at = now() FROM boards b
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const current = await client.query('SELECT * FROM tasks WHERE id = $1 AND board_id = $2 FOR UPDATE', [taskId, boardId]);
+    const result = await client.query(`UPDATE tasks t SET archived_at = CASE WHEN $4 THEN now() ELSE NULL END, updated_at = now() FROM boards b
     WHERE t.id = $1 AND t.board_id = $2 AND b.id = t.board_id AND b.status = 'active'
       AND (t.creator_user_id = $3 OR t.assignee_user_id = $3)
       AND (($4 AND t.archived_at IS NULL) OR (NOT $4 AND t.archived_at IS NOT NULL)) RETURNING t.id`,
     [taskId, boardId, userId, archived]);
-  return result.rowCount === 1;
+    if (result.rowCount) await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, before_data)
+      VALUES ($1, $2, $3, $4, $5, $6)`, [randomUUID(), boardId, taskId, userId, archived ? 'archived' : 'reopened', current.rows[0]]);
+    await client.query('COMMIT');
+    return result.rowCount === 1;
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}
+
+async function canReadTask(db: Database, userId: string, boardId: string, taskId: string, activeOnly = false) {
+  const result = await db.query(`SELECT t.creator_user_id, t.assignee_user_id FROM tasks t
+    JOIN boards b ON b.id = t.board_id JOIN memberships m ON m.board_id = t.board_id
+    WHERE t.id = $1 AND t.board_id = $2 AND m.user_id = $3 AND ($4::boolean = false OR (t.archived_at IS NULL AND b.status = 'active'))`,
+    [taskId, boardId, userId, activeOnly]);
+  return result.rows[0] ?? null;
+}
+
+export async function taskCollaboration(db: Database, userId: string, boardId: string, taskId: string) {
+  if (!await canReadTask(db, userId, boardId, taskId)) return null;
+  const [comments, checklist, attachments, timeline] = await Promise.all([
+    db.query(`SELECT c.id, c.body, c.created_at, u.id AS author_user_id, u.first_name AS author_name
+      FROM task_comments c JOIN users u ON u.id = c.author_user_id WHERE c.task_id = $1 AND c.board_id = $2 ORDER BY c.created_at, c.id`, [taskId, boardId]),
+    db.query(`SELECT id, text, position, completed_at, completed_by FROM task_checklist_items
+      WHERE task_id = $1 AND board_id = $2 ORDER BY position`, [taskId, boardId]),
+    db.query(`SELECT id, kind, url, telegram_file_id, file_name, mime_type, file_size, created_at
+      FROM task_attachments WHERE task_id = $1 AND board_id = $2 ORDER BY created_at, id`, [taskId, boardId]),
+    db.query(`SELECT e.id, e.action, e.before_data, e.after_data, e.created_at, u.first_name AS actor_name
+      FROM task_audit_events e JOIN users u ON u.id = e.actor_user_id WHERE e.task_id = $1 AND e.board_id = $2 ORDER BY e.created_at, e.id`, [taskId, boardId])
+  ]);
+  return { comments: comments.rows, checklist: checklist.rows, attachments: attachments.rows, timeline: timeline.rows };
+}
+
+export async function addTaskComment(db: Database, userId: string, boardId: string, taskId: string, body: string) {
+  if (!await canReadTask(db, userId, boardId, taskId, true)) return null;
+  const result = await db.query(`INSERT INTO task_comments (id, board_id, task_id, author_user_id, body)
+    VALUES ($1, $2, $3, $4, $5) RETURNING id, body, created_at`, [randomUUID(), boardId, taskId, userId, body]);
+  return result.rows[0];
+}
+
+export async function addChecklistItem(db: Database, userId: string, boardId: string, taskId: string, text: string) {
+  const task = await canReadTask(db, userId, boardId, taskId, true);
+  if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) return null;
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const position = (await client.query<{position: number}>(`SELECT COALESCE(MAX(position), -1) + 1 AS position
+      FROM task_checklist_items WHERE task_id = $1`, [taskId])).rows[0].position;
+    const result = await client.query(`INSERT INTO task_checklist_items (id, board_id, task_id, created_by, text, position)
+      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`, [randomUUID(), boardId, taskId, userId, text, position]);
+    await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, after_data)
+      VALUES ($1, $2, $3, $4, 'checklist_added', $5)`, [randomUUID(), boardId, taskId, userId, result.rows[0]]);
+    await client.query('COMMIT'); return result.rows[0];
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}
+
+export async function updateChecklistItem(db: Database, userId: string, boardId: string, taskId: string, itemId: string, input: {text?: string; completed?: boolean; position?: number}) {
+  const task = await canReadTask(db, userId, boardId, taskId, true);
+  if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) return null;
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const current = await client.query('SELECT * FROM task_checklist_items WHERE id = $1 AND task_id = $2 AND board_id = $3 FOR UPDATE', [itemId, taskId, boardId]);
+    const item = current.rows[0];
+    if (!item) { await client.query('ROLLBACK'); return null; }
+    let position = item.position;
+    if (input.position !== undefined && input.position !== position) {
+      const count = Number((await client.query<{count: string}>('SELECT count(*) FROM task_checklist_items WHERE task_id = $1', [taskId])).rows[0].count);
+      position = Math.min(input.position, count - 1);
+      await client.query(`UPDATE task_checklist_items SET position = position + $4::integer WHERE task_id = $1 AND id <> $2
+        AND position BETWEEN LEAST($3::integer, $5::integer) AND GREATEST($3::integer, $5::integer)`, [taskId, itemId, position, position < item.position ? 1 : -1, item.position]);
+    }
+    const result = await client.query(`UPDATE task_checklist_items SET text = COALESCE($5, text), position = $6,
+        completed_at = CASE WHEN $7::boolean IS NULL THEN completed_at WHEN $7 THEN now() ELSE NULL END,
+        completed_by = CASE WHEN $7::boolean IS NULL THEN completed_by WHEN $7 THEN $4 ELSE NULL END, updated_at = now()
+      WHERE id = $1 AND task_id = $2 AND board_id = $3 RETURNING *`, [itemId, taskId, boardId, userId, input.text ?? null, position, input.completed ?? null]);
+    await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, before_data, after_data)
+      VALUES ($1, $2, $3, $4, 'checklist_updated', $5, $6)`, [randomUUID(), boardId, taskId, userId, item, result.rows[0]]);
+    await client.query('COMMIT'); return result.rows[0];
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}
+
+export async function deleteChecklistItem(db: Database, userId: string, boardId: string, taskId: string, itemId: string) {
+  const task = await canReadTask(db, userId, boardId, taskId, true);
+  if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) return false;
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query('DELETE FROM task_checklist_items WHERE id = $1 AND task_id = $2 AND board_id = $3 RETURNING *', [itemId, taskId, boardId]);
+    if (!result.rows[0]) { await client.query('ROLLBACK'); return false; }
+    await client.query('UPDATE task_checklist_items SET position = position - 1 WHERE task_id = $1 AND position > $2', [taskId, result.rows[0].position]);
+    await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, before_data)
+      VALUES ($1, $2, $3, $4, 'checklist_deleted', $5)`, [randomUUID(), boardId, taskId, userId, result.rows[0]]);
+    await client.query('COMMIT'); return true;
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}
+
+export type AttachmentInput = { kind: 'url' | 'telegram'; url?: string; telegramFileId?: string; telegramFileUniqueId?: string; fileName?: string; mimeType?: string; fileSize?: number };
+export async function addTaskAttachment(db: Database, userId: string, boardId: string, taskId: string, input: AttachmentInput) {
+  if (!await canReadTask(db, userId, boardId, taskId, true)) return null;
+  const result = await db.query(`INSERT INTO task_attachments (id, board_id, task_id, added_by, kind, url,
+      telegram_file_id, telegram_file_unique_id, file_name, mime_type, file_size)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id, kind, url, telegram_file_id, file_name, mime_type, file_size, created_at`,
+    [randomUUID(), boardId, taskId, userId, input.kind, input.url ?? null, input.telegramFileId ?? null,
+      input.telegramFileUniqueId ?? null, input.fileName ?? null, input.mimeType ?? null, input.fileSize ?? null]);
+  return result.rows[0];
+}
+
+export async function incompleteChecklistCount(db: Database, userId: string, boardId: string, taskId: string) {
+  if (!await canReadTask(db, userId, boardId, taskId, true)) return null;
+  const result = await db.query<{count: string}>('SELECT count(*) FROM task_checklist_items WHERE task_id = $1 AND board_id = $2 AND completed_at IS NULL', [taskId, boardId]);
+  return Number(result.rows[0].count);
+}
+
+export async function claimAssignmentNotification(db: Database, notificationId: string) {
+  const result = await db.query(`UPDATE task_assignment_notifications n SET status = 'sending' FROM tasks t, users u
+    WHERE n.id = $1 AND n.status = 'pending' AND t.id = n.task_id AND u.id = n.assignee_user_id
+    RETURNING n.id, t.title, u.telegram_id`, [notificationId]);
+  return result.rows[0] ?? null;
+}
+
+export async function finishAssignmentNotification(db: Database, notificationId: string, error?: string) {
+  await db.query(`UPDATE task_assignment_notifications SET status = $2, error = $3, sent_at = CASE WHEN $2 = 'sent' THEN now() ELSE NULL END
+    WHERE id = $1 AND status = 'sending'`, [notificationId, error ? 'failed' : 'sent', error?.slice(0, 500) ?? null]);
+}
+
+export async function pendingNotificationForTask(db: Database, taskId: string) {
+  const result = await db.query<{id: string}>('SELECT id FROM task_assignment_notifications WHERE task_id = $1 ORDER BY created_at DESC LIMIT 1', [taskId]);
+  return result.rows[0]?.id ?? null;
 }
