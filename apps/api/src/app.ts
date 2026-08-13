@@ -10,7 +10,7 @@ import type { Config } from './config.js';
 export function buildApp(config: Config, db: Database) {
   const app = Fastify({ logger: { redact: ['req.headers.authorization', 'req.headers.cookie', 'body.initData'] } });
   app.register(cookie);
-  const publicDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../web/dist');
+  const publicDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist');
   app.register(fastifyStatic, { root: publicDir });
   app.get('/health', async () => { await db.query('SELECT 1'); return { status: 'ok' }; });
 
