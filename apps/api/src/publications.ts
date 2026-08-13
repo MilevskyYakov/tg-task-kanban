@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { Database } from './db.js';
 import { telegramCall } from './telegram.js';
 
@@ -61,16 +61,9 @@ async function reportTasks(db: Database, boardId: string, kind: PublicationKind,
   return result.rows;
 }
 
-async function publicationToken(db: Database, boardId: string) {
-  const token = `pub_${randomBytes(16).toString('hex')}`;
-  const hash = createHash('sha256').update(token).digest('hex');
-  await db.query("INSERT INTO board_links (token_hash, board_id, kind) VALUES ($1, $2, 'publication')", [hash, boardId]);
-  return token;
-}
-
-function taskLine(task: ReportTask, now: Date, botUsername: string, token: string) {
+function taskLine(task: ReportTask, now: Date, botUsername: string, boardId: string) {
   const labels = [task.priority === 'urgent' ? '🔥' : '', task.deadline && new Date(task.deadline) < now && task.status !== 'done' ? 'ПРОСРОЧЕНО' : '', task.wait_check_at && new Date(task.wait_check_at) <= now && task.status === 'waiting' ? 'ПРОВЕРИТЬ' : ''].filter(Boolean).join(' · ');
-  const start = `${token}_${task.id}`;
+  const start = `task_${boardId}_${task.id}`;
   return `• <a href="https://t.me/${botUsername}?startapp=${start}">${escapeHtml(task.title)}</a>${labels ? ` — <b>${labels}</b>` : ''}`;
 }
 
@@ -78,7 +71,6 @@ export async function renderPublication(db: Database, boardId: string, kind: Pub
   const board = await db.query<{name: string}>("SELECT name FROM boards WHERE id = $1 AND type = 'chat'", [boardId]);
   if (!board.rows[0]) return [];
   const tasks = await reportTasks(db, boardId, kind, statuses, timezone, now);
-  const token = await publicationToken(db, boardId);
   const title = kind === 'daily' ? `План дня · ${escapeHtml(board.rows[0].name)}` : `Неделя · ${escapeHtml(board.rows[0].name)}`;
   if (!tasks.length) return [`<b>${title}</b>\n\nАктивных задач нет.`];
   const groups = new Map<string, Map<string, Map<string, ReportTask[]>>>();
@@ -95,7 +87,7 @@ export async function renderPublication(db: Database, boardId: string, kind: Pub
     sections.push(`Выполнено: <b>${count((task) => task.status === 'done')}</b> · Просрочено: <b>${count((task) => task.status !== 'done' && !!task.deadline && new Date(task.deadline) < now)}</b> · Жду: <b>${count((task) => task.status === 'waiting')}</b> · Активно: <b>${count((task) => task.status !== 'done')}</b>`);
   }
   for (const [person, projects] of groups) for (const [project, statusesMap] of projects) for (const [status, list] of statusesMap) {
-    sections.push(`<b>${escapeHtml(person)}</b> · ${escapeHtml(project)} · ${statusNames[status] ?? status}\n${list.map((task) => taskLine(task, now, botUsername, token)).join('\n')}`);
+    sections.push(`<b>${escapeHtml(person)}</b> · ${escapeHtml(project)} · ${statusNames[status] ?? status}\n${list.map((task) => taskLine(task, now, botUsername, boardId)).join('\n')}`);
   }
   return splitTelegram(sections);
 }
@@ -129,17 +121,19 @@ export async function queueDuePublications(db: Database, now = new Date()) {
 }
 
 export async function deliverPendingPublications(db: Database, botToken: string, botUsername: string, now = new Date()) {
-  await db.query("UPDATE publication_runs SET status = 'pending', next_attempt_at = $1 WHERE status = 'sending' AND next_attempt_at < $1::timestamptz - interval '5 minutes'", [now.toISOString()]);
-  const run = await db.query<{id: string; board_id: string; kind: PublicationKind; included_statuses: string[]; timezone: string; telegram_chat_id: string}>(`UPDATE publication_runs r SET status = 'sending', attempts = attempts + 1
+  await db.query("UPDATE publication_runs SET status = 'pending' WHERE status = 'sending' AND next_attempt_at <= $1", [now.toISOString()]);
+  const run = await db.query<{id: string; board_id: string; kind: PublicationKind; included_statuses: string[]; timezone: string; telegram_chat_id: string; sent_parts: number}>(`UPDATE publication_runs r SET status = 'sending', attempts = attempts + 1, next_attempt_at = $1::timestamptz + interval '5 minutes'
     FROM publication_schedules s, boards b WHERE r.id = (SELECT pr.id FROM publication_runs pr JOIN boards eligible ON eligible.id = pr.board_id
       WHERE pr.status = 'pending' AND pr.next_attempt_at <= $1 AND eligible.status = 'active' AND eligible.telegram_chat_id IS NOT NULL
       ORDER BY pr.next_attempt_at FOR UPDATE OF pr SKIP LOCKED LIMIT 1)
       AND s.board_id = r.board_id AND s.kind = r.kind AND b.id = r.board_id AND b.status = 'active' AND b.telegram_chat_id IS NOT NULL
-    RETURNING r.id, r.board_id, r.kind, s.included_statuses, s.timezone, b.telegram_chat_id`, [now.toISOString()]);
+    RETURNING r.id, r.board_id, r.kind, s.included_statuses, s.timezone, b.telegram_chat_id, r.sent_parts`, [now.toISOString()]);
   if (!run.rows[0]) return false;
   try {
-    for (const text of await renderPublication(db, run.rows[0].board_id, run.rows[0].kind, run.rows[0].included_statuses, botUsername, run.rows[0].timezone, now)) {
-      await telegramCall(botToken, 'sendMessage', { chat_id: run.rows[0].telegram_chat_id, text, parse_mode: 'HTML', disable_web_page_preview: true });
+    const messages = await renderPublication(db, run.rows[0].board_id, run.rows[0].kind, run.rows[0].included_statuses, botUsername, run.rows[0].timezone, now);
+    for (let part = run.rows[0].sent_parts; part < messages.length; part++) {
+      await telegramCall(botToken, 'sendMessage', { chat_id: run.rows[0].telegram_chat_id, text: messages[part], parse_mode: 'HTML', disable_web_page_preview: true });
+      await db.query('UPDATE publication_runs SET sent_parts = $2 WHERE id = $1', [run.rows[0].id, part + 1]);
     }
     await db.query("UPDATE publication_runs SET status = 'sent', sent_at = now(), last_error = NULL WHERE id = $1", [run.rows[0].id]);
   } catch (error) {
