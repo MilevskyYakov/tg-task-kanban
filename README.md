@@ -8,7 +8,7 @@
 
 ```bash
 cp .env.example .env
-# Заполнить BOT_TOKEN и SESSION_SECRET
+# Заполнить BOT_TOKEN, SESSION_SECRET и WEBHOOK_SECRET
 docker compose up -d db
 npm install
 DATABASE_URL=postgres://task:task@localhost:5432/task npm run migrate
@@ -29,6 +29,18 @@ DATABASE_URL=postgres://task:task@localhost:5432/task npm run migrate
 ```
 
 Интеграционный тест изоляции обязателен и падает без `TEST_DATABASE_URL`.
+
+## Telegram webhook
+
+После production deploy зарегистрировать webhook с тем же `WEBHOOK_SECRET`:
+
+```bash
+curl --fail -X POST "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
+  -H 'content-type: application/json' \
+  -d "{\"url\":\"https://task.kairos-ai.ru/api/telegram/webhook\",\"secret_token\":\"$WEBHOOK_SECRET\",\"allowed_updates\":[\"message\",\"my_chat_member\"]}"
+```
+
+Боту нужны права читать состав чата для серверной проверки актуального статуса администратора. При добавлении бот отправляет кнопку настройки; её `startapp`-токен связывает TMA с доской без доверия к клиентскому board ID.
 
 ## Production deploy
 
