@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { randomBytes } from 'node:crypto';
 import { createInvite, connectChatBoard, createDatabase, freezeChatBoard, redeemBoardLink, revokeInvites } from '../src/db.js';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -7,7 +8,7 @@ if (!url) throw new Error('TEST_DATABASE_URL is required');
 
 test('chat board is idempotent, frozen safely and joined only by valid links', async () => {
   const db = createDatabase(url!);
-  const stamp = Date.now();
+  const stamp = randomBytes(6).readUIntBE(0, 6);
   const chatId = -stamp;
   const firstUser = await db.query<{id: string}>("INSERT INTO users (telegram_id, first_name) VALUES ($1, 'A') RETURNING id", [stamp]);
   const secondUser = await db.query<{id: string}>("INSERT INTO users (telegram_id, first_name) VALUES ($1, 'B') RETURNING id", [stamp + 1]);
