@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { boardForUser, createDatabase, renameBoard } from '../src/db.js';
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url) throw new Error('TEST_DATABASE_URL is required');
 test('tenant-scoped reads and writes reject another board', async () => {
   const db = createDatabase(url!);
-  const a = await db.query<{id: string}>("INSERT INTO users (telegram_id, first_name) VALUES ($1, 'A') RETURNING id", [Date.now()]);
-  const b = await db.query<{id: string}>("INSERT INTO users (telegram_id, first_name) VALUES ($1, 'B') RETURNING id", [Date.now() + 1]);
+  const telegramId = randomBytes(6).readUIntBE(0, 6);
+  const a = await db.query<{id: string}>("INSERT INTO users (telegram_id, first_name) VALUES ($1, 'A') RETURNING id", [telegramId]);
+  const b = await db.query<{id: string}>("INSERT INTO users (telegram_id, first_name) VALUES ($1, 'B') RETURNING id", [telegramId + 1]);
   const board = randomUUID();
   await db.query("INSERT INTO boards (id, type, name, owner_user_id) VALUES ($1, 'personal', 'A', $2)", [board, a.rows[0].id]);
   await db.query("INSERT INTO memberships (board_id, user_id, role) VALUES ($1, $2, 'owner')", [board, a.rows[0].id]);
