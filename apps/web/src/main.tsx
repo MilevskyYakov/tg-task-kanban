@@ -114,7 +114,8 @@ function App() {
     const nextPriority = window.confirm('Срочная задача?') ? 'urgent' : 'normal';
     const nextProject = window.prompt(`ID проекта (пусто — без проекта)\n${projects.map((item) => `${item.id}: ${item.name}`).join('\n')}`, task.project_id ?? '')?.trim(); if (nextProject === undefined) return;
     const nextAssignee = window.prompt(`ID исполнителя (пусто — без ответственного)\n${members.map((item) => `${item.id}: ${item.first_name}`).join('\n')}`, task.assignee_user_id ?? '')?.trim(); if (nextAssignee === undefined) return;
-    await action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}`, json('PATCH', { title: nextTitle, description: nextDescription || null, deadline: nextDeadline ? new Date(`${nextDeadline}T00:00:00`).toISOString() : null, priority: nextPriority, projectId: nextProject || null, assigneeUserId: nextAssignee || null })), 'Задача обновлена');
+    const notifyAssignee = Boolean(nextAssignee && nextAssignee !== task.assignee_user_id && window.confirm('Уведомить нового исполнителя?'));
+    await action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}`, json('PATCH', { title: nextTitle, description: nextDescription || null, deadline: nextDeadline ? new Date(`${nextDeadline}T00:00:00`).toISOString() : null, priority: nextPriority, projectId: nextProject || null, assigneeUserId: nextAssignee || null, notifyAssignee })), 'Задача обновлена');
   };
   const addProject = async () => {
     if (!board) return;
