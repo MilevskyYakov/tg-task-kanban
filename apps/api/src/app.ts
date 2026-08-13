@@ -4,10 +4,11 @@ import Fastify from 'fastify';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateInitData } from './auth.js';
-import { activateChatBoard, boardForUser, boardMembers, boardsForUser, connectChatBoard, createInvite, createProject, createTask, freezeChatBoard, login, migrateChatBoard, projectsForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskFilterState, tasksForAssignee, tasksForBoard, updateProject, updateTask, type Database, type TaskInput } from './db.js';
+import { activateChatBoard, boardForUser, boardMembers, boardsForUser, connectChatBoard, createInvite, createProject, createRecurrence, createTask, freezeChatBoard, login, migrateChatBoard, projectsForBoard, recurrencesForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskFilterState, tasksForAssignee, tasksForBoard, updateProject, updateRecurrence, updateTask, updateTaskAndFuture, type Database, type RecurrenceInput, type TaskInput } from './db.js';
 import type { Config } from './config.js';
 import { isChatAdmin, telegramCall } from './telegram.js';
-import { renderPublication, schedulesForBoard, updateSchedule, validTimezone, type PublicationKind, type PublicationSchedule } from './publications.js';
+import { renderPublication, schedulesForBoard, updateSchedule, validTimezone as validPublicationTimezone, type PublicationKind, type PublicationSchedule } from './publications.js';
+import { validTimezone } from './recurrence.js';
 
 type ChatMemberUpdate = {
   chat: { id: number; title?: string; type: string };
@@ -99,7 +100,7 @@ export function buildApp(config: Config, db: Database) {
     if (!body || typeof body.enabled !== 'boolean') return 'enabled must be boolean';
     if (!Array.isArray(body.weekdays) || !body.weekdays.length || body.weekdays.some((day) => !Number.isInteger(day) || day < 1 || day > 7)) return 'invalid weekdays';
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(body.local_time)) return 'invalid local time';
-    if (!validTimezone(body.timezone)) return 'invalid timezone';
+    if (!validPublicationTimezone(body.timezone)) return 'invalid timezone';
     if (!Array.isArray(body.included_statuses) || body.included_statuses.some((status) => !['todo', 'in_progress', 'waiting', 'done'].includes(status))) return 'invalid statuses';
     return body;
   };
@@ -181,16 +182,30 @@ export function buildApp(config: Config, db: Database) {
     for (const value of [body?.deadline, body?.waitCheckAt]) if (value && Number.isNaN(Date.parse(value))) return 'invalid date';
     return { ...body!, ...(title ? { title } : {}) };
   };
+  const recurrenceInput = (body: RecurrenceInput | undefined, partial = false): RecurrenceInput | string => {
+    const task = taskInput(body, partial); if (typeof task === 'string') return task;
+    if ((!partial || body?.frequency !== undefined) && !['daily', 'weekdays', 'weekly', 'monthly'].includes(body?.frequency ?? '')) return 'invalid frequency';
+    if ((!partial || body?.localTime !== undefined) && !/^([01]\d|2[0-3]):[0-5]\d$/.test(body?.localTime ?? '')) return 'invalid local time';
+    if ((!partial || body?.timezone !== undefined) && !validTimezone(body?.timezone ?? '')) return 'invalid timezone';
+    if ((!partial || body?.startAt !== undefined) && Number.isNaN(Date.parse(body?.startAt ?? ''))) return 'invalid start date';
+    if (body?.endAt && Number.isNaN(Date.parse(body.endAt))) return 'invalid end date';
+    if (body?.frequency === 'weekdays' && (!body.weekdays?.length || body.weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6))) return 'weekdays are required';
+    if (body?.frequency === 'weekly' && (body.weekdays?.length !== 1 || body.weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6))) return 'one weekday is required';
+    if (body?.frequency === 'monthly' && (!Number.isInteger(body.dayOfMonth) || body.dayOfMonth! < 1 || body.dayOfMonth! > 31)) return 'day of month is required';
+    return { ...body!, ...task };
+  };
   app.post<{Params: {id: string}, Body: TaskInput}>('/api/boards/:id/tasks', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     const input = taskInput(request.body); if (typeof input === 'string') return reply.code(400).send({ error: input });
     const task = await createTask(db, id, request.params.id, input);
     return task ?? reply.code(404).send({ error: 'board, project or assignee not found' });
   });
-  app.patch<{Params: {id: string; taskId: string}, Body: TaskInput}>('/api/boards/:id/tasks/:taskId', async (request, reply) => {
+  app.patch<{Params: {id: string; taskId: string}, Querystring: {scope?: string}, Body: TaskInput}>('/api/boards/:id/tasks/:taskId', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     const input = taskInput(request.body, true); if (typeof input === 'string') return reply.code(400).send({ error: input });
-    const task = await updateTask(db, id, request.params.id, request.params.taskId, input);
+    const task = request.query.scope === 'future'
+      ? await updateTaskAndFuture(db, id, request.params.id, request.params.taskId, input)
+      : await updateTask(db, id, request.params.id, request.params.taskId, input);
     return task ?? reply.code(403).send({ error: 'task action is not allowed' });
   });
   app.delete<{Params: {id: string; taskId: string}}>('/api/boards/:id/tasks/:taskId', async (request, reply) => {
@@ -202,6 +217,23 @@ export function buildApp(config: Config, db: Database) {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     return await setTaskArchived(db, id, request.params.id, request.params.taskId, false)
       ? { archived: false } : reply.code(403).send({ error: 'task action is not allowed' });
+  });
+
+  app.get<{Params: {id: string}}>('/api/boards/:id/recurrences', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    return { recurrences: await recurrencesForBoard(db, id, request.params.id) };
+  });
+  app.post<{Params: {id: string}, Body: RecurrenceInput}>('/api/boards/:id/recurrences', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const input = recurrenceInput(request.body); if (typeof input === 'string') return reply.code(400).send({ error: input });
+    const recurrence = await createRecurrence(db, id, request.params.id, input);
+    return recurrence ?? reply.code(404).send({ error: 'board, project or assignee not found' });
+  });
+  app.patch<{Params: {id: string; recurrenceId: string}, Body: Partial<RecurrenceInput> & {paused?: boolean; archived?: boolean}}>('/api/boards/:id/recurrences/:recurrenceId', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const input = recurrenceInput(request.body as RecurrenceInput, true); if (typeof input === 'string') return reply.code(400).send({ error: input });
+    const recurrence = await updateRecurrence(db, id, request.params.id, request.params.recurrenceId, { ...input, paused: request.body.paused, archived: request.body.archived });
+    return recurrence ?? reply.code(403).send({ error: 'recurrence action is not allowed' });
   });
 
   app.post<{Body: TelegramUpdate}>('/api/telegram/webhook', async (request, reply) => {
