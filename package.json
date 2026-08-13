@@ -1,0 +1,14 @@
+{
+  "name": "tg-task-kanban",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev": "npm run dev -w @task/api",
+    "build": "npm run build -w @task/web && npm run build -w @task/api",
+    "typecheck": "npm run typecheck -ws",
+    "lint": "npm run typecheck",
+    "test": "npm run test -w @task/api",
+    "migrate": "npm run migrate -w @task/api"
+  },
+  "engines": {"node": ">=22"}
+}
