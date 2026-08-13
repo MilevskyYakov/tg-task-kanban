@@ -7,7 +7,9 @@
     "build": "npm run build -w @task/web && npm run build -w @task/api",
     "typecheck": "npm run typecheck -ws",
     "lint": "npm run typecheck",
-    "test": "npm run test -w @task/api",
+    "test": "npm run test:unit && npm run test:isolation",
+    "test:unit": "tsx --test apps/api/test/auth.test.ts",
+    "test:isolation": "test -n \"$TEST_DATABASE_URL\" && tsx --test apps/api/test/isolation.test.ts",
     "migrate": "npm run migrate -w @task/api"
   },
   "engines": {"node": ">=22"}

@@ -22,12 +22,13 @@ Web shell собирается командой `npm run build`; API слуша�
 ```bash
 npm run lint
 npm run typecheck
-npm test
+npm run test:unit
+TEST_DATABASE_URL=postgres://task:task@localhost:5432/task npm run test:isolation
 npm run build
 DATABASE_URL=postgres://task:task@localhost:5432/task npm run migrate
 ```
 
-Интеграционный тест изоляции запускается при наличии `TEST_DATABASE_URL`.
+Интеграционный тест изоляции обязателен и падает без `TEST_DATABASE_URL`.
 
 ## Production deploy
 
