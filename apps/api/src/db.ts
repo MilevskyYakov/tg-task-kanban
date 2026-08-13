@@ -99,6 +99,9 @@ export async function connectChatBoard(db: Database, chatId: number, name: strin
         frozen_from_status = NULL RETURNING id, status`,
       [randomUUID(), name, chatId]);
     const boardId = board.rows[0].id;
+    await client.query(`INSERT INTO publication_schedules (board_id, kind, weekdays, local_time) VALUES
+      ($1, 'daily', ARRAY[1,2,3,4,5]::smallint[], '11:00'), ($1, 'weekly', ARRAY[1]::smallint[], '10:30')
+      ON CONFLICT DO NOTHING`, [boardId]);
     await client.query("UPDATE board_links SET revoked_at = now() WHERE board_id = $1 AND kind = 'launch' AND revoked_at IS NULL", [boardId]);
     const token = `board_${randomBytes(24).toString('base64url')}`;
     await client.query("INSERT INTO board_links (token_hash, board_id, kind) VALUES ($1, $2, 'launch')", [linkHash(token), boardId]);
@@ -116,8 +119,9 @@ export async function freezeChatBoard(db: Database, chatId: number) {
 }
 
 export async function redeemBoardLink(db: Database, userId: string, token: string) {
+  const linkToken = token.startsWith('pub_') ? token.split('_').slice(0, 2).join('_') : token;
   const result = await db.query<{id: string}>(`SELECT b.id FROM board_links l JOIN boards b ON b.id = l.board_id
-    WHERE l.token_hash = $1 AND l.revoked_at IS NULL AND b.type = 'chat' AND b.status <> 'frozen'`, [linkHash(token)]);
+    WHERE l.token_hash = $1 AND l.revoked_at IS NULL AND b.type = 'chat' AND b.status <> 'frozen'`, [linkHash(linkToken)]);
   const link = result.rows[0];
   if (!link) return null;
   await db.query(`INSERT INTO memberships (board_id, user_id, role) VALUES ($1, $2, 'member')
@@ -251,7 +255,8 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
     const waiting = status === 'waiting';
     const result = await client.query(`UPDATE tasks SET project_id = $3, assignee_user_id = $4, title = $5,
       description = $6, status = $7, priority = $8, deadline = $9, wait_reason = $10,
-      wait_check_at = $11, updated_at = now() WHERE id = $1 AND board_id = $2 RETURNING *`,
+      wait_check_at = $11, completed_at = CASE WHEN $7 = 'done' AND status <> 'done' THEN now() WHEN $7 <> 'done' THEN NULL ELSE completed_at END,
+      updated_at = now() WHERE id = $1 AND board_id = $2 RETURNING *`,
       [taskId, boardId, projectId, assigneeId, input.title ?? task.title, input.description === undefined ? task.description : input.description,
         status, input.priority ?? task.priority, input.deadline === undefined ? task.deadline : input.deadline,
         waiting ? (input.waitReason === undefined ? task.wait_reason : input.waitReason) : null,
