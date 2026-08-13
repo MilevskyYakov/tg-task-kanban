@@ -65,6 +65,21 @@ export async function boardMembers(db: Database, userId: string, boardId: string
   return result.rows;
 }
 
+export async function taskFilterState(db: Database, userId: string, boardId: string) {
+  const result = await db.query<{filters: unknown}>(`SELECT s.filters FROM task_filter_states s
+    JOIN memberships m ON m.board_id = s.board_id AND m.user_id = s.user_id
+    WHERE s.user_id = $1 AND s.board_id = $2`, [userId, boardId]);
+  return result.rows[0]?.filters ?? {};
+}
+
+export async function saveTaskFilterState(db: Database, userId: string, boardId: string, filters: unknown) {
+  const result = await db.query(`INSERT INTO task_filter_states (user_id, board_id, filters)
+    SELECT $1, $2, $3::jsonb FROM memberships WHERE user_id = $1 AND board_id = $2
+    ON CONFLICT (user_id, board_id) DO UPDATE SET filters = EXCLUDED.filters, updated_at = now()
+    RETURNING filters`, [userId, boardId, JSON.stringify(filters)]);
+  return result.rows[0]?.filters ?? null;
+}
+
 export async function renameBoard(db: Database, userId: string, boardId: string, name: string) {
   const result = await db.query(`UPDATE boards b SET name = $3 FROM memberships m
     WHERE b.id = $1 AND m.board_id = b.id AND m.user_id = $2 AND m.role IN ('owner', 'admin') RETURNING b.id, b.type, b.name`,
@@ -171,7 +186,8 @@ export async function updateProject(db: Database, userId: string, boardId: strin
   return result.rows[0] ?? null;
 }
 
-const taskColumns = `t.id, t.board_id, t.project_id, t.creator_user_id, t.assignee_user_id,
+const taskColumns = `t.id, t.board_id, t.project_id, p.name AS project_name, t.creator_user_id, t.assignee_user_id,
+  assignee.first_name AS assignee_name,
   t.title, t.description, t.status, t.priority, t.deadline, t.wait_reason, t.wait_check_at,
   t.archived_at, t.created_at, t.updated_at,
   (t.status <> 'done' AND t.deadline < now()) AS overdue,
@@ -180,6 +196,8 @@ const taskColumns = `t.id, t.board_id, t.project_id, t.creator_user_id, t.assign
 export async function tasksForBoard(db: Database, userId: string, boardId: string, archived = false) {
   const result = await db.query(`SELECT ${taskColumns} FROM tasks t
     JOIN memberships m ON m.board_id = t.board_id
+    LEFT JOIN projects p ON p.id = t.project_id
+    LEFT JOIN users assignee ON assignee.id = t.assignee_user_id
     WHERE t.board_id = $1 AND m.user_id = $2 AND ($3 OR t.archived_at IS NULL)
     ORDER BY t.priority = 'urgent' DESC, t.created_at DESC`, [boardId, userId, archived]);
   return result.rows;
@@ -188,6 +206,8 @@ export async function tasksForBoard(db: Database, userId: string, boardId: strin
 export async function tasksForAssignee(db: Database, userId: string) {
   const result = await db.query(`SELECT ${taskColumns}, b.name AS board_name FROM tasks t
     JOIN boards b ON b.id = t.board_id JOIN memberships m ON m.board_id = b.id AND m.user_id = $1
+    LEFT JOIN projects p ON p.id = t.project_id
+    LEFT JOIN users assignee ON assignee.id = t.assignee_user_id
     WHERE t.assignee_user_id = $1 AND t.archived_at IS NULL AND b.status = 'active'
     ORDER BY t.priority = 'urgent' DESC, t.deadline NULLS LAST, t.created_at DESC`, [userId]);
   return result.rows;
