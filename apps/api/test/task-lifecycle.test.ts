@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { createDatabase, createProject, createTask, setTaskArchived, tasksForAssignee, tasksForBoard, updateProject, updateTask } from '../src/db.js';
+import { createDatabase, createProject, createTask, saveTaskFilterState, setTaskArchived, taskFilterState, tasksForAssignee, tasksForBoard, updateProject, updateTask } from '../src/db.js';
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url) throw new Error('TEST_DATABASE_URL is required');
@@ -26,6 +26,10 @@ test('task lifecycle enforces tenant, role and transition rules', async () => {
   assert.equal((await tasksForBoard(db, users[2], boardId))[0].overdue, true, 'member reads active board tasks and overdue is computed');
   assert.equal((await tasksForBoard(db, users[3], boardId)).length, 0, 'outsider cannot read tasks');
   assert.equal((await tasksForAssignee(db, users[1]))[0].id, task.id, 'assigned task appears in all-my-tasks');
+  assert.deepEqual(await taskFilterState(db, users[1], boardId), {});
+  assert.deepEqual(await saveTaskFilterState(db, users[1], boardId, { status: 'todo' }), { status: 'todo' });
+  assert.deepEqual(await taskFilterState(db, users[1], boardId), { status: 'todo' }, 'filter state persists per user and board');
+  assert.equal(await saveTaskFilterState(db, users[3], boardId, { status: 'done' }), null, 'outsider cannot save filter state');
 
   assert.equal(await updateTask(db, users[2], boardId, task.id, { title: 'Hijack' }), null, 'ordinary member cannot edit');
   assert.equal(await updateTask(db, users[0], boardId, task.id, { status: 'done' }), null, 'creator cannot close assigned task');
