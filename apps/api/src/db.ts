@@ -16,13 +16,14 @@ export async function login(db: Database, telegram: TelegramUser, sessionSeconds
       SET first_name = EXCLUDED.first_name, username = EXCLUDED.username, updated_at = now() RETURNING id`,
       [telegram.id, telegram.first_name, telegram.username ?? null]);
     const userId = user.rows[0].id;
-    const existing = await client.query<{id: string}>("SELECT id FROM boards WHERE type = 'personal' AND owner_user_id = $1", [userId]);
-    let boardId = existing.rows[0]?.id;
-    if (!boardId) {
-      boardId = randomUUID();
-      await client.query("INSERT INTO boards (id, type, name, owner_user_id) VALUES ($1, 'personal', 'Личная доска', $2)", [boardId, userId]);
-      await client.query("INSERT INTO memberships (board_id, user_id, role) VALUES ($1, $2, 'owner')", [boardId, userId]);
-    }
+    const candidateBoardId = randomUUID();
+    await client.query(`INSERT INTO boards (id, type, name, owner_user_id)
+      VALUES ($1, 'personal', 'Личная доска', $2)
+      ON CONFLICT (owner_user_id) WHERE type = 'personal' DO NOTHING`, [candidateBoardId, userId]);
+    const board = await client.query<{id: string}>("SELECT id FROM boards WHERE type = 'personal' AND owner_user_id = $1", [userId]);
+    const boardId = board.rows[0].id;
+    await client.query(`INSERT INTO memberships (board_id, user_id, role) VALUES ($1, $2, 'owner')
+      ON CONFLICT (board_id, user_id) DO NOTHING`, [boardId, userId]);
     const token = randomBytes(32).toString('base64url');
     await client.query("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, now() + ($3 * interval '1 second'))", [tokenHash(token, secret), userId, sessionSeconds]);
     await client.query('COMMIT');

@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { boardForUser, createDatabase, renameBoard } from '../src/db.js';
 
 const url = process.env.TEST_DATABASE_URL;
-test('tenant-scoped reads and writes reject another board', { skip: !url }, async () => {
+if (!url) throw new Error('TEST_DATABASE_URL is required');
+test('tenant-scoped reads and writes reject another board', async () => {
   const db = createDatabase(url!);
   const a = await db.query<{id: string}>("INSERT INTO users (telegram_id, first_name) VALUES ($1, 'A') RETURNING id", [Date.now()]);
   const b = await db.query<{id: string}>("INSERT INTO users (telegram_id, first_name) VALUES ($1, 'B') RETURNING id", [Date.now() + 1]);
