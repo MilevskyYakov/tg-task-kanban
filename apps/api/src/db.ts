@@ -119,9 +119,15 @@ export async function freezeChatBoard(db: Database, chatId: number) {
 }
 
 export async function redeemBoardLink(db: Database, userId: string, token: string) {
-  const linkToken = token.startsWith('pub_') ? token.split('_').slice(0, 2).join('_') : token;
+  const taskLaunch = token.match(/^task_([0-9a-f-]{36})_([0-9a-f-]{36})$/i);
+  if (taskLaunch) {
+    const task = await db.query<{id: string}>(`SELECT b.id FROM boards b JOIN memberships m ON m.board_id = b.id
+      JOIN tasks t ON t.board_id = b.id WHERE b.id = $1 AND t.id = $2 AND m.user_id = $3 AND b.status <> 'frozen'`,
+      [taskLaunch[1], taskLaunch[2], userId]);
+    return task.rows[0] ? boardForUser(db, userId, task.rows[0].id) : null;
+  }
   const result = await db.query<{id: string}>(`SELECT b.id FROM board_links l JOIN boards b ON b.id = l.board_id
-    WHERE l.token_hash = $1 AND l.revoked_at IS NULL AND b.type = 'chat' AND b.status <> 'frozen'`, [linkHash(linkToken)]);
+    WHERE l.token_hash = $1 AND l.revoked_at IS NULL AND b.type = 'chat' AND b.status <> 'frozen'`, [linkHash(token)]);
   const link = result.rows[0];
   if (!link) return null;
   await db.query(`INSERT INTO memberships (board_id, user_id, role) VALUES ($1, $2, 'member')
