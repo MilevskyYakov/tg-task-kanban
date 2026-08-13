@@ -7,6 +7,7 @@ import { validateInitData } from './auth.js';
 import { activateChatBoard, addChecklistItem, addTaskAttachment, addTaskComment, boardForUser, boardMembers, boardsForUser, claimAssignmentNotification, connectChatBoard, createInvite, createProject, createTask, deleteChecklistItem, finishAssignmentNotification, freezeChatBoard, incompleteChecklistCount, login, migrateChatBoard, pendingNotificationForTask, projectsForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskCollaboration, taskFilterState, tasksForAssignee, tasksForBoard, updateChecklistItem, updateProject, updateTask, type AttachmentInput, type Database, type TaskInput } from './db.js';
 import type { Config } from './config.js';
 import { isChatAdmin, telegramCall } from './telegram.js';
+import { renderPublication, schedulesForBoard, updateSchedule, validTimezone, type PublicationKind, type PublicationSchedule } from './publications.js';
 
 type ChatMemberUpdate = {
   chat: { id: number; title?: string; type: string };
@@ -93,6 +94,38 @@ export function buildApp(config: Config, db: Database) {
     if (board?.type === 'chat' && !await isChatAdmin(config.botToken, board.telegram_chat_id, user.telegram_id)) return reply.code(403).send({ error: 'Telegram chat admin required' });
     const renamed = await renameBoard(db, user.id, request.params.id, name);
     return renamed ?? reply.code(404).send({ error: 'board not found' });
+  });
+
+  const scheduleInput = (body: Omit<PublicationSchedule, 'kind'> | undefined) => {
+    if (!body || typeof body.enabled !== 'boolean') return 'enabled must be boolean';
+    if (!Array.isArray(body.weekdays) || !body.weekdays.length || body.weekdays.some((day) => !Number.isInteger(day) || day < 1 || day > 7)) return 'invalid weekdays';
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(body.local_time)) return 'invalid local time';
+    if (!validTimezone(body.timezone)) return 'invalid timezone';
+    if (!Array.isArray(body.included_statuses) || body.included_statuses.some((status) => !['todo', 'in_progress', 'waiting', 'done'].includes(status))) return 'invalid statuses';
+    return body;
+  };
+  app.get<{Params: {id: string}}>('/api/boards/:id/publications', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const board = await boardForUser(db, id, request.params.id);
+    return board?.type === 'chat' ? { schedules: await schedulesForBoard(db, id, request.params.id) } : reply.code(404).send({ error: 'chat board not found' });
+  });
+  app.put<{Params: {id: string; kind: PublicationKind}, Body: Omit<PublicationSchedule, 'kind'>}>('/api/boards/:id/publications/:kind', async (request, reply) => {
+    const user = await sessionUser(db, request.cookies.session, config.sessionSecret);
+    if (!user) return reply.code(401).send({ error: 'authentication required' });
+    const board = await boardForUser(db, user.id, request.params.id);
+    if (!board || board.type !== 'chat' || !['daily', 'weekly'].includes(request.params.kind)) return reply.code(404).send({ error: 'publication not found' });
+    if (!await isChatAdmin(config.botToken, board.telegram_chat_id, user.telegram_id)) return reply.code(403).send({ error: 'Telegram chat admin required' });
+    const input = scheduleInput(request.body); if (typeof input === 'string') return reply.code(400).send({ error: input });
+    return updateSchedule(db, board.id, request.params.kind, input);
+  });
+  app.post<{Params: {id: string; kind: PublicationKind}, Body: Omit<PublicationSchedule, 'kind'>}>('/api/boards/:id/publications/:kind/preview', async (request, reply) => {
+    const user = await sessionUser(db, request.cookies.session, config.sessionSecret);
+    if (!user) return reply.code(401).send({ error: 'authentication required' });
+    const board = await boardForUser(db, user.id, request.params.id);
+    if (!board || board.type !== 'chat' || !['daily', 'weekly'].includes(request.params.kind)) return reply.code(404).send({ error: 'publication not found' });
+    if (!await isChatAdmin(config.botToken, board.telegram_chat_id, user.telegram_id)) return reply.code(403).send({ error: 'Telegram chat admin required' });
+    const input = scheduleInput(request.body); if (typeof input === 'string') return reply.code(400).send({ error: input });
+    return { messages: await renderPublication(db, board.id, request.params.kind, input.included_statuses, config.botUsername, input.timezone) };
   });
 
   app.get('/api/tasks/mine', async (request, reply) => {
