@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import pg from 'pg';
 import type { TelegramUser } from './auth.js';
+import { nextOccurrence, type RecurrenceRule } from './recurrence.js';
 
 const { Pool } = pg;
 export type Database = InstanceType<typeof Pool>;
@@ -161,6 +162,8 @@ export type TaskInput = {
   waitCheckAt?: string | null;
 };
 
+export type RecurrenceInput = TaskInput & RecurrenceRule;
+
 export async function projectsForBoard(db: Database, userId: string, boardId: string, archived = false) {
   const result = await db.query(`SELECT p.id, p.name, p.archived_at FROM projects p
     JOIN memberships m ON m.board_id = p.board_id
@@ -189,7 +192,7 @@ export async function updateProject(db: Database, userId: string, boardId: strin
 const taskColumns = `t.id, t.board_id, t.project_id, p.name AS project_name, t.creator_user_id, t.assignee_user_id,
   assignee.first_name AS assignee_name,
   t.title, t.description, t.status, t.priority, t.deadline, t.wait_reason, t.wait_check_at,
-  t.archived_at, t.created_at, t.updated_at,
+  t.recurrence_template_id, t.occurrence_at, t.archived_at, t.created_at, t.updated_at,
   (t.status <> 'done' AND t.deadline < now()) AS overdue,
   (t.status = 'waiting' AND t.wait_check_at <= now()) AS wait_check_due`;
 
@@ -265,4 +268,108 @@ export async function setTaskArchived(db: Database, userId: string, boardId: str
       AND (($4 AND t.archived_at IS NULL) OR (NOT $4 AND t.archived_at IS NOT NULL)) RETURNING t.id`,
     [taskId, boardId, userId, archived]);
   return result.rowCount === 1;
+}
+
+const recurrenceColumns = `r.id, r.board_id, r.creator_user_id, r.project_id, r.assignee_user_id,
+  r.title, r.description, r.priority, r.frequency, r.weekdays, r.day_of_month,
+  to_char(r.local_time, 'HH24:MI') AS local_time, r.timezone, r.starts_at, r.ends_at,
+  r.next_occurrence_at, r.paused_at, r.archived_at, r.created_at, r.updated_at`;
+
+export async function recurrencesForBoard(db: Database, userId: string, boardId: string) {
+  const result = await db.query(`SELECT ${recurrenceColumns} FROM recurrence_templates r
+    JOIN memberships m ON m.board_id = r.board_id WHERE r.board_id = $1 AND m.user_id = $2
+    ORDER BY r.created_at DESC`, [boardId, userId]);
+  return result.rows;
+}
+
+export async function createRecurrence(db: Database, userId: string, boardId: string, input: RecurrenceInput) {
+  const first = nextOccurrence(input, new Date(new Date(input.startAt).getTime() - 1));
+  if (!first) return null;
+  const result = await db.query(`INSERT INTO recurrence_templates (id, board_id, creator_user_id, project_id,
+      assignee_user_id, title, description, priority, frequency, weekdays, day_of_month, local_time,
+      timezone, starts_at, ends_at, next_occurrence_at)
+    SELECT $3, b.id, $2, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+    FROM boards b JOIN memberships creator ON creator.board_id = b.id
+    LEFT JOIN projects p ON p.id = $4 AND p.board_id = b.id AND p.archived_at IS NULL
+    LEFT JOIN memberships assignee ON assignee.board_id = b.id AND assignee.user_id = $5
+    WHERE b.id = $1 AND b.status = 'active' AND creator.user_id = $2
+      AND ($4::uuid IS NULL OR p.id IS NOT NULL) AND ($5::bigint IS NULL OR assignee.user_id IS NOT NULL)
+    RETURNING *`, [boardId, userId, randomUUID(), input.projectId ?? null, input.assigneeUserId ?? null,
+      input.title!, input.description ?? null, input.priority ?? 'normal', input.frequency, input.weekdays ?? null,
+      input.dayOfMonth ?? null, input.localTime, input.timezone, input.startAt, input.endAt ?? null, first.toISOString()]);
+  return result.rows[0] ?? null;
+}
+
+export async function updateRecurrence(db: Database, userId: string, boardId: string, recurrenceId: string,
+  input: { paused?: boolean; archived?: boolean } & Partial<RecurrenceInput>) {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const current = await client.query<any>(`SELECT r.* FROM recurrence_templates r JOIN boards b ON b.id = r.board_id
+      WHERE r.id = $1 AND r.board_id = $2 AND b.status = 'active' FOR UPDATE`, [recurrenceId, boardId]);
+    const row = current.rows[0];
+    if (!row || (row.creator_user_id !== userId && row.assignee_user_id !== userId)) { await client.query('ROLLBACK'); return null; }
+    const projectId = input.projectId === undefined ? row.project_id : input.projectId;
+    const assigneeId = input.assigneeUserId === undefined ? row.assignee_user_id : input.assigneeUserId;
+    if (projectId && !(await client.query('SELECT 1 FROM projects WHERE id = $1 AND board_id = $2 AND archived_at IS NULL', [projectId, boardId])).rowCount) { await client.query('ROLLBACK'); return null; }
+    if (assigneeId && !(await client.query('SELECT 1 FROM memberships WHERE board_id = $1 AND user_id = $2', [boardId, assigneeId])).rowCount) { await client.query('ROLLBACK'); return null; }
+    const rule: RecurrenceRule = {
+      frequency: input.frequency ?? row.frequency, weekdays: input.weekdays ?? row.weekdays,
+      dayOfMonth: input.dayOfMonth ?? row.day_of_month, localTime: input.localTime ?? row.local_time.slice(0, 5),
+      timezone: input.timezone ?? row.timezone, startAt: input.startAt ?? row.starts_at.toISOString(),
+      endAt: input.endAt === undefined ? row.ends_at?.toISOString() : input.endAt
+    };
+    const paused = input.paused === undefined ? Boolean(row.paused_at) : input.paused;
+    const archived = input.archived === undefined ? Boolean(row.archived_at) : input.archived;
+    const next = paused || archived ? null : nextOccurrence(rule, new Date());
+    const result = await client.query(`UPDATE recurrence_templates SET project_id = $3, assignee_user_id = $4,
+      title = $5, description = $6, priority = $7, frequency = $8, weekdays = $9, day_of_month = $10,
+      local_time = $11, timezone = $12, starts_at = $13, ends_at = $14, next_occurrence_at = $15,
+      paused_at = CASE WHEN $16::boolean IS NULL THEN paused_at WHEN $16 THEN now() ELSE NULL END,
+      archived_at = CASE WHEN $17::boolean IS NULL THEN archived_at WHEN $17 THEN now() ELSE NULL END,
+      updated_at = now() WHERE id = $1 AND board_id = $2 RETURNING *`,
+      [recurrenceId, boardId, projectId, assigneeId, input.title ?? row.title,
+        input.description === undefined ? row.description : input.description, input.priority ?? row.priority,
+        rule.frequency, rule.weekdays ?? null, rule.dayOfMonth ?? null, rule.localTime, rule.timezone,
+        rule.startAt, rule.endAt ?? null, next?.toISOString() ?? null, input.paused ?? null, input.archived ?? null]);
+    await client.query('COMMIT');
+    return result.rows[0];
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}
+
+export async function updateTaskAndFuture(db: Database, userId: string, boardId: string, taskId: string, input: TaskInput) {
+  const task = await updateTask(db, userId, boardId, taskId, input);
+  if (!task || !task.recurrence_template_id) return task;
+  const template = await updateRecurrence(db, userId, boardId, task.recurrence_template_id, input);
+  return template ? task : null;
+}
+
+export async function runRecurrenceScheduler(db: Database, now = new Date()) {
+  const client = await db.connect();
+  let created = 0;
+  try {
+    await client.query('BEGIN');
+    const due = await client.query<any>(`SELECT * FROM recurrence_templates
+      WHERE paused_at IS NULL AND archived_at IS NULL AND next_occurrence_at <= $1
+      ORDER BY next_occurrence_at FOR UPDATE SKIP LOCKED`, [now.toISOString()]);
+    for (const row of due.rows) {
+      let occurrence = row.next_occurrence_at as Date | null;
+      const rule: RecurrenceRule = { frequency: row.frequency, weekdays: row.weekdays, dayOfMonth: row.day_of_month,
+        localTime: row.local_time.slice(0, 5), timezone: row.timezone, startAt: row.starts_at.toISOString(), endAt: row.ends_at?.toISOString() };
+      while (occurrence && occurrence <= now) {
+        const result = await client.query(`INSERT INTO tasks (id, board_id, project_id, creator_user_id, assignee_user_id,
+            title, description, priority, recurrence_template_id, occurrence_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+          ON CONFLICT (recurrence_template_id, occurrence_at) DO NOTHING RETURNING id`,
+          [randomUUID(), row.board_id, row.project_id, row.creator_user_id, row.assignee_user_id,
+            row.title, row.description, row.priority, row.id, occurrence]);
+        created += result.rowCount ?? 0;
+        occurrence = nextOccurrence(rule, occurrence);
+      }
+      await client.query('UPDATE recurrence_templates SET next_occurrence_at = $2, updated_at = now() WHERE id = $1',
+        [row.id, occurrence?.toISOString() ?? null]);
+    }
+    await client.query('COMMIT');
+    return created;
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
