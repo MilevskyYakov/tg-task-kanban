@@ -131,7 +131,9 @@ export function buildApp(config: Config, db: Database) {
     if ((!partial || body?.title !== undefined) && (!title || title.length > 200)) return 'title must contain 1-200 characters';
     if (body?.status && !['todo', 'in_progress', 'waiting', 'done'].includes(body.status)) return 'invalid status';
     if (body?.priority && !['normal', 'urgent'].includes(body.priority)) return 'invalid priority';
+    if (!partial && body?.status && body.status !== 'todo') return 'new task status must be todo';
     if (body?.status === 'waiting' && !body.waitReason?.trim()) return 'wait reason is required';
+    if ((body?.waitReason || body?.waitCheckAt) && body.status !== 'waiting') return 'wait fields require waiting status';
     for (const value of [body?.deadline, body?.waitCheckAt]) if (value && Number.isNaN(Date.parse(value))) return 'invalid date';
     return { ...body!, ...(title ? { title } : {}) };
   };
