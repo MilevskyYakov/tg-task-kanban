@@ -12,6 +12,7 @@ export type Task = {
   assignee_user_id?: string;
   assignee_name?: string;
   creator_user_id: string;
+  recurrence_template_id?: string;
   status: TaskStatus;
   priority: TaskPriority;
   deadline?: string;

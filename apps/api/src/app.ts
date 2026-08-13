@@ -4,10 +4,11 @@ import Fastify from 'fastify';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateInitData } from './auth.js';
-import { activateChatBoard, addChecklistItem, addTaskAttachment, addTaskComment, boardForUser, boardMembers, boardsForUser, claimAssignmentNotification, connectChatBoard, createInvite, createProject, createTask, deleteChecklistItem, finishAssignmentNotification, freezeChatBoard, incompleteChecklistCount, login, migrateChatBoard, pendingNotificationForTask, projectsForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskCollaboration, taskFilterState, tasksForAssignee, tasksForBoard, updateChecklistItem, updateProject, updateTask, type AttachmentInput, type Database, type TaskInput } from './db.js';
+import { activateChatBoard, addChecklistItem, addTaskAttachment, addTaskComment, boardForUser, boardMembers, boardsForUser, claimAssignmentNotification, connectChatBoard, createInvite, createProject, createRecurrence, createTask, deleteChecklistItem, finishAssignmentNotification, freezeChatBoard, incompleteChecklistCount, login, migrateChatBoard, pendingNotificationForTask, projectsForBoard, recurrencesForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskCollaboration, taskFilterState, tasksForAssignee, tasksForBoard, updateChecklistItem, updateProject, updateRecurrence, updateTask, updateTaskAndFuture, type AttachmentInput, type Database, type RecurrenceInput, type TaskInput } from './db.js';
 import type { Config } from './config.js';
 import { isChatAdmin, telegramCall } from './telegram.js';
-import { renderPublication, schedulesForBoard, updateSchedule, validTimezone, type PublicationKind, type PublicationSchedule } from './publications.js';
+import { renderPublication, schedulesForBoard, updateSchedule, validTimezone as validPublicationTimezone, type PublicationKind, type PublicationSchedule } from './publications.js';
+import { validTimezone } from './recurrence.js';
 
 type ChatMemberUpdate = {
   chat: { id: number; title?: string; type: string };
@@ -100,7 +101,7 @@ export function buildApp(config: Config, db: Database) {
     if (!body || typeof body.enabled !== 'boolean') return 'enabled must be boolean';
     if (!Array.isArray(body.weekdays) || !body.weekdays.length || body.weekdays.some((day) => !Number.isInteger(day) || day < 1 || day > 7)) return 'invalid weekdays';
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(body.local_time)) return 'invalid local time';
-    if (!validTimezone(body.timezone)) return 'invalid timezone';
+    if (!validPublicationTimezone(body.timezone)) return 'invalid timezone';
     if (!Array.isArray(body.included_statuses) || body.included_statuses.some((status) => !['todo', 'in_progress', 'waiting', 'done'].includes(status))) return 'invalid statuses';
     return body;
   };
@@ -190,12 +191,23 @@ export function buildApp(config: Config, db: Database) {
     if (!notification) return null;
     try {
       await telegramCall(config.botToken, 'sendMessage', { chat_id: notification.telegram_id, text: `Вам назначена задача: ${notification.title}` });
-      await finishAssignmentNotification(db, notificationId);
-      return null;
+      await finishAssignmentNotification(db, notificationId); return null;
     } catch (error) {
       await finishAssignmentNotification(db, notificationId, error instanceof Error ? error.message : 'Telegram delivery failed');
       return 'Задача сохранена, но уведомление не доставлено';
     }
+  };
+  const recurrenceInput = (body: RecurrenceInput | undefined, partial = false): RecurrenceInput | string => {
+    const task = taskInput(body, partial); if (typeof task === 'string') return task;
+    if ((!partial || body?.frequency !== undefined) && !['daily', 'weekdays', 'weekly', 'monthly'].includes(body?.frequency ?? '')) return 'invalid frequency';
+    if ((!partial || body?.localTime !== undefined) && !/^([01]\d|2[0-3]):[0-5]\d$/.test(body?.localTime ?? '')) return 'invalid local time';
+    if ((!partial || body?.timezone !== undefined) && !validTimezone(body?.timezone ?? '')) return 'invalid timezone';
+    if ((!partial || body?.startAt !== undefined) && Number.isNaN(Date.parse(body?.startAt ?? ''))) return 'invalid start date';
+    if (body?.endAt && Number.isNaN(Date.parse(body.endAt))) return 'invalid end date';
+    if (body?.frequency === 'weekdays' && (!body.weekdays?.length || body.weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6))) return 'weekdays are required';
+    if (body?.frequency === 'weekly' && (body.weekdays?.length !== 1 || body.weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6))) return 'one weekday is required';
+    if (body?.frequency === 'monthly' && (!Number.isInteger(body.dayOfMonth) || body.dayOfMonth! < 1 || body.dayOfMonth! > 31)) return 'day of month is required';
+    return { ...body!, ...task };
   };
   app.post<{Params: {id: string}, Body: TaskInput}>('/api/boards/:id/tasks', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
@@ -204,14 +216,16 @@ export function buildApp(config: Config, db: Database) {
     if (!task) return reply.code(404).send({ error: 'board, project or assignee not found' });
     return { ...task, notificationWarning: input.notifyAssignee ? await sendAssignmentNotification(task.id) : null };
   });
-  app.patch<{Params: {id: string; taskId: string}, Body: TaskPatchInput}>('/api/boards/:id/tasks/:taskId', async (request, reply) => {
+  app.patch<{Params: {id: string; taskId: string}, Querystring: {scope?: string}, Body: TaskPatchInput}>('/api/boards/:id/tasks/:taskId', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     const input = taskInput(request.body, true); if (typeof input === 'string') return reply.code(400).send({ error: input });
-    if (input.status === 'done' && !request.body?.confirmIncompleteChecklist) {
+    if (input.status === 'done' && !request.body.confirmIncompleteChecklist) {
       const incomplete = await incompleteChecklistCount(db, id, request.params.id, request.params.taskId);
       if (incomplete) return reply.code(409).send({ error: 'incomplete checklist confirmation required', incompleteChecklist: incomplete });
     }
-    const task = await updateTask(db, id, request.params.id, request.params.taskId, input);
+    const task = request.query.scope === 'future'
+      ? await updateTaskAndFuture(db, id, request.params.id, request.params.taskId, input)
+      : await updateTask(db, id, request.params.id, request.params.taskId, input);
     if (!task) return reply.code(403).send({ error: 'task action is not allowed' });
     return { ...task, notificationWarning: input.notifyAssignee ? await sendAssignmentNotification(task.id) : null };
   });
@@ -228,22 +242,19 @@ export function buildApp(config: Config, db: Database) {
 
   app.get<{Params: {id: string; taskId: string}}>('/api/boards/:id/tasks/:taskId/collaboration', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
-    return await taskCollaboration(db, id, request.params.id, request.params.taskId)
-      ?? reply.code(404).send({ error: 'task not found' });
+    return await taskCollaboration(db, id, request.params.id, request.params.taskId) ?? reply.code(404).send({ error: 'task not found' });
   });
   app.post<{Params: {id: string; taskId: string}, Body: {body?: string}}>('/api/boards/:id/tasks/:taskId/comments', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     const body = request.body?.body?.trim();
     if (!body || body.length > 4000) return reply.code(400).send({ error: 'comment must contain 1-4000 characters' });
-    return await addTaskComment(db, id, request.params.id, request.params.taskId, body)
-      ?? reply.code(404).send({ error: 'task not found' });
+    return await addTaskComment(db, id, request.params.id, request.params.taskId, body) ?? reply.code(404).send({ error: 'task not found' });
   });
   app.post<{Params: {id: string; taskId: string}, Body: {text?: string}}>('/api/boards/:id/tasks/:taskId/checklist', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     const text = request.body?.text?.trim();
     if (!text || text.length > 500) return reply.code(400).send({ error: 'checklist text must contain 1-500 characters' });
-    return await addChecklistItem(db, id, request.params.id, request.params.taskId, text)
-      ?? reply.code(403).send({ error: 'checklist action is not allowed' });
+    return await addChecklistItem(db, id, request.params.id, request.params.taskId, text) ?? reply.code(403).send({ error: 'checklist action is not allowed' });
   });
   app.patch<{Params: {id: string; taskId: string; itemId: string}, Body: {text?: string; completed?: boolean; position?: number}}>('/api/boards/:id/tasks/:taskId/checklist/:itemId', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
@@ -251,13 +262,11 @@ export function buildApp(config: Config, db: Database) {
     if (request.body?.text !== undefined && (!text || text.length > 500)) return reply.code(400).send({ error: 'checklist text must contain 1-500 characters' });
     if (request.body?.completed !== undefined && typeof request.body.completed !== 'boolean') return reply.code(400).send({ error: 'completed must be boolean' });
     if (request.body?.position !== undefined && (!Number.isInteger(request.body.position) || request.body.position < 0)) return reply.code(400).send({ error: 'position must be a non-negative integer' });
-    return await updateChecklistItem(db, id, request.params.id, request.params.taskId, request.params.itemId, { ...request.body, text })
-      ?? reply.code(403).send({ error: 'checklist action is not allowed' });
+    return await updateChecklistItem(db, id, request.params.id, request.params.taskId, request.params.itemId, { ...request.body, text }) ?? reply.code(403).send({ error: 'checklist action is not allowed' });
   });
   app.delete<{Params: {id: string; taskId: string; itemId: string}}>('/api/boards/:id/tasks/:taskId/checklist/:itemId', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
-    return await deleteChecklistItem(db, id, request.params.id, request.params.taskId, request.params.itemId)
-      ? { deleted: true } : reply.code(403).send({ error: 'checklist action is not allowed' });
+    return await deleteChecklistItem(db, id, request.params.id, request.params.taskId, request.params.itemId) ? { deleted: true } : reply.code(403).send({ error: 'checklist action is not allowed' });
   });
   app.post<{Params: {id: string; taskId: string}, Body: AttachmentInput}>('/api/boards/:id/tasks/:taskId/attachments', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
@@ -268,8 +277,24 @@ export function buildApp(config: Config, db: Database) {
     } else if (input?.kind === 'telegram') {
       if (!input.telegramFileId || !input.telegramFileUniqueId || input.telegramFileId.length > 1024 || input.telegramFileUniqueId.length > 256) return reply.code(400).send({ error: 'Telegram file metadata is required' });
     } else return reply.code(400).send({ error: 'attachment kind must be url or telegram' });
-    return await addTaskAttachment(db, id, request.params.id, request.params.taskId, input)
-      ?? reply.code(404).send({ error: 'task not found' });
+    return await addTaskAttachment(db, id, request.params.id, request.params.taskId, input) ?? reply.code(404).send({ error: 'task not found' });
+  });
+
+  app.get<{Params: {id: string}}>('/api/boards/:id/recurrences', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    return { recurrences: await recurrencesForBoard(db, id, request.params.id) };
+  });
+  app.post<{Params: {id: string}, Body: RecurrenceInput}>('/api/boards/:id/recurrences', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const input = recurrenceInput(request.body); if (typeof input === 'string') return reply.code(400).send({ error: input });
+    const recurrence = await createRecurrence(db, id, request.params.id, input);
+    return recurrence ?? reply.code(404).send({ error: 'board, project or assignee not found' });
+  });
+  app.patch<{Params: {id: string; recurrenceId: string}, Body: Partial<RecurrenceInput> & {paused?: boolean; archived?: boolean}}>('/api/boards/:id/recurrences/:recurrenceId', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const input = recurrenceInput(request.body as RecurrenceInput, true); if (typeof input === 'string') return reply.code(400).send({ error: input });
+    const recurrence = await updateRecurrence(db, id, request.params.id, request.params.recurrenceId, { ...input, paused: request.body.paused, archived: request.body.archived });
+    return recurrence ?? reply.code(403).send({ error: 'recurrence action is not allowed' });
   });
 
   app.post<{Body: TelegramUpdate}>('/api/telegram/webhook', async (request, reply) => {
