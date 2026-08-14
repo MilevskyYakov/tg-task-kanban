@@ -5,6 +5,7 @@ import { api, ApiError, json } from './api';
 import { AppShell, Avatar, Badge, CreateScreen, FieldRow, SectionHeader, SettingsScreen, Sheet, TasksScreen } from './app-shell';
 import type { Board, Collaboration, Member, Project, Recurrence, Schedule } from './domain';
 import { initialNavigation, settingsSections, type NavigationState } from './navigation';
+import { TaskDetails } from './task-details';
 import { activeFilterCount, dateInputToIso, dateTimeInputsToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveKanbanSwipe, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
 
 declare global { interface Window { Telegram?: { WebApp?: { initData: string; initDataUnsafe?: { start_param?: string; user?: { first_name: string; last_name?: string; username?: string } }; ready(): void; expand(): void } } } }
@@ -30,6 +31,9 @@ function App() {
   const [notifyAssignee, setNotifyAssignee] = useState(false);
   const [openTask, setOpenTask] = useState<Task>();
   const [collaboration, setCollaboration] = useState<Collaboration>();
+  const [detailProjects, setDetailProjects] = useState<Project[]>([]);
+  const [detailMembers, setDetailMembers] = useState<Member[]>([]);
+  const [detailTasks, setDetailTasks] = useState<Task[]>([]);
   const [showArchive, setShowArchive] = useState(false);
   const [userId, setUserId] = useState('');
   const [taskView, setTaskView] = useState<TaskView>(storedTaskView.view);
@@ -75,7 +79,7 @@ function App() {
       setCreateOrigin(navigation.screen === 'board' ? navigation : { screen: 'tasks' });
       setCreateBoardId(board?.status === 'active' ? board.id : '');
     }
-    setOpenTask(undefined); setCollaboration(undefined); setMessage(''); setNavigation(next);
+    setOpenTask(undefined); setCollaboration(undefined); setDetailProjects([]); setDetailMembers([]); setDetailTasks([]); setMessage(''); setNavigation(next);
   };
   const loadBoards = async () => { const data = await api<{boards: Board[]}>('/api/boards'); setBoards(data.boards); return data.boards; };
   const loadBoard = async (id: string, archive = showArchive) => {
@@ -232,25 +236,24 @@ function App() {
       setMessage(`Статус не изменён: ${error instanceof Error ? error.message : 'Ошибка'}`);
     }
   };
-  const editTask = async (task: Task) => {
-    const nextTitle = window.prompt('Название', task.title)?.trim(); if (!nextTitle) return;
-    const nextDescription = window.prompt('Описание', task.description ?? '')?.trim(); if (nextDescription === undefined) return;
-    const nextDeadline = window.prompt('Дедлайн, YYYY-MM-DD (пусто — убрать)', task.deadline?.slice(0, 10) ?? '')?.trim(); if (nextDeadline === undefined) return;
-    const nextPriority = window.confirm('Срочная задача?') ? 'urgent' : 'normal';
-    const nextProject = window.prompt(`ID проекта (пусто — без проекта)\n${projects.map((item) => `${item.id}: ${item.name}`).join('\n')}`, task.project_id ?? '')?.trim(); if (nextProject === undefined) return;
-    const nextAssignee = window.prompt(`ID исполнителя (пусто — без ответственного)\n${members.map((item) => `${item.id}: ${item.first_name}`).join('\n')}`, task.assignee_user_id ?? '')?.trim(); if (nextAssignee === undefined) return;
-    const scope = task.recurrence_template_id && window.confirm('Изменить этот и все будущие повторы?') ? '?scope=future' : '';
-    const notifyAssignee = Boolean(nextAssignee && nextAssignee !== task.assignee_user_id && window.confirm('Уведомить нового исполнителя?'));
-    await action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}${scope}`, json('PATCH', { title: nextTitle, description: nextDescription || null, deadline: nextDeadline ? new Date(`${nextDeadline}T00:00:00`).toISOString() : null, priority: nextPriority, projectId: nextProject || null, assigneeUserId: nextAssignee || null, notifyAssignee })), 'Задача обновлена');
-  };
   const openCollaboration = async (task: Task) => {
-    try { setOpenTask(task); setCollaboration(await api(`/api/boards/${task.board_id}/tasks/${task.id}/collaboration`)); }
+    try {
+      const [nextCollaboration, nextProjects, nextMembers, nextTasks] = await Promise.all([
+        api<Collaboration>(`/api/boards/${task.board_id}/tasks/${task.id}/collaboration`),
+        api<{projects: Project[]}>(`/api/boards/${task.board_id}/projects`),
+        api<{members: Member[]}>(`/api/boards/${task.board_id}/members`),
+        api<{tasks: Task[]}>(`/api/boards/${task.board_id}/tasks`)
+      ]);
+      taskScroll.current = window.scrollY;
+      setOpenTask(task); setCollaboration(nextCollaboration); setDetailProjects(nextProjects.projects); setDetailMembers(nextMembers.members); setDetailTasks(nextTasks.tasks); setMessage('');
+    }
     catch (error) { setMessage(error instanceof Error ? error.message : 'Ошибка'); }
   };
   const collaborationAction = async (path: string, options: RequestInit) => {
     if (!openTask) return;
-    await action(() => api(path, options), 'Сохранено', false);
+    await api(path, options);
     setCollaboration(await api(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/collaboration`));
+    setMessage('Сохранено');
   };
   const addProject = async (event: React.FormEvent<HTMLFormElement> | React.MouseEvent<HTMLButtonElement>) => {
     if (!board) return;
@@ -319,16 +322,16 @@ function App() {
       <div className="meta">{task.project_name && <small>{task.project_name}</small>}<small>{task.assignee_name ?? 'Без ответственного'}</small>{task.deadline && <small>До {new Date(task.deadline).toLocaleDateString('ru-RU')}</small>}</div>
       {task.overdue && <small className="flag">Дедлайн прошёл</small>}{task.wait_check_due && <small className="flag">Пора проверить ожидание</small>}{task.blocker_title ? <small>Блокирует: {task.blocker_title}</small> : task.wait_reason && <small>Внешний блокер: {task.wait_reason}</small>}
     </div>
-    {board && <div className="actions"><button onClick={() => openCollaboration(task)}>Обсуждение</button>{task.archived_at ? <button onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}/reopen`, {method: 'POST'}), 'Задача восстановлена')}>Восстановить</button> : <>
+    {board && <div className="actions"><button onClick={() => openCollaboration(task)}>Открыть</button>{task.archived_at ? <button onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}/reopen`, {method: 'POST'}), 'Задача восстановлена')}>Восстановить</button> : <>
       <label className="status-control">Статус<select aria-label={`Статус задачи ${task.title}`} value={task.status} onChange={(event) => void move(task, event.target.value as TaskStatus)}>{statuses.map((status) => <option key={status} value={status}>{statusDisplayName[status]}</option>)}</select></label>
-      <button onClick={() => editTask(task)}>Изменить</button><button onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}`, {method: 'DELETE'}), 'Задача архивирована')}>В архив</button>
+      <button onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}`, {method: 'DELETE'}), 'Задача архивирована')}>В архив</button>
     </>}</div>}
   </article>;
   const taskList = <div className="task-list">{filteredTasks.map(taskCard)}</div>;
   const initials = (name?: string) => name?.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toLocaleUpperCase('ru-RU') || '—';
   const mainTaskRow = (task: Task) => <article className="main-task-row" key={task.id}>
     <input className="task-completion" type="checkbox" checked={task.status === 'done'} disabled={task.status === 'done'} aria-label={`Завершить задачу ${task.title}`} onChange={() => void move(task, 'done')}/>
-    <div className="task-summary">
+    <button className="task-summary" onClick={() => void openCollaboration(task)}>
       <strong>{task.title}</strong>
       <div className="task-meta">
         <span>{task.project_name ?? task.board_name ?? 'Без проекта'}</span>
@@ -338,7 +341,7 @@ function App() {
         {Boolean(task.checklist_total) && <span>{task.checklist_completed}/{task.checklist_total}</span>}
       </div>
       {task.status === 'waiting' && task.wait_reason && <small className="blocker-reason">{task.wait_reason}</small>}
-    </div>
+    </button>
     {task.assignee_name && <Avatar initials={initials(task.assignee_name)} label={`Исполнитель: ${task.assignee_name}`}/>}
   </article>;
   const deadlineGroups = groupTasksByDeadline(filteredTasks);
@@ -427,7 +430,29 @@ function App() {
     </div>
   </Sheet>;
 
-  if (openTask && collaboration) return <AppShell message={message} navigation={navigation} navigate={navigate}><button className="back" onClick={() => { setOpenTask(undefined); setCollaboration(undefined); }}>← К доске</button><header><p className="eyebrow">КАРТОЧКА ЗАДАЧИ</p><h1>{openTask.title}</h1></header><section className="collaboration"><h2>Чек-лист</h2>{collaboration.checklist.map((item) => <label key={item.id}><input type="checkbox" checked={Boolean(item.completed_at)} onChange={() => collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/checklist/${item.id}`, json('PATCH', {completed: !item.completed_at}))}/>{item.text}</label>)}<button onClick={() => { const text = window.prompt('Новый пункт')?.trim(); if (text) void collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/checklist`, json('POST', {text})); }}>Добавить пункт</button><h2>Комментарии</h2>{collaboration.comments.map((item) => <p key={item.id}><strong>{item.author_name}</strong> · {new Date(item.created_at).toLocaleString('ru-RU')}<br/>{item.body}</p>)}<button onClick={() => { const body = window.prompt('Комментарий')?.trim(); if (body) void collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/comments`, json('POST', {body})); }}>Комментировать</button><h2>Вложения</h2>{collaboration.attachments.map((item) => <p key={item.id}>{item.url ? <a href={item.url}>{item.url}</a> : item.file_name ?? 'Telegram-файл'}</p>)}<button onClick={() => { const url = window.prompt('Ссылка')?.trim(); if (url) void collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/attachments`, json('POST', {kind: 'url', url})); }}>Добавить ссылку</button><h2>История</h2>{collaboration.timeline.map((item) => <p key={item.id}>{item.actor_name} · {item.action} · {new Date(item.created_at).toLocaleString('ru-RU')}</p>)}</section></AppShell>;
+  if (openTask && collaboration) return <TaskDetails
+    task={openTask} collaboration={collaboration} projects={detailProjects} members={detailMembers}
+    candidateTasks={detailTasks.filter((item) => item.id !== openTask.id && item.status !== 'done' && !item.archived_at)}
+    boardName={boards.find((item) => item.id === openTask.board_id)?.name ?? openTask.board_name ?? 'Задача'}
+    onBack={() => { setOpenTask(undefined); setCollaboration(undefined); requestAnimationFrame(() => window.scrollTo({ top: taskScroll.current })); }}
+    onSave={async (patch, future, confirmIncompleteChecklist = false) => {
+      await api(`/api/boards/${openTask.board_id}/tasks/${openTask.id}${future ? '?scope=future' : ''}`, json('PATCH', { ...patch, confirmIncompleteChecklist }));
+      if (board) await loadBoard(board.id);
+      else setTasks((current) => current.map((item) => item.id === openTask.id ? {
+        ...item, title: patch.title, description: patch.description ?? undefined, status: patch.status, priority: patch.priority,
+        project_id: patch.projectId ?? undefined, project_name: detailProjects.find((project) => project.id === patch.projectId)?.name,
+        assignee_user_id: patch.assigneeUserId ?? undefined, assignee_name: detailMembers.find((member) => member.id === patch.assigneeUserId)?.first_name,
+        deadline: patch.deadline ?? undefined, blocked_by_task_id: patch.blockerTaskId ?? undefined, wait_reason: patch.waitReason ?? undefined
+      } : item));
+      setMessage('Задача обновлена');
+    }}
+    onArchive={async () => { await api(`/api/boards/${openTask.board_id}/tasks/${openTask.id}`, { method: 'DELETE' }); if (board) await loadBoard(board.id); else setTasks((current) => current.filter((item) => item.id !== openTask.id)); setOpenTask(undefined); setCollaboration(undefined); setMessage('Задача архивирована'); }}
+    onChecklistAdd={(text) => collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/checklist`, json('POST', { text }))}
+    onChecklistUpdate={(itemId, patch) => collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/checklist/${itemId}`, json('PATCH', patch))}
+    onChecklistDelete={(itemId) => collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/checklist/${itemId}`, { method: 'DELETE' })}
+    onComment={(body) => collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/comments`, json('POST', { body }))}
+    onUrlAttachment={(url) => collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/attachments`, json('POST', { kind: 'url', url }))}
+  />;
   const saveSchedule = async (schedule: Schedule, previewOnly = false) => {
     if (!board) return;
     const result = await api<Schedule | {messages: string[]}>(`/api/boards/${board.id}/publications/${schedule.kind}${previewOnly ? '/preview' : ''}`, json(previewOnly ? 'POST' : 'PUT', schedule));

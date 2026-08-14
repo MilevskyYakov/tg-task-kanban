@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { initialNavigation, isSettingsNavigation, settingsSections } from '../src/navigation.js';
+import { taskDraft, taskPatch } from '../src/task-details.js';
 import {
   activeFilterCount,
   dateInputToIso,
@@ -139,4 +140,14 @@ test('kanban swipe changes one column only for horizontal gestures', () => {
 test('display mappings capture agreed product language', () => {
   assert.deepEqual(statusDisplayName, { todo: 'Новая', in_progress: 'В работе', waiting: 'Блокер', done: 'Готово' });
   assert.deepEqual(priorityDisplayName, { normal: 'Обычная', urgent: 'Срочная' });
+});
+
+test('task details patch validates blockers and preserves editable fields', () => {
+  const draft = { ...taskDraft(tasks[0]), title: '  Обновлённая задача  ', description: '  Детали  ', deadline: '2026-08-20', status: 'waiting' as const, waitReason: '  Ждём клиента  ' };
+  assert.deepEqual(taskPatch(draft), {
+    title: 'Обновлённая задача', description: 'Детали', status: 'waiting', projectId: 'p', assigneeUserId: 'u',
+    deadline: '2026-08-20T00:00:00.000Z', priority: 'urgent', blockerTaskId: null, waitReason: 'Ждём клиента', waitCheckAt: null, notifyAssignee: false
+  });
+  assert.throws(() => taskPatch({ ...draft, waitReason: '' }), /задачу-блокер или внешнюю причину/);
+  assert.throws(() => taskPatch({ ...draft, deadline: '2026-02-30' }), /корректный срок/);
 });
