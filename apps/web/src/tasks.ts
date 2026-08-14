@@ -37,6 +37,22 @@ export const defaultFilters: TaskFilters = {
   scope: 'mine', project: '', assignee: '', status: '', priority: '', deadline: '', unassigned: false, search: ''
 };
 
+export function activeFilterCount(filters: TaskFilters): number {
+  return Number(filters.scope !== defaultFilters.scope)
+    + Number(Boolean(filters.project))
+    + Number(Boolean(filters.assignee))
+    + Number(Boolean(filters.status))
+    + Number(Boolean(filters.priority))
+    + Number(Boolean(filters.deadline))
+    + Number(filters.unassigned);
+}
+
+export function resolveTaskBoard(globalBoardId: string, overrideBoardId: string | undefined, boardIds: string[]): string {
+  const available = new Set(boardIds);
+  if (overrideBoardId && available.has(overrideBoardId)) return overrideBoardId;
+  return available.has(globalBoardId) ? globalBoardId : '';
+}
+
 export const statusDisplayName: Record<TaskStatus, string> = {
   todo: 'Новая', in_progress: 'В работе', waiting: 'Блокер', done: 'Готово'
 };
@@ -141,7 +157,7 @@ export function filterTasks(tasks: Task[], filters: TaskFilters, userId: string,
     return (filters.scope === 'all' || task.assignee_user_id === userId)
       && (!filters.project || task.project_id === filters.project)
       && (!filters.assignee || task.assignee_user_id === filters.assignee)
-      && (!filters.status || task.status === filters.status)
+      && (filters.status ? task.status === filters.status : task.status !== 'done')
       && (!filters.priority || task.priority === filters.priority)
       && (!filters.unassigned || !task.assignee_user_id)
       && (!search || task.title.toLocaleLowerCase('ru-RU').includes(search) || task.description?.toLocaleLowerCase('ru-RU').includes(search))

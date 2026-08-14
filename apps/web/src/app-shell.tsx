@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { useEffect, useRef, type ButtonHTMLAttributes, type KeyboardEvent, type ReactNode } from 'react';
 import type { NavigationState } from './navigation';
 
 type IconName = 'tasks' | 'plus' | 'settings' | 'close';
@@ -42,7 +42,22 @@ export function SectionHeader({ children, count, tone = 'upcoming' }: { children
 }
 
 export function Sheet({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
-  return <section className="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title"><header><h2 id="sheet-title">{title}</h2><IconButton label="Закрыть" onClick={onClose}><Icon name="close"/></IconButton></header>{children}</section>;
+  const sheet = useRef<HTMLElement>(null);
+  const previousFocus = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    sheet.current?.querySelector<HTMLElement>('button, input, select, [href], [tabindex]:not([tabindex="-1"])')?.focus();
+    return () => previousFocus.current?.focus();
+  }, []);
+  const handleKeyDown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') { onClose(); return; }
+    if (event.key !== 'Tab') return;
+    const focusable = [...(sheet.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])') ?? [])];
+    const first = focusable[0]; const last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+  };
+  return <section ref={sheet} className="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" onKeyDown={handleKeyDown}><header><h2 id="sheet-title">{title}</h2><IconButton label="Закрыть" onClick={onClose}><Icon name="close"/></IconButton></header>{children}</section>;
 }
 
 export function FieldRow({ label, children }: { label: string; children: ReactNode }) {
@@ -57,8 +72,8 @@ export function Badge({ children, tone = 'neutral' }: { children: ReactNode; ton
   return <span className="badge" data-tone={tone}>{children}</span>;
 }
 
-export function TasksScreen({ children }: { children: ReactNode }) {
-  return <><header className="page-header"><div className="title-row"><h1>Задачи</h1><TaskGlyph/></div><button className="board-selector">Все доски <span aria-hidden="true">⌄</span></button></header>{children}</>;
+export function TasksScreen({ children, boardName, onSelectBoard }: { children: ReactNode; boardName: string; onSelectBoard: () => void }) {
+  return <><header className="page-header"><div className="title-row"><h1>Задачи</h1><TaskGlyph/></div><button className="board-selector" onClick={onSelectBoard}>{boardName} <span aria-hidden="true">⌄</span></button></header>{children}</>;
 }
 
 export function SettingsScreen({ children }: { children: ReactNode }) {
