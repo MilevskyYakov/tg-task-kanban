@@ -120,6 +120,14 @@ export function restoreTaskViewState(value: string | null): TaskViewState {
   }
 }
 
+export function resolveKanbanSwipe(status: TaskStatus, startX: number, startY: number, endX: number, endY: number): TaskStatus {
+  const deltaX = endX - startX;
+  const deltaY = endY - startY;
+  if (Math.abs(deltaX) < 48 || Math.abs(deltaX) <= Math.abs(deltaY)) return status;
+  const index = taskStatuses.indexOf(status) + (deltaX < 0 ? 1 : -1);
+  return taskStatuses[Math.max(0, Math.min(taskStatuses.length - 1, index))];
+}
+
 export type DeadlineGroup = 'overdue' | 'today' | 'upcoming' | 'none';
 
 function localDateKey(date: Date, timeZone: string): string {
@@ -179,8 +187,28 @@ export async function optimisticUpdate<T>(current: T, next: T, render: (value: T
   catch (error) { render(current); throw error; }
 }
 
+export function validateTaskCreate(title: string, boardId: string): string | null {
+  if (!title.trim()) return 'Введите название задачи';
+  if (!boardId) return 'Выберите доску';
+  return null;
+}
+
+export function presentCreatedTask(task: Task, boardName?: string, projectName?: string, assigneeName?: string, now = new Date()): Task {
+  return {
+    ...task, board_name: boardName, project_name: projectName, assignee_name: assigneeName,
+    checklist_total: 0, checklist_completed: 0,
+    overdue: Boolean(task.deadline && task.status !== 'done' && new Date(task.deadline) < now), wait_check_due: false
+  };
+}
+
 export function dateInputToIso(value: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
   const date = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value ? date.toISOString() : null;
+}
+
+export function dateTimeInputsToIso(date: string, time: string): string | null {
+  if (!dateInputToIso(date) || (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time))) return null;
+  const value = new Date(`${date}T${time || '00:00'}:00`);
+  return Number.isNaN(value.valueOf()) ? null : value.toISOString();
 }
