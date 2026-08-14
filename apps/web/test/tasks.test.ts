@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { initialNavigation } from '../src/navigation.js';
+import { initialNavigation, isSettingsNavigation, settingsSections } from '../src/navigation.js';
 import { taskDraft, taskPatch } from '../src/task-details.js';
 import {
   activeFilterCount,
@@ -91,6 +91,12 @@ test('startup context defaults to tasks and distinguishes board and task links',
 
 test('app navigation starts on tasks', () => {
   assert.deepEqual(initialNavigation(), { screen: 'tasks' });
+});
+
+test('settings root exposes only agreed sections and keeps child navigation active', () => {
+  assert.deepEqual(settingsSections.map(({ title }) => title), ['Рабочее пространство', 'Автоматизация', 'Аккаунт']);
+  assert.equal(isSettingsNavigation({ screen: 'settings-workspace' }), true);
+  assert.equal(isSettingsNavigation({ screen: 'tasks' }), false);
 });
 
 test('deadline groups use the requested timezone for the Today boundary', () => {
