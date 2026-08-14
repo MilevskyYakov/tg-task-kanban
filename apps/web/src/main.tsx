@@ -5,7 +5,7 @@ import { api, ApiError, json } from './api';
 import { AppShell, Avatar, Badge, CreateScreen, FieldRow, SectionHeader, SettingsScreen, Sheet, TasksScreen } from './app-shell';
 import type { Board, Collaboration, Member, Project, Recurrence, Schedule } from './domain';
 import { initialNavigation, type NavigationState } from './navigation';
-import { activeFilterCount, dateInputToIso, dateTimeInputsToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
+import { activeFilterCount, dateInputToIso, dateTimeInputsToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveKanbanSwipe, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
 
 declare global { interface Window { Telegram?: { WebApp?: { initData: string; initDataUnsafe?: { start_param?: string }; ready(): void; expand(): void } } } }
 type TaskView = 'list' | 'kanban';
@@ -32,8 +32,9 @@ function App() {
   const [collaboration, setCollaboration] = useState<Collaboration>();
   const [showArchive, setShowArchive] = useState(false);
   const [userId, setUserId] = useState('');
-  const [taskView, setTaskView] = useState<TaskView>('list');
+  const [taskView, setTaskView] = useState<TaskView>(storedTaskView.view);
   const [grouping, setGrouping] = useState(storedTaskView.grouping);
+  const [kanbanStatus, setKanbanStatus] = useState(storedTaskView.kanbanStatus);
   const [taskLoadState, setTaskLoadState] = useState<'loading' | 'error' | 'ready'>('loading');
   const [taskReload, setTaskReload] = useState(0);
   const [filters, setFilters] = useState<TaskFilters>(defaultFilters);
@@ -57,7 +58,7 @@ function App() {
   const boardLoadVersion = useRef(0);
   const skipNextTaskLoad = useRef(false);
   const taskScroll = useRef(storedTaskView.scrollY);
-  const touchDrag = useRef<{task?: Task; x: number; y: number; active: boolean; timer?: ReturnType<typeof setTimeout>}>({ x: 0, y: 0, active: false });
+  const swipeStart = useRef<{x: number; y: number} | null>(null);
   const selectedTaskBoardId = resolveTaskBoard(globalBoardId, boardOverrideId, boards.map((item) => item.id));
   const board = navigation.screen === 'board'
     ? boards.find((item) => item.id === navigation.boardId)
@@ -133,12 +134,12 @@ function App() {
     const save = () => {
       taskScroll.current = window.scrollY;
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => localStorage.setItem('tasks.viewState', serializeTaskViewState({ ...storedTaskView, view: 'list', grouping, filters, scrollY: taskScroll.current })), 100);
+      timer = setTimeout(() => localStorage.setItem('tasks.viewState', serializeTaskViewState({ view: taskView, grouping, filters, scrollY: taskScroll.current, kanbanStatus })), 100);
     };
     window.addEventListener('scroll', save, { passive: true });
     save();
-    return () => { window.removeEventListener('scroll', save); if (timer) clearTimeout(timer); taskScroll.current = window.scrollY; localStorage.setItem('tasks.viewState', serializeTaskViewState({ ...storedTaskView, view: 'list', grouping, filters, scrollY: taskScroll.current })); };
-  }, [navigation.screen, grouping, filters]);
+    return () => { window.removeEventListener('scroll', save); if (timer) clearTimeout(timer); taskScroll.current = window.scrollY; localStorage.setItem('tasks.viewState', serializeTaskViewState({ view: taskView, grouping, filters, scrollY: taskScroll.current, kanbanStatus })); };
+  }, [navigation.screen, taskView, grouping, filters, kanbanStatus]);
 
   useEffect(() => {
     if (!userId || !board) return;
@@ -274,38 +275,14 @@ function App() {
     } else localStorage.removeItem('tasks.globalBoardId');
   };
   const filteredTasks = !showArchive ? filterTasks(tasks, filters, userId) : tasks;
-  const filterCount = activeFilterCount(filters);
+  const filterCount = activeFilterCount(taskView === 'kanban' ? { ...filters, status: '' } : filters);
   const recentBoards = recentBoardIds.map((id) => boards.find((item) => item.id === id)).filter((item): item is Board => Boolean(item));
   const matchingBoards = boards.filter((item) => item.name.toLocaleLowerCase('ru-RU').includes(boardSearch.trim().toLocaleLowerCase('ru-RU')));
   const setFilter = <K extends keyof TaskFilters>(key: K, value: TaskFilters[K]) => setFilters((current) => ({ ...current, [key]: value }));
-  const finishTouchDrag = (event: React.PointerEvent) => {
-    const drag = touchDrag.current;
-    if (drag.timer) clearTimeout(drag.timer);
-    if (drag.active && drag.task) {
-      const column = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-status]');
-      const status = column?.dataset.status as TaskStatus | undefined;
-      if (status) void move(drag.task, status);
-    }
-    touchDrag.current = { x: 0, y: 0, active: false };
-    setDraggedTask(undefined);
-  };
   const taskCard = (task: Task) => <article
     className={`task ${task.priority === 'urgent' ? 'urgent' : ''} ${task.overdue ? 'overdue' : ''} ${task.wait_check_due ? 'wait-due' : ''} ${!task.assignee_user_id ? 'unassigned' : ''} ${draggedTask === task.id ? 'dragging' : ''}`}
     key={task.id} draggable={Boolean(board && !task.archived_at)}
-    onDragStart={(event) => { setDraggedTask(task.id); event.dataTransfer.setData('text/plain', task.id); }} onDragEnd={() => setDraggedTask(undefined)}
-    onPointerDown={(event) => {
-      if (event.pointerType !== 'touch' || !board || task.archived_at || (event.target as Element).closest('button,select,input,label')) return;
-      const drag = { task, x: event.clientX, y: event.clientY, active: false, timer: undefined as ReturnType<typeof setTimeout> | undefined };
-      const target = event.currentTarget;
-      drag.timer = setTimeout(() => { drag.active = true; target.setPointerCapture(event.pointerId); setDraggedTask(task.id); navigator.vibrate?.(20); }, 350);
-      touchDrag.current = drag;
-    }}
-    onPointerMove={(event) => {
-      const drag = touchDrag.current;
-      if (drag.task?.id !== task.id) return;
-      if (!drag.active && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) > 8 && drag.timer) { clearTimeout(drag.timer); drag.timer = undefined; }
-      if (drag.active) event.preventDefault();
-    }} onPointerUp={finishTouchDrag} onPointerCancel={finishTouchDrag}>
+    onDragStart={(event) => { setDraggedTask(task.id); event.dataTransfer.setData('text/plain', task.id); }} onDragEnd={() => setDraggedTask(undefined)}>
     <div onClick={() => { if (!board && task.board_id) setNavigation({ screen: 'board', boardId: task.board_id }); }}>
       <span>{task.board_name ?? statusDisplayName[task.status]}</span><strong>{task.title}</strong>
       {task.description && <small>{task.description}</small>}
@@ -343,6 +320,23 @@ function App() {
     ? deadlineSections.map((section) => deadlineGroups[section.id].length > 0 && <section className="task-section" key={section.id}><SectionHeader count={deadlineGroups[section.id].length} tone={section.id}><span className="section-title"><span aria-hidden="true">{section.icon}</span>{section.label}</span></SectionHeader>{deadlineGroups[section.id].map(mainTaskRow)}</section>)
     : groupTasksByProject(filteredTasks).map((group) => <section className="task-section project-section" key={group.id ?? 'none'}><SectionHeader count={group.tasks.length} tone="upcoming">{group.name}</SectionHeader>{group.tasks.map(mainTaskRow)}</section>)
   }</div>;
+  const kanbanTasks = filterTasks(tasks, { ...filters, status: kanbanStatus }, userId);
+  const kanbanTaskRow = (task: Task) => <article className="kanban-task-row" key={task.id}>
+    <div className="task-summary"><strong>{task.title}</strong><div className="task-meta"><span>{task.project_name ?? task.board_name ?? 'Без проекта'}</span>{task.deadline && <span>{new Date(task.deadline).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</span>}{task.priority === 'urgent' && <Badge tone="urgent">Срочно</Badge>}</div></div>
+    {task.assignee_name && <Avatar initials={initials(task.assignee_name)} label={`Исполнитель: ${task.assignee_name}`}/>}
+    <label className="kanban-status-control">Статус<select aria-label={`Статус задачи ${task.title}`} value={task.status} onChange={(event) => void move(task, event.target.value as TaskStatus)}>{statuses.map((status) => <option key={status} value={status}>{statusDisplayName[status]}</option>)}</select></label>
+  </article>;
+  const mainKanban = <div className="mobile-kanban">
+    <div className="status-tabs" role="tablist" aria-label="Статусы задач">{statuses.map((status) => <button role="tab" aria-selected={kanbanStatus === status} className={kanbanStatus === status ? 'active' : ''} key={status} onClick={() => setKanbanStatus(status)}>{statusDisplayName[status]} <small>{filterTasks(tasks, { ...filters, status }, userId).length}</small></button>)}</div>
+    <section className="active-kanban-column" aria-label={statusDisplayName[kanbanStatus]}
+      onPointerDown={(event) => { if (event.pointerType === 'touch') swipeStart.current = { x: event.clientX, y: event.clientY }; }}
+      onPointerUp={(event) => { if (!swipeStart.current) return; setKanbanStatus(resolveKanbanSwipe(kanbanStatus, swipeStart.current.x, swipeStart.current.y, event.clientX, event.clientY)); swipeStart.current = null; }}
+      onPointerCancel={() => { swipeStart.current = null; }}>
+      <header className="kanban-column-header"><div><p className="eyebrow">ПО СТАТУСУ</p><h2>{statusDisplayName[kanbanStatus]} <small>{kanbanTasks.length}</small></h2></div><small>Свайпните для смены статуса</small></header>
+      <div className="kanban-tasks">{kanbanTasks.map(kanbanTaskRow)}</div>
+      {!kanbanTasks.length && <p className="task-state">Задач в этом статусе нет.</p>}
+    </section>
+  </div>;
   const kanban = <div className="kanban" aria-label="Канбан">{statuses.map((status) => <section className="kanban-column" data-status={status} key={status}
     onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const task = tasks.find((item) => item.id === event.dataTransfer.getData('text/plain')); if (task) void move(task, status); }}>
     <h2>{statusDisplayName[status]} <small>{filteredTasks.filter((task) => task.status === status).length}</small></h2>
@@ -362,8 +356,8 @@ function App() {
     </div></details></>;
   const taskToolbar = <>
     <div className="list-controls">
-      <div className="grouping-tabs" role="tablist" aria-label="Группировка задач"><button role="tab" aria-selected={grouping === 'deadline'} className={grouping === 'deadline' ? 'active' : ''} onClick={() => setGrouping('deadline')}>По срокам</button><button role="tab" aria-selected={grouping === 'project'} className={grouping === 'project' ? 'active' : ''} onClick={() => setGrouping('project')}>По проектам</button></div>
-      <div className="view-switch" aria-label="Вид задач"><button className="active" aria-label="Список" aria-pressed="true"><svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h3v3H5zM11 6h8M5 11h3v3H5zM11 11h8M5 16h3v3H5zM11 16h8"/></svg></button><button aria-label="Канбан" title="Канбан будет реализован отдельно" disabled><svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h4v14H5zM10 5h4v14h-4zM15 5h4v14h-4z"/></svg></button></div>
+      {taskView === 'list' ? <div className="grouping-tabs" role="tablist" aria-label="Группировка задач"><button role="tab" aria-selected={grouping === 'deadline'} className={grouping === 'deadline' ? 'active' : ''} onClick={() => setGrouping('deadline')}>По срокам</button><button role="tab" aria-selected={grouping === 'project'} className={grouping === 'project' ? 'active' : ''} onClick={() => setGrouping('project')}>По проектам</button></div> : <strong className="kanban-grouping">По статусу</strong>}
+      <div className="view-switch" aria-label="Вид задач"><button className={taskView === 'list' ? 'active' : ''} aria-label="Список" aria-pressed={taskView === 'list'} onClick={() => setTaskView('list')}><svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h3v3H5zM11 6h8M5 11h3v3H5zM11 11h8M5 16h3v3H5zM11 16h8"/></svg></button><button className={taskView === 'kanban' ? 'active' : ''} aria-label="Канбан" aria-pressed={taskView === 'kanban'} onClick={() => setTaskView('kanban')}><svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h4v14H5zM10 5h4v14h-4zM15 5h4v14h-4z"/></svg></button></div>
     </div>
     <div className="task-toolbar">
       <input className="search" type="search" value={filters.search} onChange={(event) => setFilter('search', event.target.value)} placeholder="Поиск задач" aria-label="Поиск задач"/>
@@ -373,7 +367,7 @@ function App() {
       {filters.scope === 'all' && <button onClick={() => setFilter('scope', 'mine')}>Все задачи ×</button>}
       {filters.project && <button onClick={() => setFilter('project', '')}>{projects.find((item) => item.id === filters.project)?.name ?? 'Проект'} ×</button>}
       {filters.assignee && <button onClick={() => setFilter('assignee', '')}>{members.find((item) => item.id === filters.assignee)?.first_name ?? 'Исполнитель'} ×</button>}
-      {filters.status && <button onClick={() => setFilter('status', '')}>{statusDisplayName[filters.status]} ×</button>}
+      {taskView === 'list' && filters.status && <button onClick={() => setFilter('status', '')}>{statusDisplayName[filters.status]} ×</button>}
       {filters.priority && <button onClick={() => setFilter('priority', '')}>{filters.priority === 'urgent' ? 'Срочные' : 'Обычные'} ×</button>}
       {filters.deadline && <button onClick={() => setFilter('deadline', '')}>Срок ×</button>}
       {filters.unassigned && <button onClick={() => setFilter('unassigned', false)}>Без ответственного ×</button>}
@@ -395,7 +389,7 @@ function App() {
       {board && <FieldRow label="Задачи"><select value={filters.scope} onChange={(event) => setFilter('scope', event.target.value as TaskFilters['scope'])}><option value="mine">Мои</option><option value="all">Все</option></select></FieldRow>}
       {board && <FieldRow label="Проект"><select value={filters.project} onChange={(event) => setFilter('project', event.target.value)}><option value="">Все проекты</option>{projects.filter((item) => !item.archived_at).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></FieldRow>}
       {board && <FieldRow label="Исполнитель"><select value={filters.assignee} onChange={(event) => setFilter('assignee', event.target.value)}><option value="">Все исполнители</option>{members.map((member) => <option key={member.id} value={member.id}>{member.first_name}</option>)}</select></FieldRow>}
-      <FieldRow label="Статус"><select value={filters.status} onChange={(event) => setFilter('status', event.target.value as TaskFilters['status'])}><option value="">Без завершённых</option>{statuses.map((status) => <option key={status} value={status}>{statusDisplayName[status]}</option>)}</select></FieldRow>
+      {taskView === 'list' && <FieldRow label="Статус"><select value={filters.status} onChange={(event) => setFilter('status', event.target.value as TaskFilters['status'])}><option value="">Без завершённых</option>{statuses.map((status) => <option key={status} value={status}>{statusDisplayName[status]}</option>)}</select></FieldRow>}
       <FieldRow label="Приоритет"><select value={filters.priority} onChange={(event) => setFilter('priority', event.target.value as TaskFilters['priority'])}><option value="">Любой</option><option value="normal">Обычный</option><option value="urgent">Срочный</option></select></FieldRow>
       <FieldRow label="Дедлайн"><select value={filters.deadline} onChange={(event) => setFilter('deadline', event.target.value as TaskFilters['deadline'])}><option value="">Любой</option><option value="overdue">Просрочено</option><option value="today">Сегодня</option><option value="week">7 дней</option><option value="none">Без дедлайна</option></select></FieldRow>
       <label className="checkbox"><input type="checkbox" checked={filters.unassigned} onChange={(event) => setFilter('unassigned', event.target.checked)}/> Без ответственного</label>
@@ -414,7 +408,7 @@ function App() {
   if (state === 'outside') return <main><section><p className="eyebrow">KAIROS TASKS</p><h1>Задачи живут<br/>в Telegram</h1><p>Откройте приложение через <a href="https://t.me/kairostask_bot">@kairostask_bot</a>.</p></section></main>;
   if (state === 'error') return <main><section><h1>Не удалось войти</h1><p>{message || 'Закройте приложение и откройте его снова через бота.'}</p></section></main>;
   if (state === 'loading') return <main><section><p>Загрузка…</p></section></main>;
-  if (navigation.screen === 'tasks') return <AppShell message={message} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>{taskToolbar}{taskLoadState === 'loading' ? <p className="task-state">Загрузка задач…</p> : taskLoadState === 'error' ? <div className="task-state"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : groupedTaskList}{taskLoadState === 'ready' && !filteredTasks.length && <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>}{boardOverrideId && <p className="context-note">Доска открыта из Telegram-чата и не заменяет ваш обычный выбор.</p>}{boardSheet}{filterSheet}</TasksScreen></AppShell>;
+  if (navigation.screen === 'tasks') return <AppShell message={message} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>{taskToolbar}{taskLoadState === 'loading' ? <p className="task-state">Загрузка задач…</p> : taskLoadState === 'error' ? <div className="task-state"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : taskView === 'kanban' ? mainKanban : groupedTaskList}{taskLoadState === 'ready' && taskView === 'list' && !filteredTasks.length && <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>}{boardOverrideId && <p className="context-note">Доска открыта из Telegram-чата и не заменяет ваш обычный выбор.</p>}{boardSheet}{filterSheet}</TasksScreen></AppShell>;
   if (navigation.screen === 'create') return <AppShell message={message} navigation={navigation} navigate={navigate} hideNavigation><CreateScreen onClose={() => navigate(createOrigin)}>
     <form className="create-screen-form" onSubmit={(event) => { event.preventDefault(); void create(); }}>
       <label className="create-title"><span>Что нужно сделать?</span><textarea autoFocus value={title} onChange={(event) => setTitle(event.target.value)} maxLength={200} rows={2} required placeholder="Название задачи"/></label>

@@ -13,6 +13,7 @@ import {
   optimisticUpdate,
   presentCreatedTask,
   priorityDisplayName,
+  resolveKanbanSwipe,
   resolveStartupContext,
   resolveTaskBoard,
   restoreTaskViewState,
@@ -119,6 +120,14 @@ test('task view state round-trips and malformed state falls back safely', () => 
   const state = { ...defaultTaskViewState, view: 'kanban' as const, grouping: 'project' as const, scrollY: 240, kanbanStatus: 'waiting' as const, filters: { ...defaultFilters, scope: 'all' as const, search: 'релиз' } };
   assert.deepEqual(restoreTaskViewState(serializeTaskViewState(state)), state);
   assert.deepEqual(restoreTaskViewState('{broken'), defaultTaskViewState);
+});
+
+test('kanban swipe changes one column only for horizontal gestures', () => {
+  assert.equal(resolveKanbanSwipe('in_progress', 120, 200, 40, 210), 'waiting');
+  assert.equal(resolveKanbanSwipe('in_progress', 40, 200, 120, 190), 'todo');
+  assert.equal(resolveKanbanSwipe('in_progress', 120, 120, 90, 240), 'in_progress', 'vertical scroll keeps current column');
+  assert.equal(resolveKanbanSwipe('todo', 120, 200, 40, 205), 'in_progress');
+  assert.equal(resolveKanbanSwipe('done', 40, 200, 120, 205), 'waiting');
 });
 
 test('display mappings capture agreed product language', () => {
