@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { ApiError } from './api';
-import { TaskGlyph } from './app-shell';
+import { EnvironmentStatus, TaskGlyph } from './app-shell';
 import type { Collaboration, Member, Project } from './domain';
 import { dateInputToIso, priorityDisplayName, statusDisplayName, type Task, type TaskPriority, type TaskStatus } from './tasks';
 
@@ -107,6 +107,8 @@ export function TaskDetails({ task, collaboration, projects, members, candidateT
   const completed = collaboration.checklist.filter((item) => item.completed_at).length;
 
   return <main className="task-details">
+    <EnvironmentStatus/>
+    <h1 className="visually-hidden">Детали задачи</h1>
     <header className="task-details-bar"><button className="detail-icon" aria-label="Назад к задачам" onClick={onBack}>‹</button><span><i/> {boardName}</span><details><summary aria-label="Другие действия">•••</summary><div className="detail-menu">{task.recurrence_template_id && <p>Повторяющаяся задача</p>}<button className="danger" disabled={busy} onClick={() => void run(onArchive)}>Архивировать</button><details><summary>История</summary>{collaboration.timeline.map((item) => <p key={item.id}>{item.actor_name} · {item.action}<small>{new Date(item.created_at).toLocaleString('ru-RU')}</small></p>)}</details></div></details></header>
 
     <form onSubmit={save}>
@@ -126,16 +128,16 @@ export function TaskDetails({ task, collaboration, projects, members, candidateT
 
       <section className="detail-section" data-tone="content"><h2>Содержание</h2><textarea className="detail-description" aria-label="Описание" placeholder="Добавить описание" value={draft.description} onChange={(event) => set('description', event.target.value)}/>
         <div className="detail-checklist">{collaboration.checklist.map((item) => <div key={item.id}><input type="checkbox" checked={Boolean(item.completed_at)} aria-label={`Завершить ${item.text}`} onChange={() => void run(() => onChecklistUpdate(item.id, { completed: !item.completed_at }))}/><input defaultValue={item.text} aria-label="Текст пункта" onBlur={(event) => { const text = event.target.value.trim(); if (text && text !== item.text) void run(() => onChecklistUpdate(item.id, { text })); else event.target.value = item.text; }}/><button type="button" className="detail-remove" aria-label={`Удалить ${item.text}`} onClick={() => void run(() => onChecklistDelete(item.id))}>×</button></div>)}</div>
-        <div className="detail-add"><input maxLength={500} value={checklistText} onChange={(event) => setChecklistText(event.target.value)} placeholder="Новый пункт"/><button type="button" disabled={busy || !checklistText.trim()} onClick={() => void run(() => onChecklistAdd(checklistText.trim()), () => setChecklistText(''))}>Добавить</button></div>
+        <div className="detail-add"><input aria-label="Новый пункт чек-листа" maxLength={500} value={checklistText} onChange={(event) => setChecklistText(event.target.value)} placeholder="Новый пункт"/><button type="button" disabled={busy || !checklistText.trim()} onClick={() => void run(() => onChecklistAdd(checklistText.trim()), () => setChecklistText(''))}>Добавить</button></div>
       </section>
 
       <button className="detail-save" disabled={busy}>Сохранить изменения</button>
     </form>
 
     <section className="detail-section detail-discussion" data-tone="discussion"><h2>Обсуждение</h2>{collaboration.comments.map((item) => <article key={item.id}><strong>{item.author_name}</strong><small>{new Date(item.created_at).toLocaleString('ru-RU')}</small><p>{item.body}</p></article>)}{collaboration.attachments.map((item) => <p className="detail-attachment" key={item.id}>{item.url ? <a href={item.url} target="_blank" rel="noreferrer">{item.url}</a> : item.file_name ?? 'Файл из Telegram'}</p>)}
-      {showAttachment && <div className="detail-add"><input type="url" value={attachmentUrl} onChange={(event) => setAttachmentUrl(event.target.value)} placeholder="https://…"/><button disabled={busy || !attachmentUrl.trim()} onClick={() => void run(() => onUrlAttachment(attachmentUrl.trim()), () => { setAttachmentUrl(''); setShowAttachment(false); })}>Добавить</button></div>}
+      {showAttachment && <div className="detail-add"><input aria-label="Ссылка" type="url" value={attachmentUrl} onChange={(event) => setAttachmentUrl(event.target.value)} placeholder="https://…"/><button disabled={busy || !attachmentUrl.trim()} onClick={() => void run(() => onUrlAttachment(attachmentUrl.trim()), () => { setAttachmentUrl(''); setShowAttachment(false); })}>Добавить</button></div>}
     </section>
     {error && <p className="detail-error" role="alert">{error}</p>}
-    <div className="comment-composer"><input maxLength={4000} value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Написать комментарий…"/><button className="attach" aria-label="Добавить ссылку" onClick={() => setShowAttachment((value) => !value)}>⌕</button><button disabled={busy || !comment.trim()} aria-label="Отправить комментарий" onClick={() => void run(() => onComment(comment.trim()), () => setComment(''))}>↑</button></div>
+    <div className="comment-composer"><input aria-label="Комментарий" maxLength={4000} value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Написать комментарий…"/><button className="attach" aria-label="Добавить ссылку" onClick={() => setShowAttachment((value) => !value)}>⌕</button><button disabled={busy || !comment.trim()} aria-label="Отправить комментарий" onClick={() => void run(() => onComment(comment.trim()), () => setComment(''))}>↑</button></div>
   </main>;
 }
