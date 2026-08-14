@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { createDatabase, createTask, redeemBoardLink } from '../src/db.js';
+import { createDatabase, createTask, redeemBoardLink, updateTask } from '../src/db.js';
 import { deliverPendingPublications, queueDuePublications, renderPublication, splitTelegram, updateSchedule } from '../src/publications.js';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -17,7 +17,8 @@ test('publications honor timezone, deduplicate runs, group tasks and keep deep l
   await db.query("INSERT INTO memberships (board_id, user_id, role) VALUES ($1, $2, 'admin')", [boardId, user.rows[0].id]);
   await db.query(`INSERT INTO publication_schedules (board_id, kind, weekdays, local_time) VALUES
     ($1, 'daily', ARRAY[1]::smallint[], '11:00'), ($1, 'weekly', ARRAY[1]::smallint[], '10:30')`, [boardId]);
-  await createTask(db, user.rows[0].id, boardId, { title: 'Сверить <план>', assigneeUserId: user.rows[0].id, priority: 'urgent', deadline: '2026-08-09T00:00:00Z' });
+  const task = await createTask(db, user.rows[0].id, boardId, { title: 'Сверить <план>', assigneeUserId: user.rows[0].id, priority: 'urgent', deadline: '2026-08-09T00:00:00Z' });
+  await updateTask(db, user.rows[0].id, boardId, task.id, { status: 'waiting', waitReason: 'Ответ клиента' });
   await updateSchedule(db, boardId, 'daily', { enabled: true, weekdays: [1], local_time: '11:00', timezone: 'Europe/Moscow', included_statuses: ['todo', 'in_progress', 'waiting'] });
 
   const now = new Date('2026-08-10T08:00:00Z');
@@ -30,11 +31,14 @@ test('publications honor timezone, deduplicate runs, group tasks and keep deep l
   assert.equal((await db.query('SELECT 1 FROM publication_runs WHERE board_id = $1', [boardId])).rowCount, 1, 'restart after scheduled minute catches up once');
 
   const linksBefore = await db.query('SELECT count(*) FROM board_links WHERE board_id = $1', [boardId]);
-  const messages = await renderPublication(db, boardId, 'daily', ['todo'], 'test_bot', 'Europe/Moscow', now);
+  const messages = await renderPublication(db, boardId, 'daily', ['waiting'], 'test_bot', 'Europe/Moscow', now);
   assert.match(messages.join(''), /Иван/);
   assert.match(messages.join(''), /Команда &lt;A&gt;/);
   assert.match(messages.join(''), /Сверить &lt;план&gt;/);
   assert.match(messages.join(''), /ПРОСРОЧЕНО/);
+  assert.match(messages.join(''), /Блокер/);
+  assert.doesNotMatch(messages.join(''), /Жду/);
+  assert.equal((await db.query('SELECT status FROM tasks WHERE id = $1', [task.id])).rows[0].status, 'waiting');
   assert.ok(messages.every((message) => message.length <= 4096));
   const taskLink = messages.join('').match(/startapp=(task_[^"]+)/)?.[1];
   assert.ok(taskLink);
