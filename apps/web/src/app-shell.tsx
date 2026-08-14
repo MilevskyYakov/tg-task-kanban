@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ButtonHTMLAttributes, type KeyboardEvent, type ReactNode } from 'react';
+import { useTelegramEnvironment } from './environment';
 import { isSettingsNavigation, type NavigationState } from './navigation';
 
 type IconName = 'tasks' | 'plus' | 'settings' | 'close';
@@ -15,10 +16,20 @@ function Icon({ name }: { name: IconName }) {
 
 export function AppShell({ children, message, navigation, navigate, hideNavigation = false }: { children: ReactNode; message: string; navigation: NavigationState; navigate: (next: NavigationState) => void; hideNavigation?: boolean }) {
   return <main className={`app-shell${hideNavigation ? ' fullscreen' : ''}`}>
+    <EnvironmentStatus/>
     <div className="app-content">{children}</div>
     {message && <p className="app-message" role="status">{message}</p>}
     {!hideNavigation && <BottomNavigation navigation={navigation} navigate={navigate}/>}
   </main>;
+}
+
+export function EnvironmentStatus() {
+  const online = useTelegramEnvironment();
+  return online ? null : <p className="offline-banner" role="status">Нет сети. Загруженные данные доступны; изменения могут не сохраниться.</p>;
+}
+
+export function Skeleton({ label = 'Загрузка' }: { label?: string }) {
+  return <div className="skeleton" role="status" aria-label={label}><span/><span/><span/><span/></div>;
 }
 
 function BottomNavigation({ navigation, navigate }: { navigation: NavigationState; navigate: (next: NavigationState) => void }) {

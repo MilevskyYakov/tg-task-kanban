@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { resolveThemeScheme } from '../src/environment.js';
 import { initialNavigation, isSettingsNavigation, settingsSections } from '../src/navigation.js';
 import { taskDraft, taskPatch } from '../src/task-details.js';
 import {
@@ -91,6 +92,13 @@ test('startup context defaults to tasks and distinguishes board and task links',
 
 test('app navigation starts on tasks', () => {
   assert.deepEqual(initialNavigation(), { screen: 'tasks' });
+});
+
+test('Telegram theme overrides system preference and system remains fallback', () => {
+  assert.equal(resolveThemeScheme('light', true), 'light');
+  assert.equal(resolveThemeScheme('dark', false), 'dark');
+  assert.equal(resolveThemeScheme(undefined, true), 'dark');
+  assert.equal(resolveThemeScheme(undefined, false), 'light');
 });
 
 test('settings root exposes only agreed sections and keeps child navigation active', () => {

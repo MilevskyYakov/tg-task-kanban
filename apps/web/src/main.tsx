@@ -2,13 +2,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 import { api, ApiError, json } from './api';
-import { AppShell, Avatar, Badge, CreateScreen, FieldRow, SectionHeader, SettingsScreen, Sheet, TasksScreen } from './app-shell';
+import { AppShell, Avatar, Badge, CreateScreen, EnvironmentStatus, FieldRow, SectionHeader, SettingsScreen, Sheet, Skeleton, TasksScreen } from './app-shell';
 import type { Board, Collaboration, Member, Project, Recurrence, Schedule } from './domain';
 import { initialNavigation, settingsSections, type NavigationState } from './navigation';
 import { TaskDetails } from './task-details';
 import { activeFilterCount, dateInputToIso, dateTimeInputsToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveKanbanSwipe, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
 
-declare global { interface Window { Telegram?: { WebApp?: { initData: string; initDataUnsafe?: { start_param?: string; user?: { first_name: string; last_name?: string; username?: string } }; ready(): void; expand(): void } } } }
 type TaskView = 'list' | 'kanban';
 const statuses = Object.keys(statusDisplayName) as TaskStatus[];
 const storedTaskView = restoreTaskViewState(localStorage.getItem('tasks.viewState'));
@@ -237,6 +236,7 @@ function App() {
     }
   };
   const openCollaboration = async (task: Task) => {
+    setOpenTask(task); setCollaboration(undefined); setMessage('');
     try {
       const [nextCollaboration, nextProjects, nextMembers, nextTasks] = await Promise.all([
         api<Collaboration>(`/api/boards/${task.board_id}/tasks/${task.id}/collaboration`),
@@ -245,9 +245,9 @@ function App() {
         api<{tasks: Task[]}>(`/api/boards/${task.board_id}/tasks`)
       ]);
       taskScroll.current = window.scrollY;
-      setOpenTask(task); setCollaboration(nextCollaboration); setDetailProjects(nextProjects.projects); setDetailMembers(nextMembers.members); setDetailTasks(nextTasks.tasks); setMessage('');
+      setCollaboration(nextCollaboration); setDetailProjects(nextProjects.projects); setDetailMembers(nextMembers.members); setDetailTasks(nextTasks.tasks);
     }
-    catch (error) { setMessage(error instanceof Error ? error.message : 'Ошибка'); }
+    catch (error) { setOpenTask(undefined); setMessage(error instanceof Error ? error.message : 'Ошибка'); }
   };
   const collaborationAction = async (path: string, options: RequestInit) => {
     if (!openTask) return;
@@ -360,7 +360,7 @@ function App() {
     <label className="kanban-status-control">Статус<select aria-label={`Статус задачи ${task.title}`} value={task.status} onChange={(event) => void move(task, event.target.value as TaskStatus)}>{statuses.map((status) => <option key={status} value={status}>{statusDisplayName[status]}</option>)}</select></label>
   </article>;
   const mainKanban = <div className="mobile-kanban">
-    <div className="status-tabs" role="tablist" aria-label="Статусы задач">{statuses.map((status) => <button role="tab" aria-selected={kanbanStatus === status} className={kanbanStatus === status ? 'active' : ''} key={status} onClick={() => setKanbanStatus(status)}>{statusDisplayName[status]} <small>{filterTasks(tasks, { ...filters, status }, userId).length}</small></button>)}</div>
+    <div className="status-tabs" aria-label="Статусы задач">{statuses.map((status) => <button aria-pressed={kanbanStatus === status} className={kanbanStatus === status ? 'active' : ''} key={status} onClick={() => setKanbanStatus(status)}>{statusDisplayName[status]} <small>{filterTasks(tasks, { ...filters, status }, userId).length}</small></button>)}</div>
     <section className="active-kanban-column" aria-label={statusDisplayName[kanbanStatus]}
       onPointerDown={(event) => { if (event.pointerType === 'touch') swipeStart.current = { x: event.clientX, y: event.clientY }; }}
       onPointerUp={(event) => { if (!swipeStart.current) return; setKanbanStatus(resolveKanbanSwipe(kanbanStatus, swipeStart.current.x, swipeStart.current.y, event.clientX, event.clientY)); swipeStart.current = null; }}
@@ -389,7 +389,7 @@ function App() {
     </div></details></>;
   const taskToolbar = <>
     <div className="list-controls">
-      {taskView === 'list' ? <div className="grouping-tabs" role="tablist" aria-label="Группировка задач"><button role="tab" aria-selected={grouping === 'deadline'} className={grouping === 'deadline' ? 'active' : ''} onClick={() => setGrouping('deadline')}>По срокам</button><button role="tab" aria-selected={grouping === 'project'} className={grouping === 'project' ? 'active' : ''} onClick={() => setGrouping('project')}>По проектам</button></div> : <strong className="kanban-grouping">По статусу</strong>}
+      {taskView === 'list' ? <div className="grouping-tabs" aria-label="Группировка задач"><button aria-pressed={grouping === 'deadline'} className={grouping === 'deadline' ? 'active' : ''} onClick={() => setGrouping('deadline')}>По срокам</button><button aria-pressed={grouping === 'project'} className={grouping === 'project' ? 'active' : ''} onClick={() => setGrouping('project')}>По проектам</button></div> : <strong className="kanban-grouping">По статусу</strong>}
       <div className="view-switch" aria-label="Вид задач"><button className={taskView === 'list' ? 'active' : ''} aria-label="Список" aria-pressed={taskView === 'list'} onClick={() => setTaskView('list')}><svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h3v3H5zM11 6h8M5 11h3v3H5zM11 11h8M5 16h3v3H5zM11 16h8"/></svg></button><button className={taskView === 'kanban' ? 'active' : ''} aria-label="Канбан" aria-pressed={taskView === 'kanban'} onClick={() => setTaskView('kanban')}><svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h4v14H5zM10 5h4v14h-4zM15 5h4v14h-4z"/></svg></button></div>
     </div>
     <div className="task-toolbar">
@@ -430,6 +430,7 @@ function App() {
     </div>
   </Sheet>;
 
+  if (openTask && !collaboration) return <main className="task-details"><EnvironmentStatus/><button className="back" onClick={() => setOpenTask(undefined)}>← Задачи</button><Skeleton label="Загрузка задачи"/></main>;
   if (openTask && collaboration) return <TaskDetails
     task={openTask} collaboration={collaboration} projects={detailProjects} members={detailMembers}
     candidateTasks={detailTasks.filter((item) => item.id !== openTask.id && item.status !== 'done' && !item.archived_at)}
@@ -492,14 +493,14 @@ function App() {
   </SettingsScreen>;
   const accountSettings = <SettingsScreen title="Аккаунт" subtitle="Профиль и личные параметры"><button className="back" onClick={() => navigate({ screen: 'settings' })}>← Настройки</button><div className="settings-groups"><section className="settings-group account-profile"><Avatar initials={initials(profileName)} label={profileName}/><span><strong>{profileName}</strong>{profileUsername && <small>{profileUsername}</small>}</span></section><section className="settings-group"><h2>Личные параметры</h2><div className="settings-form"><label>Группировка задач<select value={grouping} onChange={(event) => setGrouping(event.target.value as typeof grouping)}><option value="deadline">По срокам</option><option value="project">По проектам</option></select></label><label>Обычная доска<select value={globalBoardId} onChange={(event) => chooseTaskBoard(event.target.value)}><option value="">Все доски</option>{boards.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label></div></section></div></SettingsScreen>;
 
-  if (state === 'outside') return <main><section><p className="eyebrow">KAIROS TASKS</p><h1>Задачи живут<br/>в Telegram</h1><p>Откройте приложение через <a href="https://t.me/kairostask_bot">@kairostask_bot</a>.</p></section></main>;
-  if (state === 'error') return <main><section><h1>Не удалось войти</h1><p>{message || 'Закройте приложение и откройте его снова через бота.'}</p></section></main>;
-  if (state === 'loading') return <main><section><p>Загрузка…</p></section></main>;
+  if (state === 'outside') return <main><EnvironmentStatus/><section><p className="eyebrow">KAIROS TASKS</p><h1>Задачи живут<br/>в Telegram</h1><p>Откройте приложение через <a href="https://t.me/kairostask_bot">@kairostask_bot</a>.</p></section></main>;
+  if (state === 'error') return <main><EnvironmentStatus/><section role="alert"><h1>Не удалось войти</h1><p>{message || 'Закройте приложение и откройте его снова через бота.'}</p></section></main>;
+  if (state === 'loading') return <main><EnvironmentStatus/><Skeleton label="Загрузка приложения"/></main>;
   if (navigation.screen === 'settings') return <AppShell message={message} navigation={navigation} navigate={navigate}>{settingsRoot}</AppShell>;
   if (navigation.screen === 'settings-workspace') return <AppShell message={message} navigation={navigation} navigate={navigate}>{workspaceSettings}</AppShell>;
   if (navigation.screen === 'settings-automation') return <AppShell message={message} navigation={navigation} navigate={navigate}>{automationSettings}</AppShell>;
   if (navigation.screen === 'settings-account') return <AppShell message={message} navigation={navigation} navigate={navigate}>{accountSettings}</AppShell>;
-  if (navigation.screen === 'tasks') return <AppShell message={message} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>{taskToolbar}{taskLoadState === 'loading' ? <p className="task-state">Загрузка задач…</p> : taskLoadState === 'error' ? <div className="task-state"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : taskView === 'kanban' ? mainKanban : groupedTaskList}{taskLoadState === 'ready' && taskView === 'list' && !filteredTasks.length && <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>}{boardOverrideId && <p className="context-note">Доска открыта из Telegram-чата и не заменяет ваш обычный выбор.</p>}{boardSheet}{filterSheet}</TasksScreen></AppShell>;
+  if (navigation.screen === 'tasks') return <AppShell message={message} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>{taskToolbar}{taskLoadState === 'loading' ? <Skeleton label="Загрузка задач"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : taskView === 'kanban' ? mainKanban : groupedTaskList}{taskLoadState === 'ready' && taskView === 'list' && !filteredTasks.length && <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>}{boardOverrideId && <p className="context-note">Доска открыта из Telegram-чата и не заменяет ваш обычный выбор.</p>}{boardSheet}{filterSheet}</TasksScreen></AppShell>;
   if (navigation.screen === 'create') return <AppShell message={message} navigation={navigation} navigate={navigate} hideNavigation><CreateScreen onClose={() => navigate(createOrigin)}>
     <form className="create-screen-form" onSubmit={(event) => { event.preventDefault(); void create(); }}>
       <label className="create-title"><span>Что нужно сделать?</span><textarea autoFocus value={title} onChange={(event) => setTitle(event.target.value)} maxLength={200} rows={2} required placeholder="Название задачи"/></label>
