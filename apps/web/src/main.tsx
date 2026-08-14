@@ -5,7 +5,7 @@ import { api, ApiError, json } from './api';
 import { AppShell, Avatar, Badge, CreateScreen, FieldRow, SectionHeader, SettingsScreen, Sheet, TasksScreen } from './app-shell';
 import type { Board, Collaboration, Member, Project, Recurrence, Schedule } from './domain';
 import { initialNavigation, type NavigationState } from './navigation';
-import { activeFilterCount, dateInputToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
+import { activeFilterCount, dateInputToIso, dateTimeInputsToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
 
 declare global { interface Window { Telegram?: { WebApp?: { initData: string; initDataUnsafe?: { start_param?: string }; ready(): void; expand(): void } } } }
 type TaskView = 'list' | 'kanban';
@@ -25,6 +25,7 @@ function App() {
   const [project, setProject] = useState('');
   const [description, setDescription] = useState('');
   const [deadline, setDeadline] = useState('');
+  const [deadlineTime, setDeadlineTime] = useState('');
   const [priority, setPriority] = useState<Task['priority']>('normal');
   const [notifyAssignee, setNotifyAssignee] = useState(false);
   const [openTask, setOpenTask] = useState<Task>();
@@ -50,7 +51,11 @@ function App() {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [recurrences, setRecurrences] = useState<Recurrence[]>([]);
   const [preview, setPreview] = useState('');
+  const [createBoardId, setCreateBoardId] = useState('');
+  const [createOrigin, setCreateOrigin] = useState<NavigationState>(initialNavigation);
+  const [createPending, setCreatePending] = useState(false);
   const boardLoadVersion = useRef(0);
+  const skipNextTaskLoad = useRef(false);
   const taskScroll = useRef(storedTaskView.scrollY);
   const touchDrag = useRef<{task?: Task; x: number; y: number; active: boolean; timer?: ReturnType<typeof setTimeout>}>({ x: 0, y: 0, active: false });
   const selectedTaskBoardId = resolveTaskBoard(globalBoardId, boardOverrideId, boards.map((item) => item.id));
@@ -59,7 +64,13 @@ function App() {
     : navigation.screen === 'tasks' ? boards.find((item) => item.id === selectedTaskBoardId) : undefined;
   const activeBoardId = useRef<string | undefined>(undefined);
   activeBoardId.current = board?.id;
-  const navigate = (next: NavigationState) => { setOpenTask(undefined); setCollaboration(undefined); setMessage(''); setNavigation(next); };
+  const navigate = (next: NavigationState) => {
+    if (next.screen === 'create' && navigation.screen !== 'create') {
+      setCreateOrigin(navigation.screen === 'board' ? navigation : { screen: 'tasks' });
+      setCreateBoardId(board?.status === 'active' ? board.id : '');
+    }
+    setOpenTask(undefined); setCollaboration(undefined); setMessage(''); setNavigation(next);
+  };
   const loadBoards = async () => { const data = await api<{boards: Board[]}>('/api/boards'); setBoards(data.boards); return data.boards; };
   const loadBoard = async (id: string, archive = showArchive) => {
     const version = ++boardLoadVersion.current;
@@ -86,6 +97,11 @@ function App() {
   }, []);
   useEffect(() => {
     if (state !== 'ready') return;
+    if (skipNextTaskLoad.current && (navigation.screen === 'tasks' || navigation.screen === 'board')) {
+      skipNextTaskLoad.current = false;
+      setTaskLoadState('ready');
+      return;
+    }
     if (navigation.screen === 'tasks') {
       setTaskLoadState('loading');
       if (selectedTaskBoardId) void loadBoard(selectedTaskBoardId).then((loaded) => { if (loaded) setTaskLoadState('ready'); }).catch((error: Error) => { setMessage(error.message); setTaskLoadState('error'); });
@@ -93,6 +109,19 @@ function App() {
     }
     else if (navigation.screen === 'board') void loadBoard(navigation.boardId).catch((error: Error) => setMessage(error.message));
   }, [state, navigation, selectedTaskBoardId, taskReload]);
+  useEffect(() => {
+    if (navigation.screen !== 'create') return;
+    setProjects([]); setMembers([]);
+    if (!createBoardId) return;
+    let cancelled = false;
+    void Promise.all([
+      api<{projects: Project[]}>(`/api/boards/${createBoardId}/projects`),
+      api<{members: Member[]}>(`/api/boards/${createBoardId}/members`)
+    ]).then(([projectData, memberData]) => {
+      if (!cancelled) { setProjects(projectData.projects); setMembers(memberData.members); }
+    }).catch((error: Error) => { if (!cancelled) setMessage(error.message); });
+    return () => { cancelled = true; };
+  }, [navigation.screen, createBoardId]);
 
   useEffect(() => {
     if (navigation.screen !== 'tasks') return;
@@ -136,15 +165,22 @@ function App() {
     if (name) await action(() => api(`/api/boards/${board.id}/activate`, json('POST', {name})), 'Доска активирована', false).then(loadBoards);
   };
   const create = async () => {
-    if (!board || !title.trim()) return;
+    const validationError = validateTaskCreate(title, createBoardId);
+    if (validationError) { setMessage(validationError); return; }
+    const deadlineIso = deadline ? dateTimeInputsToIso(deadline, deadlineTime) : null;
+    if (deadline && !deadlineIso) { setMessage('Проверьте срок задачи'); return; }
+    setCreatePending(true);
     try {
-      const task = await api<Task & {notificationWarning?: string}>(`/api/boards/${board.id}/tasks`, json('POST', {
+      const task = await api<Task & {notificationWarning?: string}>(`/api/boards/${createBoardId}/tasks`, json('POST', {
         title: title.trim(), description: description.trim() || null, projectId: project || null,
-        assigneeUserId: assignee || null, deadline: deadline ? new Date(deadline).toISOString() : null, priority, notifyAssignee
+        assigneeUserId: assignee || null, deadline: deadlineIso, priority, notifyAssignee
       }));
-      await loadBoard(board.id); setMessage(task.notificationWarning ?? 'Задача создана');
-      setTitle(''); setDescription(''); setProject(''); setAssignee(''); setDeadline(''); setPriority('normal'); setNotifyAssignee(false);
+      setTasks((current: Task[]) => current.some((item: Task) => item.id === task.id) ? current : [task, ...current]);
+      skipNextTaskLoad.current = true;
+      setTitle(''); setDescription(''); setProject(''); setAssignee(''); setDeadline(''); setDeadlineTime(''); setPriority('normal'); setNotifyAssignee(false);
+      navigate(createOrigin); setMessage(task.notificationWarning ?? 'Задача создана');
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Ошибка'); }
+    finally { setCreatePending(false); }
   };
   const move = async (task: Task, status: TaskStatus) => {
     if (task.status === status) return;
@@ -378,8 +414,21 @@ function App() {
   if (state === 'error') return <main><section><h1>Не удалось войти</h1><p>{message || 'Закройте приложение и откройте его снова через бота.'}</p></section></main>;
   if (state === 'loading') return <main><section><p>Загрузка…</p></section></main>;
   if (navigation.screen === 'tasks') return <AppShell message={message} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>{taskToolbar}{taskLoadState === 'loading' ? <p className="task-state">Загрузка задач…</p> : taskLoadState === 'error' ? <div className="task-state"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : groupedTaskList}{taskLoadState === 'ready' && !filteredTasks.length && <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>}{boardOverrideId && <p className="context-note">Доска открыта из Telegram-чата и не заменяет ваш обычный выбор.</p>}{boardSheet}{filterSheet}</TasksScreen></AppShell>;
-  if (board) return <AppShell message={message} navigation={navigation} navigate={navigate}><button className="back" onClick={() => navigate({ screen: 'tasks' })}>← Задачи</button><header><p className="eyebrow">{board.type === 'chat' ? 'ЧАТ-ДОСКА' : 'ЛИЧНАЯ ДОСКА'}</p><h1>{board.name}</h1></header>{publicationSettings}{board.status === 'frozen' ? <p className="notice">Бот больше не в чате. Данные сохранены, действия заморожены.</p> : board.status === 'draft' ? <section><p>Завершите настройку, чтобы команда начала работу.</p><button onClick={activate}>Активировать</button></section> : <><form className="create-task" onSubmit={(event) => { event.preventDefault(); void create(); }}><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Название задачи" maxLength={200} required/><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Описание"/><select value={project} onChange={(event) => setProject(event.target.value)}><option value="">Без проекта</option>{projects.filter((item) => !item.archived_at).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><select value={assignee} onChange={(event) => setAssignee(event.target.value)}><option value="">Без ответственного</option>{members.map((member) => <option key={member.id} value={member.id}>{member.first_name}</option>)}</select><input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)}/><select value={priority} onChange={(event) => setPriority(event.target.value as Task['priority'])}><option value="normal">Обычный</option><option value="urgent">Срочный</option></select><label className="checkbox"><input type="checkbox" checked={notifyAssignee} disabled={!assignee} onChange={(event) => setNotifyAssignee(event.target.checked)}/> Уведомить исполнителя</label><button>Создать</button></form><section className="recurrences"><div className="project-row"><strong>Повторы</strong><button className="secondary" onClick={addRecurrence}>Добавить повтор</button></div>{recurrences.map((item) => <article className="recurrence" key={item.id}><span>{item.frequency} · {item.local_time} · {item.timezone}</span><strong>{item.title}</strong>{item.next_occurrence_at && <small>Следующий: {new Date(item.next_occurrence_at).toLocaleString('ru-RU')}</small>}<div className="actions">{!item.archived_at && <button onClick={() => action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {paused: !item.paused_at})), item.paused_at ? 'Повтор продолжен' : 'Повтор на паузе')}>{item.paused_at ? 'Продолжить' : 'Пауза'}</button>}<button onClick={() => action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {archived: true})), 'Повтор архивирован')}>В архив</button></div></article>)}</section><div className="project-row"><div>{projects.map((item) => <span key={item.id}><button className="link" onClick={() => item.archived_at ? action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: false})), 'Проект восстановлен') : editProject(item)}>{item.name}{item.archived_at ? ' · восстановить' : ''}</button>{!item.archived_at && <button className="link" onClick={() => action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: true})), 'Проект архивирован')}>×</button>}</span>)}</div><button className="secondary" onClick={addProject}>+ Проект</button></div><button className="secondary" onClick={() => { const next = !showArchive; setShowArchive(next); void loadBoard(board.id, next); }}>{showArchive ? 'Только активные' : 'Показать архив'}</button>{taskControls}{taskView === 'kanban' && !showArchive ? kanban : taskList}{!filteredTasks.length && <p>{filters.search ? 'Ничего не найдено.' : 'Задач в этом срезе пока нет.'}</p>}</>}{board.type === 'chat' && board.status !== 'frozen' && <button className="secondary" onClick={() => action(async () => { const result = await api<{url: string}>(`/api/boards/${board.id}/invites`, {method: 'POST'}); await navigator.clipboard.writeText(result.url); }, 'Ссылка скопирована', false)}>Скопировать приглашение</button>}</AppShell>;
+  if (navigation.screen === 'create') return <AppShell message={message} navigation={navigation} navigate={navigate} hideNavigation><CreateScreen onClose={() => navigate(createOrigin)}>
+    <form className="create-screen-form" onSubmit={(event) => { event.preventDefault(); void create(); }}>
+      <label className="create-title"><span>Что нужно сделать?</span><textarea autoFocus value={title} onChange={(event) => setTitle(event.target.value)} maxLength={200} rows={2} required placeholder="Название задачи"/></label>
+      <div className="create-fields">
+        <FieldRow label="Доска *"><select required value={createBoardId} onChange={(event) => { setMessage(''); setCreateBoardId(event.target.value); setProject(''); setAssignee(''); setNotifyAssignee(false); }}><option value="">Выберите доску</option>{boards.filter((item) => item.status === 'active').map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></FieldRow>
+        <FieldRow label="Проект"><select disabled={!createBoardId} value={project} onChange={(event) => setProject(event.target.value)}><option value="">Без проекта</option>{projects.filter((item) => !item.archived_at).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></FieldRow>
+        <FieldRow label="Исполнитель"><select disabled={!createBoardId} value={assignee} onChange={(event) => { setAssignee(event.target.value); if (!event.target.value) setNotifyAssignee(false); }}><option value="">Без ответственного</option>{members.map((member) => <option key={member.id} value={member.id}>{member.first_name}</option>)}</select></FieldRow>
+        <fieldset className="deadline-fields"><legend>Срок</legend><input aria-label="Дата срока" type="date" value={deadline} onChange={(event) => { setDeadline(event.target.value); if (!event.target.value) setDeadlineTime(''); }}/><input aria-label="Время срока" type="time" disabled={!deadline} value={deadlineTime} onChange={(event) => setDeadlineTime(event.target.value)}/></fieldset>
+      </div>
+      <details className="create-additional"><summary>Дополнительно</summary><div><label>Описание<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3}/></label><FieldRow label="Приоритет"><select value={priority} onChange={(event) => setPriority(event.target.value as Task['priority'])}><option value="normal">Обычный</option><option value="urgent">Срочный</option></select></FieldRow><label className="checkbox"><input type="checkbox" checked={notifyAssignee} disabled={!assignee} onChange={(event) => setNotifyAssignee(event.target.checked)}/> Уведомить исполнителя</label></div></details>
+      <div className="create-action"><button disabled={createPending}>{createPending ? 'Создаём…' : 'Создать задачу'}</button></div>
+    </form>
+  </CreateScreen></AppShell>;
+  if (board) return <AppShell message={message} navigation={navigation} navigate={navigate}><button className="back" onClick={() => navigate({ screen: 'tasks' })}>← Задачи</button><header><p className="eyebrow">{board.type === 'chat' ? 'ЧАТ-ДОСКА' : 'ЛИЧНАЯ ДОСКА'}</p><h1>{board.name}</h1></header>{publicationSettings}{board.status === 'frozen' ? <p className="notice">Бот больше не в чате. Данные сохранены, действия заморожены.</p> : board.status === 'draft' ? <section><p>Завершите настройку, чтобы команда начала работу.</p><button onClick={activate}>Активировать</button></section> : <><section className="recurrences"><div className="project-row"><strong>Повторы</strong><button className="secondary" onClick={addRecurrence}>Добавить повтор</button></div>{recurrences.map((item) => <article className="recurrence" key={item.id}><span>{item.frequency} · {item.local_time} · {item.timezone}</span><strong>{item.title}</strong>{item.next_occurrence_at && <small>Следующий: {new Date(item.next_occurrence_at).toLocaleString('ru-RU')}</small>}<div className="actions">{!item.archived_at && <button onClick={() => action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {paused: !item.paused_at})), item.paused_at ? 'Повтор продолжен' : 'Повтор на паузе')}>{item.paused_at ? 'Продолжить' : 'Пауза'}</button>}<button onClick={() => action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {archived: true})), 'Повтор архивирован')}>В архив</button></div></article>)}</section><div className="project-row"><div>{projects.map((item) => <span key={item.id}><button className="link" onClick={() => item.archived_at ? action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: false})), 'Проект восстановлен') : editProject(item)}>{item.name}{item.archived_at ? ' · восстановить' : ''}</button>{!item.archived_at && <button className="link" onClick={() => action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: true})), 'Проект архивирован')}>×</button>}</span>)}</div><button className="secondary" onClick={addProject}>+ Проект</button></div><button className="secondary" onClick={() => { const next = !showArchive; setShowArchive(next); void loadBoard(board.id, next); }}>{showArchive ? 'Только активные' : 'Показать архив'}</button>{taskControls}{taskView === 'kanban' && !showArchive ? kanban : taskList}{!filteredTasks.length && <p>{filters.search ? 'Ничего не найдено.' : 'Задач в этом срезе пока нет.'}</p>}</>}{board.type === 'chat' && board.status !== 'frozen' && <button className="secondary" onClick={() => action(async () => { const result = await api<{url: string}>(`/api/boards/${board.id}/invites`, {method: 'POST'}); await navigator.clipboard.writeText(result.url); }, 'Ссылка скопирована', false)}>Скопировать приглашение</button>}</AppShell>;
   const boardList = <div className="board-list">{boards.map((item) => <button className="board" key={item.id} onClick={() => { setMessage(''); setNavigation({ screen: 'board', boardId: item.id }); }}><span>{item.type === 'chat' ? 'ЧАТ' : 'ЛИЧНАЯ'}{item.status === 'frozen' ? ' · ЗАМОРОЖЕНА' : ''}</span><strong>{item.name}</strong><small>{item.type === 'chat' ? 'Командное пространство' : 'Только ваши задачи'}</small></button>)}</div>;
-  return <AppShell message={message} navigation={navigation} navigate={navigate}>{navigation.screen === 'create' ? <CreateScreen>{boardList}</CreateScreen> : <SettingsScreen>{boardList}</SettingsScreen>}</AppShell>;
+  return <AppShell message={message} navigation={navigation} navigate={navigate}><SettingsScreen>{boardList}</SettingsScreen></AppShell>;
 }
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
