@@ -57,8 +57,8 @@ export function Badge({ children, tone = 'neutral' }: { children: ReactNode; ton
   return <span className="badge" data-tone={tone}>{children}</span>;
 }
 
-export function TasksScreen({ children }: { children: ReactNode }) {
-  return <><header className="page-header"><div className="title-row"><h1>Задачи</h1><TaskGlyph/></div><button className="board-selector">Все доски <span aria-hidden="true">⌄</span></button></header>{children}</>;
+export function TasksScreen({ children, boardName, onSelectBoard }: { children: ReactNode; boardName: string; onSelectBoard: () => void }) {
+  return <><header className="page-header"><div className="title-row"><h1>Задачи</h1><TaskGlyph/></div><button className="board-selector" onClick={onSelectBoard}>{boardName} <span aria-hidden="true">⌄</span></button></header>{children}</>;
 }
 
 export function SettingsScreen({ children }: { children: ReactNode }) {

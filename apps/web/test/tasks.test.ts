@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { initialNavigation } from '../src/navigation.js';
 import {
+  activeFilterCount,
   dateInputToIso,
   defaultFilters,
   defaultTaskViewState,
@@ -11,6 +12,7 @@ import {
   optimisticUpdate,
   priorityDisplayName,
   resolveStartupContext,
+  resolveTaskBoard,
   restoreTaskViewState,
   serializeTaskViewState,
   statusDisplayName,
@@ -27,6 +29,25 @@ test('combined task filters and search use one shared task set', () => {
   assert.deepEqual(filterTasks(tasks, { ...defaultFilters, scope: 'all', project: 'p', priority: 'urgent', status: 'in_progress', deadline: 'overdue', search: 'api' }, 'u', new Date('2026-08-13T12:00:00Z')).map((task) => task.id), ['1']);
   assert.deepEqual(filterTasks(tasks, { ...defaultFilters, scope: 'all', unassigned: true }, 'u').map((task) => task.id), ['2']);
   assert.deepEqual(filterTasks(tasks, { ...defaultFilters, scope: 'all', search: 'нет совпадений' }, 'u'), []);
+});
+
+test('completed tasks stay hidden until status filter requests them', () => {
+  const done = { ...tasks[0], id: 'done', status: 'done' as const };
+  assert.deepEqual(filterTasks([...tasks, done], { ...defaultFilters, scope: 'all' }, 'u').map((task) => task.id), ['1', '2']);
+  assert.deepEqual(filterTasks([...tasks, done], { ...defaultFilters, scope: 'all', status: 'done' }, 'u').map((task) => task.id), ['done']);
+});
+
+test('filter count includes only active conditions, not search', () => {
+  assert.equal(activeFilterCount(defaultFilters), 0);
+  assert.equal(activeFilterCount({ ...defaultFilters, search: 'релиз' }), 0);
+  assert.equal(activeFilterCount({ ...defaultFilters, scope: 'all', priority: 'urgent', unassigned: true }), 3);
+});
+
+test('chat board overrides global choice without replacing it', () => {
+  const boardIds = ['personal', 'chat'];
+  assert.equal(resolveTaskBoard('personal', undefined, boardIds), 'personal');
+  assert.equal(resolveTaskBoard('personal', 'chat', boardIds), 'chat');
+  assert.equal(resolveTaskBoard('missing', undefined, boardIds), '');
 });
 
 test('optimistic update rolls UI back when API rejects change', async () => {
