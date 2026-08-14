@@ -30,7 +30,7 @@ DATABASE_URL=postgres://task:task@localhost:5432/task npm run migrate
 
 Интеграционный тест изоляции обязателен и падает без `TEST_DATABASE_URL`.
 
-Полный production runbook, backup/restore и pilot gate: [`docs/release-runbook.md`](docs/release-runbook.md) и [`docs/pilot-checklist.md`](docs/pilot-checklist.md).
+Полный production runbook, backup/restore и pilot gate: [`docs/release-runbook.md`](docs/release-runbook.md) и [`docs/pilot-checklist.md`](docs/pilot-checklist.md). Release gate нового Telegram UX: [`docs/issue-37-release-gate.md`](docs/issue-37-release-gate.md).
 
 ## Telegram webhook
 
