@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { initialNavigation } from '../src/navigation.js';
 import {
   dateInputToIso,
   defaultFilters,
@@ -44,6 +45,10 @@ test('startup context defaults to tasks and distinguishes board and task links',
   assert.deepEqual(resolveStartupContext(), { surface: 'tasks' });
   assert.deepEqual(resolveStartupContext('invite-token'), { surface: 'board-link', token: 'invite-token' });
   assert.deepEqual(resolveStartupContext('task_board-id_task-id'), { surface: 'task', boardId: 'board-id', taskId: 'task-id' });
+});
+
+test('app navigation starts on tasks', () => {
+  assert.deepEqual(initialNavigation(), { screen: 'tasks' });
 });
 
 test('deadline groups use the requested timezone for the Today boundary', () => {
