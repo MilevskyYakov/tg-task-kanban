@@ -2,7 +2,7 @@
 
 Version: 2026-08-14  
 Release candidate base: `b6963a4` (`origin/main` после закрытия #27–#36)  
-Статус: **candidate deployed, GO заблокирован**, пока не пройдены Telegram device smoke и webhook delivery.
+Статус: **ROLLBACK** — первый экран загрузился, но owner отклонил визуальный результат как не соответствующий согласованному направлению.
 
 Этот файл хранит только обезличенный release evidence. Не добавлять tokens, cookie, `initData`, chat IDs, production identifiers или тексты задач.
 
@@ -56,7 +56,7 @@ Release candidate base: `b6963a4` (`origin/main` после закрытия #27
 - [x] После pilot UI добавлена только миграция `007_task_blockers.sql`; она создаёт additive таблицу и не требует schema rollback для возврата старого кода.
 - [x] Перед deploy записан фактический previous-known-good production SHA: `745b8994853f4281d57e56f601d55b13c6d0e4db`.
 - [x] Создан production backup и пройден restore smoke в отдельную БД; восстановлены 4 доски.
-- [ ] Проверена команда code rollback из `docs/release-runbook.md` с фактическим previous-known-good SHA.
+- [x] Code rollback выполнен на `745b8994853f4281d57e56f601d55b13c6d0e4db`; internal/public health — `200`, containers healthy.
 
 `745b899` — аварийный old-UI fallback, не замена записи фактически развёрнутого SHA перед cutover.
 
@@ -65,13 +65,14 @@ Release candidate base: `b6963a4` (`origin/main` после закрытия #27
 Live cutover выполняется только после явного подтверждения владельца.
 
 - [x] Владелец подтвердил cutover.
-- [x] Deploy candidate `b6963a48aa45a14ce8212e2a156ecf22c3f8620e` и миграции завершены без ошибок.
-- [x] Internal и public health возвращают `200`.
+- [x] Deploy candidate `b6963a48aa45a14ce8212e2a156ecf22c3f8620e` и миграции завершены без ошибок; после failed visual smoke выполнен rollback.
+- [x] Internal и public health возвращают `200` после rollback.
 - [ ] Telegram smoke выше пройден на iOS и Android.
 - [x] Логи за последние 15 минут не содержат secrets или новых ошибок.
 - [x] При restart не появились дополнительные recurrence tasks или publication runs.
 - [ ] Telegram webhook принимает реальные updates: endpoint и secret проходят synthetic `200`, но Telegram `getWebhookInfo` пока сообщает `Connection timed out` и 2 pending updates.
-- [ ] Итог: `GO / ROLLBACK`.
+- [x] Owner visual smoke: новый экран «Задачи» загрузился, но композиция и визуальный дизайн отклонены как существенно отличающиеся от согласованного результата.
+- [x] Итог: `ROLLBACK`.
 
 ## 5. Закрытие
 
