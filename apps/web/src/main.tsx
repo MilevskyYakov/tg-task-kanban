@@ -47,17 +47,22 @@ function App() {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [recurrences, setRecurrences] = useState<Recurrence[]>([]);
   const [preview, setPreview] = useState('');
+  const boardLoadVersion = useRef(0);
   const touchDrag = useRef<{task?: Task; x: number; y: number; active: boolean; timer?: ReturnType<typeof setTimeout>}>({ x: 0, y: 0, active: false });
   const selectedTaskBoardId = resolveTaskBoard(globalBoardId, boardOverrideId, boards.map((item) => item.id));
   const board = navigation.screen === 'board'
     ? boards.find((item) => item.id === navigation.boardId)
     : navigation.screen === 'tasks' ? boards.find((item) => item.id === selectedTaskBoardId) : undefined;
+  const activeBoardId = useRef<string | undefined>(undefined);
+  activeBoardId.current = board?.id;
   const navigate = (next: NavigationState) => { setOpenTask(undefined); setCollaboration(undefined); setMessage(''); setNavigation(next); };
   const loadBoards = async () => { const data = await api<{boards: Board[]}>('/api/boards'); setBoards(data.boards); return data.boards; };
   const loadBoard = async (id: string, archive = showArchive) => {
+    const version = ++boardLoadVersion.current;
     const [taskData, projectData, memberData, publicationData, recurrenceData] = await Promise.all([
       api<{tasks: Task[]}>(`/api/boards/${id}/tasks${archive ? '?archived=true' : ''}`), api<{projects: Project[]}>(`/api/boards/${id}/projects${archive ? '?archived=true' : ''}`), api<{members: Member[]}>(`/api/boards/${id}/members`), api<{schedules: Schedule[]}>(`/api/boards/${id}/publications`).catch(() => ({ schedules: [] })), api<{recurrences: Recurrence[]}>(`/api/boards/${id}/recurrences`)
     ]);
+    if (version !== boardLoadVersion.current || activeBoardId.current !== id) return;
     setTasks(taskData.tasks); setProjects(projectData.projects); setMembers(memberData.members); setSchedules(publicationData.schedules); setRecurrences(recurrenceData.recurrences);
   };
 
@@ -78,17 +83,19 @@ function App() {
     if (state !== 'ready') return;
     if (navigation.screen === 'tasks') {
       if (selectedTaskBoardId) void loadBoard(selectedTaskBoardId).catch((error: Error) => setMessage(error.message));
-      else void api<{tasks: Task[]}>('/api/tasks/mine').then((data) => { setTasks(data.tasks); setProjects([]); setMembers([]); }).catch((error: Error) => setMessage(error.message));
+      else { ++boardLoadVersion.current; void api<{tasks: Task[]}>('/api/tasks/mine').then((data) => { if (!activeBoardId.current) { setTasks(data.tasks); setProjects([]); setMembers([]); } }).catch((error: Error) => setMessage(error.message)); }
     }
     else if (navigation.screen === 'board') void loadBoard(navigation.boardId).catch((error: Error) => setMessage(error.message));
   }, [state, navigation, selectedTaskBoardId]);
 
   useEffect(() => {
     if (!userId || !board) return;
+    let cancelled = false;
     setFiltersLoadedFor('');
     void api<{filters: Partial<TaskFilters>}>(`/api/boards/${board.id}/task-filters`)
-      .then((data) => { setFilters({ ...defaultFilters, ...data.filters }); setFiltersLoadedFor(board.id); })
-      .catch((error: Error) => setMessage(error.message));
+      .then((data) => { if (!cancelled) { setFilters({ ...defaultFilters, ...data.filters }); setFiltersLoadedFor(board.id); } })
+      .catch((error: Error) => { if (!cancelled) setMessage(error.message); });
+    return () => { cancelled = true; };
   }, [userId, board?.id]);
   useEffect(() => {
     if (!userId || !board || filtersLoadedFor !== board.id) return;

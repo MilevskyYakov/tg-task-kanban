@@ -42,7 +42,7 @@ export function SectionHeader({ children, count, tone = 'upcoming' }: { children
 }
 
 export function Sheet({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
-  return <section className="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title"><header><h2 id="sheet-title">{title}</h2><IconButton label="Закрыть" onClick={onClose}><Icon name="close"/></IconButton></header>{children}</section>;
+  return <section className="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }}><header><h2 id="sheet-title">{title}</h2><IconButton label="Закрыть" autoFocus onClick={onClose}><Icon name="close"/></IconButton></header>{children}</section>;
 }
 
 export function FieldRow({ label, children }: { label: string; children: ReactNode }) {
