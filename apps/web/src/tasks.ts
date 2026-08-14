@@ -65,11 +65,14 @@ export const priorityDisplayName: Record<TaskPriority, string> = { normal: 'Об
 export type StartupContext =
   | { surface: 'tasks' }
   | { surface: 'board-link'; token: string }
-  | { surface: 'task'; boardId: string; taskId: string };
+  | { surface: 'task'; boardId: string; taskId: string }
+  | { surface: 'invalid-task' };
 
 export function resolveStartupContext(startParam?: string): StartupContext {
   if (!startParam) return { surface: 'tasks' };
-  const taskLink = /^task_([^_]+)_([^_]+)$/.exec(startParam);
+  const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
+  const taskLink = new RegExp(`^task_(${uuid})_(${uuid})$`, 'i').exec(startParam);
+  if (startParam.startsWith('task_') && !taskLink) return { surface: 'invalid-task' };
   return taskLink
     ? { surface: 'task', boardId: taskLink[1], taskId: taskLink[2] }
     : { surface: 'board-link', token: startParam };

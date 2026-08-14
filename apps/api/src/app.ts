@@ -4,7 +4,7 @@ import Fastify from 'fastify';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateInitData } from './auth.js';
-import { activateChatBoard, addChecklistItem, addTaskAttachment, addTaskComment, boardForUser, boardMembers, boardsForUser, claimAssignmentNotification, connectChatBoard, createInvite, createProject, createRecurrence, createTask, deleteChecklistItem, finishAssignmentNotification, freezeChatBoard, incompleteChecklistCount, login, migrateChatBoard, pendingNotificationForTask, projectsForBoard, recurrencesForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskCollaboration, TaskConflictError, taskFilterState, tasksForAssignee, tasksForBoard, updateChecklistItem, updateProject, updateRecurrence, updateTask, updateTaskAndFuture, type AttachmentInput, type Database, type RecurrenceInput, type TaskInput } from './db.js';
+import { activateChatBoard, addChecklistItem, addTaskAttachment, addTaskComment, boardForUser, boardMembers, boardsForUser, claimAssignmentNotification, connectChatBoard, createInvite, createProject, createRecurrence, createTask, deleteChecklistItem, finishAssignmentNotification, freezeChatBoard, incompleteChecklistCount, login, migrateChatBoard, pendingNotificationForTask, projectsForBoard, recurrencesForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskCollaboration, TaskConflictError, taskFilterState, taskForBoard, tasksForAssignee, tasksForBoard, updateChecklistItem, updateProject, updateRecurrence, updateTask, updateTaskAndFuture, type AttachmentInput, type Database, type RecurrenceInput, type TaskInput } from './db.js';
 import type { Config } from './config.js';
 import { isChatAdmin, telegramCall } from './telegram.js';
 import { renderPublication, schedulesForBoard, updateSchedule, validTimezone as validPublicationTimezone, type PublicationKind, type PublicationSchedule } from './publications.js';
@@ -171,6 +171,11 @@ export function buildApp(config: Config, db: Database) {
   app.get<{Params: {id: string}, Querystring: {archived?: string}}>('/api/boards/:id/tasks', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     return { tasks: await tasksForBoard(db, id, request.params.id, request.query.archived === 'true') };
+  });
+  app.get<{Params: {id: string; taskId: string}}>('/api/boards/:id/tasks/:taskId', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    if (!await boardForUser(db, id, request.params.id)) return reply.code(403).send({ error: 'task access forbidden' });
+    return await taskForBoard(db, id, request.params.id, request.params.taskId) ?? reply.code(404).send({ error: 'task not found' });
   });
   const taskInput = (body: TaskInput | undefined, partial = false): TaskInput | string => {
     const title = body?.title?.trim();

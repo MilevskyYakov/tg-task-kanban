@@ -6,7 +6,7 @@ import { AppShell, Avatar, Badge, CreateScreen, EnvironmentStatus, FieldRow, Sec
 import type { Board, Collaboration, Member, Project, Recurrence, Schedule } from './domain';
 import { initialNavigation, settingsSections, type NavigationState } from './navigation';
 import { TaskDetails } from './task-details';
-import { activeFilterCount, dateInputToIso, dateTimeInputsToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveKanbanSwipe, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
+import { activeFilterCount, dateInputToIso, dateTimeInputsToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveKanbanSwipe, resolveStartupContext, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
 
 type TaskView = 'list' | 'kanban';
 const statuses = Object.keys(statusDisplayName) as TaskStatus[];
@@ -33,6 +33,7 @@ function App() {
   const [detailProjects, setDetailProjects] = useState<Project[]>([]);
   const [detailMembers, setDetailMembers] = useState<Member[]>([]);
   const [detailTasks, setDetailTasks] = useState<Task[]>([]);
+  const [taskLinkError, setTaskLinkError] = useState<403 | 404>();
   const [showArchive, setShowArchive] = useState(false);
   const [userId, setUserId] = useState('');
   const [taskView, setTaskView] = useState<TaskView>(storedTaskView.view);
@@ -90,6 +91,16 @@ function App() {
     setTasks(taskData.tasks); setProjects(projectData.projects); setMembers(memberData.members); setSchedules(publicationData.schedules); setRecurrences(recurrenceData.recurrences);
     return true;
   };
+  const loadTaskDetails = async (task: Task) => {
+    const [nextCollaboration, nextProjects, nextMembers, nextTasks] = await Promise.all([
+      api<Collaboration>(`/api/boards/${task.board_id}/tasks/${task.id}/collaboration`),
+      api<{projects: Project[]}>(`/api/boards/${task.board_id}/projects`),
+      api<{members: Member[]}>(`/api/boards/${task.board_id}/members`),
+      api<{tasks: Task[]}>(`/api/boards/${task.board_id}/tasks`)
+    ]);
+    taskScroll.current = window.scrollY;
+    setOpenTask(task); setCollaboration(nextCollaboration); setDetailProjects(nextProjects.projects); setDetailMembers(nextMembers.members); setDetailTasks(nextTasks.tasks); setMessage('');
+  };
 
   useEffect(() => {
     const webApp = window.Telegram?.WebApp;
@@ -103,9 +114,21 @@ function App() {
           setProfileName([telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(' '));
           setProfileUsername(telegramUser.username ? `@${telegramUser.username}` : '');
         }
-        const token = webApp.initDataUnsafe?.start_param;
-        if (token) { const board = await api<Board>('/api/board-links/redeem', json('POST', {token})); setBoardOverrideId(board.id); }
-        await loadBoards(); setState('ready');
+        const startup = resolveStartupContext(webApp.initDataUnsafe?.start_param);
+        if (startup.surface === 'board-link') { const board = await api<Board>('/api/board-links/redeem', json('POST', {token: startup.token})); setBoardOverrideId(board.id); }
+        await loadBoards();
+        if (startup.surface === 'invalid-task') setTaskLinkError(404);
+        if (startup.surface === 'task') {
+          setBoardOverrideId(startup.boardId);
+          try {
+            const task = await api<Task>(`/api/boards/${startup.boardId}/tasks/${startup.taskId}`);
+            await loadTaskDetails(task);
+          } catch (error) {
+            if (error instanceof ApiError && (error.status === 403 || error.status === 404)) setTaskLinkError(error.status);
+            else throw error;
+          }
+        }
+        setState('ready');
       })
       .catch((error: Error) => { setMessage(error.message); setState('error'); });
   }, []);
@@ -496,6 +519,7 @@ function App() {
   if (state === 'outside') return <main><EnvironmentStatus/><section><p className="eyebrow">KAIROS TASKS</p><h1>Задачи живут<br/>в Telegram</h1><p>Откройте приложение через <a href="https://t.me/kairostask_bot">@kairostask_bot</a>.</p></section></main>;
   if (state === 'error') return <main><EnvironmentStatus/><section role="alert"><h1>Не удалось войти</h1><p>{message || 'Закройте приложение и откройте его снова через бота.'}</p></section></main>;
   if (state === 'loading') return <main><EnvironmentStatus/><Skeleton label="Загрузка приложения"/></main>;
+  if (taskLinkError) return <main><EnvironmentStatus/><section role="alert"><p className="eyebrow">ОШИБКА {taskLinkError}</p><h1>{taskLinkError === 403 ? 'Нет доступа к задаче' : 'Задача не найдена'}</h1><p>{taskLinkError === 403 ? 'У вас нет доступа к доске этой задачи.' : 'Ссылка повреждена или задача больше недоступна.'}</p><button onClick={() => { setTaskLinkError(undefined); setBoardOverrideId(undefined); }}>К задачам</button></section></main>;
   if (navigation.screen === 'settings') return <AppShell message={message} navigation={navigation} navigate={navigate}>{settingsRoot}</AppShell>;
   if (navigation.screen === 'settings-workspace') return <AppShell message={message} navigation={navigation} navigate={navigate}>{workspaceSettings}</AppShell>;
   if (navigation.screen === 'settings-automation') return <AppShell message={message} navigation={navigation} navigate={navigate}>{automationSettings}</AppShell>;
