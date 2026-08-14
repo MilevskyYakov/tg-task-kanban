@@ -18,6 +18,8 @@ export type Task = {
   deadline?: string;
   wait_reason?: string;
   archived_at?: string;
+  checklist_total?: number;
+  checklist_completed?: number;
   overdue: boolean;
   wait_check_due: boolean;
 };
