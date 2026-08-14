@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { buildApp } from '../src/app.js';
+import type { Config } from '../src/config.js';
 import { addChecklistItem, addTaskAttachment, addTaskComment, claimAssignmentNotification, createDatabase, createTask, finishAssignmentNotification, incompleteChecklistCount, pendingNotificationForTask, taskCollaboration, tasksForAssignee, tasksForBoard, updateChecklistItem, updateTask } from '../src/db.js';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -19,6 +21,23 @@ test('task collaboration enforces access, immutable audit and notification idemp
 
   const task = await createTask(db, users[0], boardId, { title: 'Ship', assigneeUserId: users[1], notifyAssignee: true });
   assert.ok(task);
+
+  const sessionSecret = 'test-session-secret-with-at-least-32-characters';
+  const tokens = [randomBytes(24).toString('base64url'), randomBytes(24).toString('base64url')];
+  await Promise.all(tokens.map((token, index) => db.query("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, now() + interval '1 hour')",
+    [createHash('sha256').update(`${sessionSecret}:${token}`).digest('hex'), users[index + 2]])));
+  const config: Config = { botToken: 'test', databaseUrl: url!, sessionSecret, initDataMaxAgeSeconds: 60, sessionMaxAgeSeconds: 60,
+    host: '127.0.0.1', port: 2240, production: false, webhookSecret: 'test-webhook-secret-with-at-least-32-characters', publicUrl: 'https://example.test', botUsername: 'test_bot' };
+  const app = buildApp(config, db);
+  const allowed = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${task.id}`, headers: { cookie: `session=${tokens[0]}` } });
+  const missing = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${randomUUID()}`, headers: { cookie: `session=${tokens[0]}` } });
+  const forbidden = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${task.id}`, headers: { cookie: `session=${tokens[1]}` } });
+  assert.equal(allowed.statusCode, 200);
+  assert.equal(allowed.json().title, 'Ship');
+  assert.deepEqual([missing.statusCode, missing.json()], [404, { error: 'task not found' }]);
+  assert.deepEqual([forbidden.statusCode, forbidden.json()], [403, { error: 'task access forbidden' }], 'outsider receives no task data');
+  await app.close();
+
   assert.ok(await addTaskComment(db, users[2], boardId, task.id, 'Ready to review'));
   assert.equal((await taskCollaboration(db, users[2], boardId, task.id))!.comments[0].body, 'Ready to review');
   assert.equal(await addTaskComment(db, users[3], boardId, task.id, 'Stolen'), null);

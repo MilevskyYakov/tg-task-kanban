@@ -223,6 +223,16 @@ export async function tasksForBoard(db: Database, userId: string, boardId: strin
   return result.rows;
 }
 
+export async function taskForBoard(db: Database, userId: string, boardId: string, taskId: string) {
+  const result = await db.query(`SELECT ${taskColumns} FROM tasks t
+    JOIN memberships m ON m.board_id = t.board_id
+    LEFT JOIN projects p ON p.id = t.project_id
+    LEFT JOIN users assignee ON assignee.id = t.assignee_user_id
+    LEFT JOIN tasks blocker ON blocker.id = t.blocked_by_task_id AND blocker.board_id = t.board_id
+    WHERE t.id = $1 AND t.board_id = $2 AND m.user_id = $3 AND t.archived_at IS NULL`, [taskId, boardId, userId]);
+  return result.rows[0] ?? null;
+}
+
 export async function tasksForAssignee(db: Database, userId: string) {
   const result = await db.query(`SELECT ${taskColumns}, b.name AS board_name FROM tasks t
     JOIN boards b ON b.id = t.board_id JOIN memberships m ON m.board_id = b.id AND m.user_id = $1

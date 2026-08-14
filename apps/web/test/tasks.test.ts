@@ -84,9 +84,13 @@ test('created task is presented with its selected context before a canonical rel
 });
 
 test('startup context defaults to tasks and distinguishes board and task links', () => {
+  const boardId = '123e4567-e89b-12d3-a456-426614174000';
+  const taskId = '123e4567-e89b-42d3-a456-426614174001';
   assert.deepEqual(resolveStartupContext(), { surface: 'tasks' });
   assert.deepEqual(resolveStartupContext('invite-token'), { surface: 'board-link', token: 'invite-token' });
-  assert.deepEqual(resolveStartupContext('task_board-id_task-id'), { surface: 'task', boardId: 'board-id', taskId: 'task-id' });
+  assert.deepEqual(resolveStartupContext(`task_${boardId}_${taskId}`), { surface: 'task', boardId, taskId });
+  assert.deepEqual(resolveStartupContext('task_missing_task-id'), { surface: 'invalid-task' });
+  assert.deepEqual(resolveStartupContext('task_'), { surface: 'invalid-task' });
 });
 
 test('app navigation starts on tasks', () => {
