@@ -5,7 +5,7 @@ import { api, ApiError, json } from './api';
 import { AppShell, Avatar, Badge, CreateScreen, FieldRow, SectionHeader, SettingsScreen, Sheet, TasksScreen } from './app-shell';
 import type { Board, Collaboration, Member, Project, Recurrence, Schedule } from './domain';
 import { initialNavigation, type NavigationState } from './navigation';
-import { activeFilterCount, dateInputToIso, dateTimeInputsToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
+import { activeFilterCount, dateInputToIso, dateTimeInputsToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
 
 declare global { interface Window { Telegram?: { WebApp?: { initData: string; initDataUnsafe?: { start_param?: string }; ready(): void; expand(): void } } } }
 type TaskView = 'list' | 'kanban';
@@ -175,7 +175,8 @@ function App() {
         title: title.trim(), description: description.trim() || null, projectId: project || null,
         assigneeUserId: assignee || null, deadline: deadlineIso, priority, notifyAssignee
       }));
-      setTasks((current: Task[]) => current.some((item: Task) => item.id === task.id) ? current : [task, ...current]);
+      const presentedTask = presentCreatedTask(task, boards.find((item) => item.id === createBoardId)?.name, projects.find((item) => item.id === project)?.name, members.find((item) => item.id === assignee)?.first_name);
+      setTasks((current: Task[]) => current.some((item: Task) => item.id === task.id) ? current : [presentedTask, ...current]);
       skipNextTaskLoad.current = true;
       setTitle(''); setDescription(''); setProject(''); setAssignee(''); setDeadline(''); setDeadlineTime(''); setPriority('normal'); setNotifyAssignee(false);
       navigate(createOrigin); setMessage(task.notificationWarning ?? 'Задача создана');

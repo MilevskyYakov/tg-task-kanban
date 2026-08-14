@@ -11,6 +11,7 @@ import {
   groupTasksByDeadline,
   groupTasksByProject,
   optimisticUpdate,
+  presentCreatedTask,
   priorityDisplayName,
   resolveStartupContext,
   resolveTaskBoard,
@@ -71,6 +72,13 @@ test('task create validates required fields and combines native date and time in
   assert.equal(dateTimeInputsToIso('2026-08-14', '18:30'), new Date('2026-08-14T18:30:00').toISOString());
   assert.equal(dateTimeInputsToIso('2026-02-30', '18:30'), null);
   assert.equal(dateTimeInputsToIso('2026-08-14', '25:00'), null);
+});
+
+test('created task is presented with its selected context before a canonical reload', () => {
+  const created = presentCreatedTask({ ...tasks[0], project_name: undefined, assignee_name: undefined, overdue: false }, 'Доска', 'Проект', 'Яков', new Date('2026-08-13T12:00:00Z'));
+  assert.deepEqual({ board: created.board_name, project: created.project_name, assignee: created.assignee_name, overdue: created.overdue, checklist: [created.checklist_completed, created.checklist_total] }, {
+    board: 'Доска', project: 'Проект', assignee: 'Яков', overdue: true, checklist: [0, 0]
+  });
 });
 
 test('startup context defaults to tasks and distinguishes board and task links', () => {

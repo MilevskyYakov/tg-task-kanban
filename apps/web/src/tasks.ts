@@ -185,6 +185,14 @@ export function validateTaskCreate(title: string, boardId: string): string | nul
   return null;
 }
 
+export function presentCreatedTask(task: Task, boardName?: string, projectName?: string, assigneeName?: string, now = new Date()): Task {
+  return {
+    ...task, board_name: boardName, project_name: projectName, assignee_name: assigneeName,
+    checklist_total: 0, checklist_completed: 0,
+    overdue: Boolean(task.deadline && task.status !== 'done' && new Date(task.deadline) < now), wait_check_due: false
+  };
+}
+
 export function dateInputToIso(value: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
   const date = new Date(`${value}T00:00:00.000Z`);
