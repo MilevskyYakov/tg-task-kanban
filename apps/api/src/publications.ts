@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Database } from './db.js';
+import type { Database, TaskStatus } from './db.js';
 import { telegramCall } from './telegram.js';
 
 export type PublicationKind = 'daily' | 'weekly';
@@ -14,7 +14,7 @@ export type PublicationSchedule = {
 type ReportTask = {
   id: string;
   title: string;
-  status: string;
+  status: TaskStatus;
   priority: string;
   deadline: string | null;
   wait_check_at: string | null;
@@ -22,7 +22,7 @@ type ReportTask = {
   assignee_name: string | null;
 };
 
-const statusNames: Record<string, string> = { todo: 'К выполнению', in_progress: 'В работе', waiting: 'Жду', done: 'Готово' };
+export const publicationStatusDisplayName: Record<TaskStatus, string> = { todo: 'Новая', in_progress: 'В работе', waiting: 'Блокер', done: 'Готово' };
 const escapeHtml = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 const localParts = (date: Date, timezone: string) => Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
   timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
@@ -84,10 +84,10 @@ export async function renderPublication(db: Database, boardId: string, kind: Pub
   const sections = [`<b>${title}</b>`];
   if (kind === 'weekly') {
     const count = (predicate: (task: ReportTask) => boolean) => tasks.filter(predicate).length;
-    sections.push(`Выполнено: <b>${count((task) => task.status === 'done')}</b> · Просрочено: <b>${count((task) => task.status !== 'done' && !!task.deadline && new Date(task.deadline) < now)}</b> · Жду: <b>${count((task) => task.status === 'waiting')}</b> · Активно: <b>${count((task) => task.status !== 'done')}</b>`);
+    sections.push(`Выполнено: <b>${count((task) => task.status === 'done')}</b> · Просрочено: <b>${count((task) => task.status !== 'done' && !!task.deadline && new Date(task.deadline) < now)}</b> · ${publicationStatusDisplayName.waiting}: <b>${count((task) => task.status === 'waiting')}</b> · Активно: <b>${count((task) => task.status !== 'done')}</b>`);
   }
   for (const [person, projects] of groups) for (const [project, statusesMap] of projects) for (const [status, list] of statusesMap) {
-    sections.push(`<b>${escapeHtml(person)}</b> · ${escapeHtml(project)} · ${statusNames[status] ?? status}\n${list.map((task) => taskLine(task, now, botUsername, boardId)).join('\n')}`);
+    sections.push(`<b>${escapeHtml(person)}</b> · ${escapeHtml(project)} · ${publicationStatusDisplayName[status as TaskStatus]}\n${list.map((task) => taskLine(task, now, botUsername, boardId)).join('\n')}`);
   }
   return splitTelegram(sections);
 }
