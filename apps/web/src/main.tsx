@@ -2,14 +2,15 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 import { api, ApiError, json } from './api';
-import { AppShell, CreateScreen, FieldRow, SettingsScreen, Sheet, TasksScreen } from './app-shell';
+import { AppShell, Avatar, Badge, CreateScreen, FieldRow, SectionHeader, SettingsScreen, Sheet, TasksScreen } from './app-shell';
 import type { Board, Collaboration, Member, Project, Recurrence, Schedule } from './domain';
 import { initialNavigation, type NavigationState } from './navigation';
-import { activeFilterCount, dateInputToIso, defaultFilters, filterTasks, optimisticUpdate, resolveTaskBoard, statusDisplayName, type Task, type TaskFilters, type TaskStatus } from './tasks';
+import { activeFilterCount, dateInputToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
 
 declare global { interface Window { Telegram?: { WebApp?: { initData: string; initDataUnsafe?: { start_param?: string }; ready(): void; expand(): void } } } }
 type TaskView = 'list' | 'kanban';
 const statuses = Object.keys(statusDisplayName) as TaskStatus[];
+const storedTaskView = restoreTaskViewState(localStorage.getItem('tasks.viewState'));
 
 function App() {
   const [state, setState] = useState<'loading' | 'outside' | 'error' | 'ready'>('loading');
@@ -31,6 +32,9 @@ function App() {
   const [showArchive, setShowArchive] = useState(false);
   const [userId, setUserId] = useState('');
   const [taskView, setTaskView] = useState<TaskView>('list');
+  const [grouping, setGrouping] = useState(storedTaskView.grouping);
+  const [taskLoadState, setTaskLoadState] = useState<'loading' | 'error' | 'ready'>('loading');
+  const [taskReload, setTaskReload] = useState(0);
   const [filters, setFilters] = useState<TaskFilters>(defaultFilters);
   const [filtersLoadedFor, setFiltersLoadedFor] = useState('');
   const [globalBoardId, setGlobalBoardId] = useState(() => localStorage.getItem('tasks.globalBoardId') ?? '');
@@ -47,6 +51,7 @@ function App() {
   const [recurrences, setRecurrences] = useState<Recurrence[]>([]);
   const [preview, setPreview] = useState('');
   const boardLoadVersion = useRef(0);
+  const taskScroll = useRef(storedTaskView.scrollY);
   const touchDrag = useRef<{task?: Task; x: number; y: number; active: boolean; timer?: ReturnType<typeof setTimeout>}>({ x: 0, y: 0, active: false });
   const selectedTaskBoardId = resolveTaskBoard(globalBoardId, boardOverrideId, boards.map((item) => item.id));
   const board = navigation.screen === 'board'
@@ -61,8 +66,9 @@ function App() {
     const [taskData, projectData, memberData, publicationData, recurrenceData] = await Promise.all([
       api<{tasks: Task[]}>(`/api/boards/${id}/tasks${archive ? '?archived=true' : ''}`), api<{projects: Project[]}>(`/api/boards/${id}/projects${archive ? '?archived=true' : ''}`), api<{members: Member[]}>(`/api/boards/${id}/members`), api<{schedules: Schedule[]}>(`/api/boards/${id}/publications`).catch(() => ({ schedules: [] })), api<{recurrences: Recurrence[]}>(`/api/boards/${id}/recurrences`)
     ]);
-    if (version !== boardLoadVersion.current || activeBoardId.current !== id) return;
+    if (version !== boardLoadVersion.current || activeBoardId.current !== id) return false;
     setTasks(taskData.tasks); setProjects(projectData.projects); setMembers(memberData.members); setSchedules(publicationData.schedules); setRecurrences(recurrenceData.recurrences);
+    return true;
   };
 
   useEffect(() => {
@@ -81,11 +87,29 @@ function App() {
   useEffect(() => {
     if (state !== 'ready') return;
     if (navigation.screen === 'tasks') {
-      if (selectedTaskBoardId) void loadBoard(selectedTaskBoardId).catch((error: Error) => setMessage(error.message));
-      else { ++boardLoadVersion.current; void api<{tasks: Task[]}>('/api/tasks/mine').then((data) => { if (!activeBoardId.current) { setTasks(data.tasks); setProjects([]); setMembers([]); } }).catch((error: Error) => setMessage(error.message)); }
+      setTaskLoadState('loading');
+      if (selectedTaskBoardId) void loadBoard(selectedTaskBoardId).then((loaded) => { if (loaded) setTaskLoadState('ready'); }).catch((error: Error) => { setMessage(error.message); setTaskLoadState('error'); });
+      else { ++boardLoadVersion.current; void api<{tasks: Task[]}>('/api/tasks/mine').then((data) => { if (!activeBoardId.current) { setTasks(data.tasks); setProjects([]); setMembers([]); setTaskLoadState('ready'); } }).catch((error: Error) => { setMessage(error.message); setTaskLoadState('error'); }); }
     }
     else if (navigation.screen === 'board') void loadBoard(navigation.boardId).catch((error: Error) => setMessage(error.message));
-  }, [state, navigation, selectedTaskBoardId]);
+  }, [state, navigation, selectedTaskBoardId, taskReload]);
+
+  useEffect(() => {
+    if (navigation.screen !== 'tasks') return;
+    requestAnimationFrame(() => window.scrollTo({ top: taskScroll.current }));
+  }, [navigation.screen]);
+  useEffect(() => {
+    if (navigation.screen !== 'tasks') return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const save = () => {
+      taskScroll.current = window.scrollY;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => localStorage.setItem('tasks.viewState', serializeTaskViewState({ ...storedTaskView, view: 'list', grouping, filters, scrollY: taskScroll.current })), 100);
+    };
+    window.addEventListener('scroll', save, { passive: true });
+    save();
+    return () => { window.removeEventListener('scroll', save); if (timer) clearTimeout(timer); taskScroll.current = window.scrollY; localStorage.setItem('tasks.viewState', serializeTaskViewState({ ...storedTaskView, view: 'list', grouping, filters, scrollY: taskScroll.current })); };
+  }, [navigation.screen, grouping, filters]);
 
   useEffect(() => {
     if (!userId || !board) return;
@@ -257,6 +281,31 @@ function App() {
     </>}</div>}
   </article>;
   const taskList = <div className="task-list">{filteredTasks.map(taskCard)}</div>;
+  const initials = (name?: string) => name?.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toLocaleUpperCase('ru-RU') || '—';
+  const mainTaskRow = (task: Task) => <article className="main-task-row" key={task.id}>
+    <input className="task-completion" type="checkbox" checked={task.status === 'done'} disabled={task.status === 'done'} aria-label={`Завершить задачу ${task.title}`} onChange={() => void move(task, 'done')}/>
+    <div className="task-summary">
+      <strong>{task.title}</strong>
+      <div className="task-meta">
+        <span>{task.project_name ?? task.board_name ?? 'Без проекта'}</span>
+        {task.deadline && <span className={task.overdue ? 'deadline-overdue' : ''}>{task.overdue ? 'Дедлайн прошёл' : new Date(task.deadline).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</span>}
+        {task.priority === 'urgent' && <Badge tone="urgent">Срочно</Badge>}
+        {task.status === 'waiting' && <Badge tone="blocker">Блокер</Badge>}
+        {Boolean(task.checklist_total) && <span>{task.checklist_completed}/{task.checklist_total}</span>}
+      </div>
+      {task.status === 'waiting' && task.wait_reason && <small className="blocker-reason">{task.wait_reason}</small>}
+    </div>
+    {task.assignee_name && <Avatar initials={initials(task.assignee_name)} label={`Исполнитель: ${task.assignee_name}`}/>}
+  </article>;
+  const deadlineGroups = groupTasksByDeadline(filteredTasks);
+  const deadlineSections: { id: DeadlineGroup; label: string; icon: string }[] = [
+    { id: 'overdue', label: 'Просрочено', icon: '!' }, { id: 'today', label: 'Сегодня', icon: '☼' },
+    { id: 'upcoming', label: 'Ближайшие', icon: '◷' }, { id: 'none', label: 'Без срока', icon: '—' }
+  ];
+  const groupedTaskList = <div className="grouped-task-list">{grouping === 'deadline'
+    ? deadlineSections.map((section) => deadlineGroups[section.id].length > 0 && <section className="task-section" key={section.id}><SectionHeader count={deadlineGroups[section.id].length} tone={section.id}><span className="section-title"><span aria-hidden="true">{section.icon}</span>{section.label}</span></SectionHeader>{deadlineGroups[section.id].map(mainTaskRow)}</section>)
+    : groupTasksByProject(filteredTasks).map((group) => <section className="task-section project-section" key={group.id ?? 'none'}><SectionHeader count={group.tasks.length} tone="upcoming">{group.name}</SectionHeader>{group.tasks.map(mainTaskRow)}</section>)
+  }</div>;
   const kanban = <div className="kanban" aria-label="Канбан">{statuses.map((status) => <section className="kanban-column" data-status={status} key={status}
     onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const task = tasks.find((item) => item.id === event.dataTransfer.getData('text/plain')); if (task) void move(task, status); }}>
     <h2>{statusDisplayName[status]} <small>{filteredTasks.filter((task) => task.status === status).length}</small></h2>
@@ -275,6 +324,10 @@ function App() {
       <button className="secondary" onClick={() => setFilters(defaultFilters)}>Сбросить</button>
     </div></details></>;
   const taskToolbar = <>
+    <div className="list-controls">
+      <div className="grouping-tabs" role="tablist" aria-label="Группировка задач"><button role="tab" aria-selected={grouping === 'deadline'} className={grouping === 'deadline' ? 'active' : ''} onClick={() => setGrouping('deadline')}>По срокам</button><button role="tab" aria-selected={grouping === 'project'} className={grouping === 'project' ? 'active' : ''} onClick={() => setGrouping('project')}>По проектам</button></div>
+      <div className="view-switch" aria-label="Вид задач"><button className="active" aria-label="Список" aria-pressed="true"><svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h3v3H5zM11 6h8M5 11h3v3H5zM11 11h8M5 16h3v3H5zM11 16h8"/></svg></button><button aria-label="Канбан" title="Канбан будет реализован отдельно" disabled><svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h4v14H5zM10 5h4v14h-4zM15 5h4v14h-4z"/></svg></button></div>
+    </div>
     <div className="task-toolbar">
       <input className="search" type="search" value={filters.search} onChange={(event) => setFilter('search', event.target.value)} placeholder="Поиск задач" aria-label="Поиск задач"/>
       <button className="filter-trigger" onClick={() => setShowFilterSheet(true)}><svg className="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M7 14v6"/></svg><span className="filter-label">Фильтры</span>{filterCount > 0 && <span className="filter-count">{filterCount}</span>}</button>
@@ -324,7 +377,7 @@ function App() {
   if (state === 'outside') return <main><section><p className="eyebrow">KAIROS TASKS</p><h1>Задачи живут<br/>в Telegram</h1><p>Откройте приложение через <a href="https://t.me/kairostask_bot">@kairostask_bot</a>.</p></section></main>;
   if (state === 'error') return <main><section><h1>Не удалось войти</h1><p>{message || 'Закройте приложение и откройте его снова через бота.'}</p></section></main>;
   if (state === 'loading') return <main><section><p>Загрузка…</p></section></main>;
-  if (navigation.screen === 'tasks') return <AppShell message={message} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>{taskToolbar}{taskList}{!filteredTasks.length && <p>{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>}{boardOverrideId && <p className="context-note">Доска открыта из Telegram-чата и не заменяет ваш обычный выбор.</p>}{boardSheet}{filterSheet}</TasksScreen></AppShell>;
+  if (navigation.screen === 'tasks') return <AppShell message={message} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>{taskToolbar}{taskLoadState === 'loading' ? <p className="task-state">Загрузка задач…</p> : taskLoadState === 'error' ? <div className="task-state"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : groupedTaskList}{taskLoadState === 'ready' && !filteredTasks.length && <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>}{boardOverrideId && <p className="context-note">Доска открыта из Telegram-чата и не заменяет ваш обычный выбор.</p>}{boardSheet}{filterSheet}</TasksScreen></AppShell>;
   if (board) return <AppShell message={message} navigation={navigation} navigate={navigate}><button className="back" onClick={() => navigate({ screen: 'tasks' })}>← Задачи</button><header><p className="eyebrow">{board.type === 'chat' ? 'ЧАТ-ДОСКА' : 'ЛИЧНАЯ ДОСКА'}</p><h1>{board.name}</h1></header>{publicationSettings}{board.status === 'frozen' ? <p className="notice">Бот больше не в чате. Данные сохранены, действия заморожены.</p> : board.status === 'draft' ? <section><p>Завершите настройку, чтобы команда начала работу.</p><button onClick={activate}>Активировать</button></section> : <><form className="create-task" onSubmit={(event) => { event.preventDefault(); void create(); }}><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Название задачи" maxLength={200} required/><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Описание"/><select value={project} onChange={(event) => setProject(event.target.value)}><option value="">Без проекта</option>{projects.filter((item) => !item.archived_at).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><select value={assignee} onChange={(event) => setAssignee(event.target.value)}><option value="">Без ответственного</option>{members.map((member) => <option key={member.id} value={member.id}>{member.first_name}</option>)}</select><input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)}/><select value={priority} onChange={(event) => setPriority(event.target.value as Task['priority'])}><option value="normal">Обычный</option><option value="urgent">Срочный</option></select><label className="checkbox"><input type="checkbox" checked={notifyAssignee} disabled={!assignee} onChange={(event) => setNotifyAssignee(event.target.checked)}/> Уведомить исполнителя</label><button>Создать</button></form><section className="recurrences"><div className="project-row"><strong>Повторы</strong><button className="secondary" onClick={addRecurrence}>Добавить повтор</button></div>{recurrences.map((item) => <article className="recurrence" key={item.id}><span>{item.frequency} · {item.local_time} · {item.timezone}</span><strong>{item.title}</strong>{item.next_occurrence_at && <small>Следующий: {new Date(item.next_occurrence_at).toLocaleString('ru-RU')}</small>}<div className="actions">{!item.archived_at && <button onClick={() => action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {paused: !item.paused_at})), item.paused_at ? 'Повтор продолжен' : 'Повтор на паузе')}>{item.paused_at ? 'Продолжить' : 'Пауза'}</button>}<button onClick={() => action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {archived: true})), 'Повтор архивирован')}>В архив</button></div></article>)}</section><div className="project-row"><div>{projects.map((item) => <span key={item.id}><button className="link" onClick={() => item.archived_at ? action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: false})), 'Проект восстановлен') : editProject(item)}>{item.name}{item.archived_at ? ' · восстановить' : ''}</button>{!item.archived_at && <button className="link" onClick={() => action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: true})), 'Проект архивирован')}>×</button>}</span>)}</div><button className="secondary" onClick={addProject}>+ Проект</button></div><button className="secondary" onClick={() => { const next = !showArchive; setShowArchive(next); void loadBoard(board.id, next); }}>{showArchive ? 'Только активные' : 'Показать архив'}</button>{taskControls}{taskView === 'kanban' && !showArchive ? kanban : taskList}{!filteredTasks.length && <p>{filters.search ? 'Ничего не найдено.' : 'Задач в этом срезе пока нет.'}</p>}</>}{board.type === 'chat' && board.status !== 'frozen' && <button className="secondary" onClick={() => action(async () => { const result = await api<{url: string}>(`/api/boards/${board.id}/invites`, {method: 'POST'}); await navigator.clipboard.writeText(result.url); }, 'Ссылка скопирована', false)}>Скопировать приглашение</button>}</AppShell>;
   const boardList = <div className="board-list">{boards.map((item) => <button className="board" key={item.id} onClick={() => { setMessage(''); setNavigation({ screen: 'board', boardId: item.id }); }}><span>{item.type === 'chat' ? 'ЧАТ' : 'ЛИЧНАЯ'}{item.status === 'frozen' ? ' · ЗАМОРОЖЕНА' : ''}</span><strong>{item.name}</strong><small>{item.type === 'chat' ? 'Командное пространство' : 'Только ваши задачи'}</small></button>)}</div>;
   return <AppShell message={message} navigation={navigation} navigate={navigate}>{navigation.screen === 'create' ? <CreateScreen>{boardList}</CreateScreen> : <SettingsScreen>{boardList}</SettingsScreen>}</AppShell>;

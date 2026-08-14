@@ -207,6 +207,8 @@ const taskColumns = `t.id, t.board_id, t.project_id, p.name AS project_name, t.c
   t.title, t.description, t.status, t.priority, t.deadline, t.wait_reason, t.wait_check_at,
   t.blocked_by_task_id, blocker.title AS blocker_title,
   t.recurrence_template_id, t.occurrence_at, t.archived_at, t.created_at, t.updated_at,
+  (SELECT count(*)::int FROM task_checklist_items ci WHERE ci.task_id = t.id) AS checklist_total,
+  (SELECT count(*)::int FROM task_checklist_items ci WHERE ci.task_id = t.id AND ci.completed_at IS NOT NULL) AS checklist_completed,
   (t.status <> 'done' AND t.deadline < now()) AS overdue,
   (t.status = 'waiting' AND t.wait_check_at <= now()) AS wait_check_due`;
 

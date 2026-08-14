@@ -20,6 +20,8 @@ export type Task = {
   blocked_by_task_id?: string;
   blocker_title?: string;
   archived_at?: string;
+  checklist_total?: number;
+  checklist_completed?: number;
   overdue: boolean;
   wait_check_due: boolean;
 };
