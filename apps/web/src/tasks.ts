@@ -17,6 +17,8 @@ export type Task = {
   priority: TaskPriority;
   deadline?: string;
   wait_reason?: string;
+  blocked_by_task_id?: string;
+  blocker_title?: string;
   archived_at?: string;
   checklist_total?: number;
   checklist_completed?: number;

@@ -148,18 +148,26 @@ function App() {
   };
   const move = async (task: Task, status: TaskStatus) => {
     if (task.status === status) return;
-    const waitReason = status === 'waiting' ? window.prompt('Почему ждём?')?.trim() : undefined;
-    if (status === 'waiting' && !waitReason) return;
+    const candidateTasks = tasks.filter((item) => item.board_id === task.board_id && item.id !== task.id && item.status !== 'done' && !item.archived_at);
+    const blockerAnswer = status === 'waiting'
+      ? window.prompt(`Номер задачи-блокера (пусто — внешняя причина)\n${candidateTasks.map((item, index) => `${index + 1}. ${item.title}`).join('\n')}`, '')
+      : undefined;
+    if (status === 'waiting' && blockerAnswer === null) return;
+    const blockerTaskId = blockerAnswer?.trim() ? candidateTasks[Number(blockerAnswer) - 1]?.id : null;
+    if (blockerAnswer?.trim() && !blockerTaskId) { setMessage('Выберите номер задачи из списка'); return; }
+    const waitReason = status === 'waiting' && !blockerTaskId ? window.prompt('Внешняя причина блокировки')?.trim() : undefined;
+    if (status === 'waiting' && !blockerTaskId && !waitReason) return;
     const check = status === 'waiting' ? window.prompt('Дата следующей проверки, YYYY-MM-DD (необязательно)')?.trim() : undefined;
     const waitCheckAt = check ? dateInputToIso(check) : null;
     if (check && !waitCheckAt) { setMessage('Дата проверки: YYYY-MM-DD'); return; }
     const previous = tasks;
     try {
-      const update = async (confirmIncompleteChecklist = false) => { await api(`/api/boards/${task.board_id}/tasks/${task.id}`, json('PATCH', { status, waitReason, waitCheckAt, confirmIncompleteChecklist })); };
+      const update = async (confirmIncompleteChecklist = false) => { await api(`/api/boards/${task.board_id}/tasks/${task.id}`, json('PATCH', { status, blockerTaskId, waitReason, waitCheckAt, confirmIncompleteChecklist })); };
       await optimisticUpdate(previous, previous.map((item) => item.id === task.id ? { ...item, status } : item), setTasks, async () => {
         try { await update(); }
         catch (error) {
-          if (!(error instanceof ApiError) || error.status !== 409 || !window.confirm('В чек-листе остались незавершённые пункты. Всё равно закрыть задачу?')) throw error;
+          if (!(error instanceof ApiError) || error.status !== 409 || error.message !== 'incomplete checklist confirmation required'
+            || !window.confirm('В чек-листе остались незавершённые пункты. Всё равно закрыть задачу?')) throw error;
           await update(true);
         }
       });
@@ -265,7 +273,7 @@ function App() {
       <span>{task.board_name ?? statusDisplayName[task.status]}</span><strong>{task.title}</strong>
       {task.description && <small>{task.description}</small>}
       <div className="meta">{task.project_name && <small>{task.project_name}</small>}<small>{task.assignee_name ?? 'Без ответственного'}</small>{task.deadline && <small>До {new Date(task.deadline).toLocaleDateString('ru-RU')}</small>}</div>
-      {task.overdue && <small className="flag">Дедлайн прошёл</small>}{task.wait_check_due && <small className="flag">Пора проверить ожидание</small>}{task.wait_reason && <small>Ждём: {task.wait_reason}</small>}
+      {task.overdue && <small className="flag">Дедлайн прошёл</small>}{task.wait_check_due && <small className="flag">Пора проверить ожидание</small>}{task.blocker_title ? <small>Блокирует: {task.blocker_title}</small> : task.wait_reason && <small>Внешний блокер: {task.wait_reason}</small>}
     </div>
     {board && <div className="actions"><button onClick={() => openCollaboration(task)}>Обсуждение</button>{task.archived_at ? <button onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}/reopen`, {method: 'POST'}), 'Задача восстановлена')}>Восстановить</button> : <>
       <label className="status-control">Статус<select aria-label={`Статус задачи ${task.title}`} value={task.status} onChange={(event) => void move(task, event.target.value as TaskStatus)}>{statuses.map((status) => <option key={status} value={status}>{statusDisplayName[status]}</option>)}</select></label>

@@ -4,7 +4,7 @@ import Fastify from 'fastify';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateInitData } from './auth.js';
-import { activateChatBoard, addChecklistItem, addTaskAttachment, addTaskComment, boardForUser, boardMembers, boardsForUser, claimAssignmentNotification, connectChatBoard, createInvite, createProject, createRecurrence, createTask, deleteChecklistItem, finishAssignmentNotification, freezeChatBoard, incompleteChecklistCount, login, migrateChatBoard, pendingNotificationForTask, projectsForBoard, recurrencesForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskCollaboration, taskFilterState, tasksForAssignee, tasksForBoard, updateChecklistItem, updateProject, updateRecurrence, updateTask, updateTaskAndFuture, type AttachmentInput, type Database, type RecurrenceInput, type TaskInput } from './db.js';
+import { activateChatBoard, addChecklistItem, addTaskAttachment, addTaskComment, boardForUser, boardMembers, boardsForUser, claimAssignmentNotification, connectChatBoard, createInvite, createProject, createRecurrence, createTask, deleteChecklistItem, finishAssignmentNotification, freezeChatBoard, incompleteChecklistCount, login, migrateChatBoard, pendingNotificationForTask, projectsForBoard, recurrencesForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskCollaboration, TaskConflictError, taskFilterState, tasksForAssignee, tasksForBoard, updateChecklistItem, updateProject, updateRecurrence, updateTask, updateTaskAndFuture, type AttachmentInput, type Database, type RecurrenceInput, type TaskInput } from './db.js';
 import type { Config } from './config.js';
 import { isChatAdmin, telegramCall } from './telegram.js';
 import { renderPublication, schedulesForBoard, updateSchedule, validTimezone as validPublicationTimezone, type PublicationKind, type PublicationSchedule } from './publications.js';
@@ -178,19 +178,21 @@ export function buildApp(config: Config, db: Database) {
     if (body?.status && !['todo', 'in_progress', 'waiting', 'done'].includes(body.status)) return 'invalid status';
     if (body?.priority && !['normal', 'urgent'].includes(body.priority)) return 'invalid priority';
     if (!partial && body?.status && body.status !== 'todo') return 'new task status must be todo';
-    if (body?.status === 'waiting' && !body.waitReason?.trim()) return 'wait reason is required';
-    if ((body?.waitReason || body?.waitCheckAt) && body.status !== 'waiting') return 'wait fields require waiting status';
+    if (body?.blockerTaskId !== undefined && body.blockerTaskId !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.blockerTaskId)) return 'invalid blocker task id';
+    if (body?.status === 'waiting' && Number(Boolean(body.blockerTaskId)) + Number(Boolean(body.waitReason?.trim())) !== 1) return 'choose one blocker task or external reason';
+    if ((body?.waitReason || body?.waitCheckAt || body?.blockerTaskId) && body.status !== 'waiting') return 'blocker fields require waiting status';
     for (const value of [body?.deadline, body?.waitCheckAt]) if (value && Number.isNaN(Date.parse(value))) return 'invalid date';
     if (body?.notifyAssignee !== undefined && typeof body.notifyAssignee !== 'boolean') return 'notifyAssignee must be boolean';
     return { ...body!, ...(title ? { title } : {}) };
   };
-  const sendAssignmentNotification = async (taskId: string) => {
-    const notificationId = await pendingNotificationForTask(db, taskId);
+  const sendTaskNotification = async (taskId: string, kind = 'assignment') => {
+    const notificationId = await pendingNotificationForTask(db, taskId, kind);
     if (!notificationId) return null;
     const notification = await claimAssignmentNotification(db, notificationId);
     if (!notification) return null;
     try {
-      await telegramCall(config.botToken, 'sendMessage', { chat_id: notification.telegram_id, text: `Вам назначена задача: ${notification.title}` });
+      const text = notification.kind === 'unblocked' ? `Задача разблокирована: ${notification.title}` : `Вам назначена задача: ${notification.title}`;
+      await telegramCall(config.botToken, 'sendMessage', { chat_id: notification.telegram_id, text });
       await finishAssignmentNotification(db, notificationId); return null;
     } catch (error) {
       await finishAssignmentNotification(db, notificationId, error instanceof Error ? error.message : 'Telegram delivery failed');
@@ -214,7 +216,7 @@ export function buildApp(config: Config, db: Database) {
     const input = taskInput(request.body); if (typeof input === 'string') return reply.code(400).send({ error: input });
     const task = await createTask(db, id, request.params.id, input);
     if (!task) return reply.code(404).send({ error: 'board, project or assignee not found' });
-    return { ...task, notificationWarning: input.notifyAssignee ? await sendAssignmentNotification(task.id) : null };
+    return { ...task, notificationWarning: input.notifyAssignee ? await sendTaskNotification(task.id) : null };
   });
   app.patch<{Params: {id: string; taskId: string}, Querystring: {scope?: string}, Body: TaskPatchInput}>('/api/boards/:id/tasks/:taskId', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
@@ -223,11 +225,21 @@ export function buildApp(config: Config, db: Database) {
       const incomplete = await incompleteChecklistCount(db, id, request.params.id, request.params.taskId);
       if (incomplete) return reply.code(409).send({ error: 'incomplete checklist confirmation required', incompleteChecklist: incomplete });
     }
-    const task = request.query.scope === 'future'
-      ? await updateTaskAndFuture(db, id, request.params.id, request.params.taskId, input)
-      : await updateTask(db, id, request.params.id, request.params.taskId, input);
+    let task;
+    try {
+      task = request.query.scope === 'future'
+        ? await updateTaskAndFuture(db, id, request.params.id, request.params.taskId, input)
+        : await updateTask(db, id, request.params.id, request.params.taskId, input);
+    } catch (error) {
+      if (error instanceof TaskConflictError) return reply.code(409).send({ error: error.message });
+      throw error;
+    }
     if (!task) return reply.code(403).send({ error: 'task action is not allowed' });
-    return { ...task, notificationWarning: input.notifyAssignee ? await sendAssignmentNotification(task.id) : null };
+    const warnings = await Promise.all([
+      ...(input.notifyAssignee ? [sendTaskNotification(task.id)] : []),
+      ...task.unblockedTaskIds.map((taskId: string) => sendTaskNotification(taskId, 'unblocked'))
+    ]);
+    return { ...task, notificationWarning: warnings.find(Boolean) ?? null };
   });
   app.delete<{Params: {id: string; taskId: string}}>('/api/boards/:id/tasks/:taskId', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
