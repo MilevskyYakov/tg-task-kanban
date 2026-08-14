@@ -5,12 +5,11 @@ import { api, ApiError, json } from './api';
 import { AppShell, CreateScreen, SettingsScreen, TasksScreen } from './app-shell';
 import type { Board, Collaboration, Member, Project, Recurrence, Schedule } from './domain';
 import { initialNavigation, type NavigationState } from './navigation';
-import { dateInputToIso, defaultFilters, filterTasks, optimisticUpdate, type Task, type TaskFilters, type TaskStatus } from './tasks';
+import { dateInputToIso, defaultFilters, filterTasks, optimisticUpdate, statusDisplayName, type Task, type TaskFilters, type TaskStatus } from './tasks';
 
 declare global { interface Window { Telegram?: { WebApp?: { initData: string; initDataUnsafe?: { start_param?: string }; ready(): void; expand(): void } } } }
 type TaskView = 'list' | 'kanban';
-const statusName = { todo: 'К выполнению', in_progress: 'В работе', waiting: 'Жду', done: 'Готово' };
-const statuses = Object.keys(statusName) as TaskStatus[];
+const statuses = Object.keys(statusDisplayName) as TaskStatus[];
 
 function App() {
   const [state, setState] = useState<'loading' | 'outside' | 'error' | 'ready'>('loading');
@@ -119,7 +118,7 @@ function App() {
         }
       });
       if (board) await loadBoard(board.id);
-      setMessage(statusName[status]);
+      setMessage(statusDisplayName[status]);
     } catch (error) {
       setMessage(`Статус не изменён: ${error instanceof Error ? error.message : 'Ошибка'}`);
     }
@@ -198,20 +197,20 @@ function App() {
       if (drag.active) event.preventDefault();
     }} onPointerUp={finishTouchDrag} onPointerCancel={finishTouchDrag}>
     <div onClick={() => { if (!board && task.board_id) setNavigation({ screen: 'board', boardId: task.board_id }); }}>
-      <span>{task.board_name ?? statusName[task.status]}</span><strong>{task.title}</strong>
+      <span>{task.board_name ?? statusDisplayName[task.status]}</span><strong>{task.title}</strong>
       {task.description && <small>{task.description}</small>}
       <div className="meta">{task.project_name && <small>{task.project_name}</small>}<small>{task.assignee_name ?? 'Без ответственного'}</small>{task.deadline && <small>До {new Date(task.deadline).toLocaleDateString('ru-RU')}</small>}</div>
       {task.overdue && <small className="flag">Дедлайн прошёл</small>}{task.wait_check_due && <small className="flag">Пора проверить ожидание</small>}{task.wait_reason && <small>Ждём: {task.wait_reason}</small>}
     </div>
     {board && <div className="actions"><button onClick={() => openCollaboration(task)}>Обсуждение</button>{task.archived_at ? <button onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}/reopen`, {method: 'POST'}), 'Задача восстановлена')}>Восстановить</button> : <>
-      <label className="status-control">Статус<select aria-label={`Статус задачи ${task.title}`} value={task.status} onChange={(event) => void move(task, event.target.value as TaskStatus)}>{statuses.map((status) => <option key={status} value={status}>{statusName[status]}</option>)}</select></label>
+      <label className="status-control">Статус<select aria-label={`Статус задачи ${task.title}`} value={task.status} onChange={(event) => void move(task, event.target.value as TaskStatus)}>{statuses.map((status) => <option key={status} value={status}>{statusDisplayName[status]}</option>)}</select></label>
       <button onClick={() => editTask(task)}>Изменить</button><button onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}`, {method: 'DELETE'}), 'Задача архивирована')}>В архив</button>
     </>}</div>}
   </article>;
   const taskList = <div className="task-list">{filteredTasks.map(taskCard)}</div>;
   const kanban = <div className="kanban" aria-label="Канбан">{statuses.map((status) => <section className="kanban-column" data-status={status} key={status}
     onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const task = tasks.find((item) => item.id === event.dataTransfer.getData('text/plain')); if (task) void move(task, status); }}>
-    <h2>{statusName[status]} <small>{filteredTasks.filter((task) => task.status === status).length}</small></h2>
+    <h2>{statusDisplayName[status]} <small>{filteredTasks.filter((task) => task.status === status).length}</small></h2>
     <div className="kanban-tasks">{filteredTasks.filter((task) => task.status === status).map(taskCard)}</div>
   </section>)}</div>;
   const taskControls = board && !showArchive && <><div className="segmented"><button className={filters.scope === 'mine' ? 'active' : ''} onClick={() => setFilter('scope', 'mine')}>Мои</button><button className={filters.scope === 'all' ? 'active' : ''} onClick={() => setFilter('scope', 'all')}>Все</button></div>
@@ -220,7 +219,7 @@ function App() {
     <details className="filters"><summary>Фильтры</summary><div className="filter-grid">
       <select aria-label="Проект" value={filters.project} onChange={(event) => setFilter('project', event.target.value)}><option value="">Все проекты</option>{projects.filter((item) => !item.archived_at).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
       <select aria-label="Исполнитель" value={filters.assignee} onChange={(event) => setFilter('assignee', event.target.value)}><option value="">Все исполнители</option>{members.map((member) => <option key={member.id} value={member.id}>{member.first_name}</option>)}</select>
-      <select aria-label="Статус" value={filters.status} onChange={(event) => setFilter('status', event.target.value as TaskFilters['status'])}><option value="">Все статусы</option>{statuses.map((status) => <option key={status} value={status}>{statusName[status]}</option>)}</select>
+      <select aria-label="Статус" value={filters.status} onChange={(event) => setFilter('status', event.target.value as TaskFilters['status'])}><option value="">Все статусы</option>{statuses.map((status) => <option key={status} value={status}>{statusDisplayName[status]}</option>)}</select>
       <select aria-label="Приоритет" value={filters.priority} onChange={(event) => setFilter('priority', event.target.value as TaskFilters['priority'])}><option value="">Любой приоритет</option><option value="normal">Обычный</option><option value="urgent">Срочный</option></select>
       <select aria-label="Дедлайн" value={filters.deadline} onChange={(event) => setFilter('deadline', event.target.value as TaskFilters['deadline'])}><option value="">Любой дедлайн</option><option value="overdue">Просрочено</option><option value="today">Сегодня</option><option value="week">7 дней</option><option value="none">Без дедлайна</option></select>
       <label className="checkbox"><input type="checkbox" checked={filters.unassigned} onChange={(event) => setFilter('unassigned', event.target.checked)}/> Без ответственного</label>
@@ -233,7 +232,7 @@ function App() {
     const result = await api<Schedule | {messages: string[]}>(`/api/boards/${board.id}/publications/${schedule.kind}${previewOnly ? '/preview' : ''}`, json(previewOnly ? 'POST' : 'PUT', schedule));
     if ('messages' in result) setPreview(result.messages.join('\n\n———\n\n')); else setSchedules((items) => items.map((item) => item.kind === result.kind ? result : item));
   };
-  const publicationSettings = board?.type === 'chat' && schedules.length ? <details className="publications"><summary>Публикации в чат</summary>{schedules.map((schedule) => <fieldset key={schedule.kind}><legend>{schedule.kind === 'daily' ? 'План дня' : 'Недельная сводка'}</legend><label><input type="checkbox" checked={schedule.enabled} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, enabled: event.target.checked} : item))}/> Включена</label><label>Дни (1–7)<input value={schedule.weekdays.join(',')} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, weekdays: event.target.value.split(',').map(Number).filter(Boolean)} : item))}/></label><label>Время<input type="time" value={schedule.local_time} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, local_time: event.target.value} : item))}/></label><label>Часовой пояс<input value={schedule.timezone} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, timezone: event.target.value} : item))}/></label><div className="status-options">{Object.entries(statusName).map(([status, name]) => <label key={status}><input type="checkbox" checked={schedule.included_statuses.includes(status as TaskStatus)} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, included_statuses: event.target.checked ? [...item.included_statuses, status as TaskStatus] : item.included_statuses.filter((value) => value !== status)} : item))}/>{name}</label>)}</div><div className="actions"><button onClick={() => void action(() => saveSchedule(schedule), 'Расписание сохранено', false)}>Сохранить</button><button className="secondary" onClick={() => void action(() => saveSchedule(schedule, true), 'Предпросмотр готов', false)}>Предпросмотр</button></div></fieldset>)}{preview && <pre>{preview}</pre>}</details> : null;
+  const publicationSettings = board?.type === 'chat' && schedules.length ? <details className="publications"><summary>Публикации в чат</summary>{schedules.map((schedule) => <fieldset key={schedule.kind}><legend>{schedule.kind === 'daily' ? 'План дня' : 'Недельная сводка'}</legend><label><input type="checkbox" checked={schedule.enabled} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, enabled: event.target.checked} : item))}/> Включена</label><label>Дни (1–7)<input value={schedule.weekdays.join(',')} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, weekdays: event.target.value.split(',').map(Number).filter(Boolean)} : item))}/></label><label>Время<input type="time" value={schedule.local_time} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, local_time: event.target.value} : item))}/></label><label>Часовой пояс<input value={schedule.timezone} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, timezone: event.target.value} : item))}/></label><div className="status-options">{Object.entries(statusDisplayName).map(([status, name]) => <label key={status}><input type="checkbox" checked={schedule.included_statuses.includes(status as TaskStatus)} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, included_statuses: event.target.checked ? [...item.included_statuses, status as TaskStatus] : item.included_statuses.filter((value) => value !== status)} : item))}/>{name}</label>)}</div><div className="actions"><button onClick={() => void action(() => saveSchedule(schedule), 'Расписание сохранено', false)}>Сохранить</button><button className="secondary" onClick={() => void action(() => saveSchedule(schedule, true), 'Предпросмотр готов', false)}>Предпросмотр</button></div></fieldset>)}{preview && <pre>{preview}</pre>}</details> : null;
 
   if (state === 'outside') return <main><section><p className="eyebrow">KAIROS TASKS</p><h1>Задачи живут<br/>в Telegram</h1><p>Откройте приложение через <a href="https://t.me/kairostask_bot">@kairostask_bot</a>.</p></section></main>;
   if (state === 'error') return <main><section><h1>Не удалось войти</h1><p>{message || 'Закройте приложение и откройте его снова через бота.'}</p></section></main>;
