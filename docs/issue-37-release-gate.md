@@ -2,7 +2,7 @@
 
 Version: 2026-08-14  
 Release candidate base: `b6963a4` (`origin/main` после закрытия #27–#36)  
-Статус: **не готов к cutover**, пока не заполнены Telegram device smoke, backup/restore и production smoke.
+Статус: **candidate deployed, GO заблокирован**, пока не пройдены Telegram device smoke и webhook delivery.
 
 Этот файл хранит только обезличенный release evidence. Не добавлять tokens, cookie, `initData`, chat IDs, production identifiers или тексты задач.
 
@@ -54,8 +54,8 @@ Release candidate base: `b6963a4` (`origin/main` после закрытия #27
 
 - [x] Commit существует и собирается из clean detached worktree командой `npm ci --include=dev && npm run build`.
 - [x] После pilot UI добавлена только миграция `007_task_blockers.sql`; она создаёт additive таблицу и не требует schema rollback для возврата старого кода.
-- [ ] Перед deploy записан фактический previous-known-good production SHA: `________________`.
-- [ ] Создан production backup и пройден restore smoke в отдельную БД.
+- [x] Перед deploy записан фактический previous-known-good production SHA: `745b8994853f4281d57e56f601d55b13c6d0e4db`.
+- [x] Создан production backup и пройден restore smoke в отдельную БД; восстановлены 4 доски.
 - [ ] Проверена команда code rollback из `docs/release-runbook.md` с фактическим previous-known-good SHA.
 
 `745b899` — аварийный old-UI fallback, не замена записи фактически развёрнутого SHA перед cutover.
@@ -64,12 +64,13 @@ Release candidate base: `b6963a4` (`origin/main` после закрытия #27
 
 Live cutover выполняется только после явного подтверждения владельца.
 
-- [ ] Владелец подтвердил cutover.
-- [ ] Deploy candidate и миграции завершены без ошибок.
-- [ ] Internal и public health возвращают `200`.
+- [x] Владелец подтвердил cutover.
+- [x] Deploy candidate `b6963a48aa45a14ce8212e2a156ecf22c3f8620e` и миграции завершены без ошибок.
+- [x] Internal и public health возвращают `200`.
 - [ ] Telegram smoke выше пройден на iOS и Android.
-- [ ] Логи за последние 15 минут не содержат secrets или новых ошибок.
-- [ ] При restart recurrence и publication создаются ровно один раз.
+- [x] Логи за последние 15 минут не содержат secrets или новых ошибок.
+- [x] При restart не появились дополнительные recurrence tasks или publication runs.
+- [ ] Telegram webhook принимает реальные updates: endpoint и secret проходят synthetic `200`, но Telegram `getWebhookInfo` пока сообщает `Connection timed out` и 2 pending updates.
 - [ ] Итог: `GO / ROLLBACK`.
 
 ## 5. Закрытие
