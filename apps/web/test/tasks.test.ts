@@ -4,18 +4,22 @@ import { initialNavigation, isSettingsNavigation, settingsSections } from '../sr
 import {
   activeFilterCount,
   dateInputToIso,
+  dateTimeInputsToIso,
   defaultFilters,
   defaultTaskViewState,
   filterTasks,
   groupTasksByDeadline,
   groupTasksByProject,
   optimisticUpdate,
+  presentCreatedTask,
   priorityDisplayName,
+  resolveKanbanSwipe,
   resolveStartupContext,
   resolveTaskBoard,
   restoreTaskViewState,
   serializeTaskViewState,
   statusDisplayName,
+  validateTaskCreate,
   type Task
 } from '../src/tasks.js';
 
@@ -62,6 +66,22 @@ test('date input rejects malformed and impossible calendar dates', () => {
   assert.equal(dateInputToIso('30.02.2026'), null);
 });
 
+test('task create validates required fields and combines native date and time inputs', () => {
+  assert.equal(validateTaskCreate('  ', 'board'), 'Введите название задачи');
+  assert.equal(validateTaskCreate('Задача', ''), 'Выберите доску');
+  assert.equal(validateTaskCreate(' Задача ', 'board'), null);
+  assert.equal(dateTimeInputsToIso('2026-08-14', '18:30'), new Date('2026-08-14T18:30:00').toISOString());
+  assert.equal(dateTimeInputsToIso('2026-02-30', '18:30'), null);
+  assert.equal(dateTimeInputsToIso('2026-08-14', '25:00'), null);
+});
+
+test('created task is presented with its selected context before a canonical reload', () => {
+  const created = presentCreatedTask({ ...tasks[0], project_name: undefined, assignee_name: undefined, overdue: false }, 'Доска', 'Проект', 'Яков', new Date('2026-08-13T12:00:00Z'));
+  assert.deepEqual({ board: created.board_name, project: created.project_name, assignee: created.assignee_name, overdue: created.overdue, checklist: [created.checklist_completed, created.checklist_total] }, {
+    board: 'Доска', project: 'Проект', assignee: 'Яков', overdue: true, checklist: [0, 0]
+  });
+});
+
 test('startup context defaults to tasks and distinguishes board and task links', () => {
   assert.deepEqual(resolveStartupContext(), { surface: 'tasks' });
   assert.deepEqual(resolveStartupContext('invite-token'), { surface: 'board-link', token: 'invite-token' });
@@ -106,6 +126,14 @@ test('task view state round-trips and malformed state falls back safely', () => 
   const state = { ...defaultTaskViewState, view: 'kanban' as const, grouping: 'project' as const, scrollY: 240, kanbanStatus: 'waiting' as const, filters: { ...defaultFilters, scope: 'all' as const, search: 'релиз' } };
   assert.deepEqual(restoreTaskViewState(serializeTaskViewState(state)), state);
   assert.deepEqual(restoreTaskViewState('{broken'), defaultTaskViewState);
+});
+
+test('kanban swipe changes one column only for horizontal gestures', () => {
+  assert.equal(resolveKanbanSwipe('in_progress', 120, 200, 40, 210), 'waiting');
+  assert.equal(resolveKanbanSwipe('in_progress', 40, 200, 120, 190), 'todo');
+  assert.equal(resolveKanbanSwipe('in_progress', 120, 120, 90, 240), 'in_progress', 'vertical scroll keeps current column');
+  assert.equal(resolveKanbanSwipe('todo', 120, 200, 40, 205), 'in_progress');
+  assert.equal(resolveKanbanSwipe('done', 40, 200, 120, 205), 'waiting');
 });
 
 test('display mappings capture agreed product language', () => {

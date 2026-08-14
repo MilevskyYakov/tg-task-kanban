@@ -13,11 +13,11 @@ function Icon({ name }: { name: IconName }) {
   return <svg className="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
 
-export function AppShell({ children, message, navigation, navigate }: { children: ReactNode; message: string; navigation: NavigationState; navigate: (next: NavigationState) => void }) {
-  return <main className="app-shell">
+export function AppShell({ children, message, navigation, navigate, hideNavigation = false }: { children: ReactNode; message: string; navigation: NavigationState; navigate: (next: NavigationState) => void; hideNavigation?: boolean }) {
+  return <main className={`app-shell${hideNavigation ? ' fullscreen' : ''}`}>
     <div className="app-content">{children}</div>
     {message && <p className="app-message" role="status">{message}</p>}
-    <BottomNavigation navigation={navigation} navigate={navigate}/>
+    {!hideNavigation && <BottomNavigation navigation={navigation} navigate={navigate}/>}
   </main>;
 }
 
@@ -80,6 +80,6 @@ export function SettingsScreen({ children, title = 'Настройки', subtitl
   return <><header className="settings-header"><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</header>{children}</>;
 }
 
-export function CreateScreen({ children }: { children: ReactNode }) {
-  return <><header><p className="eyebrow">НОВАЯ ЗАДАЧА</p><h1>Выберите доску</h1></header>{children}</>;
+export function CreateScreen({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+  return <section className="create-screen"><header><IconButton label="Закрыть" onClick={onClose}><Icon name="close"/></IconButton><h1>Новая задача</h1></header>{children}</section>;
 }
