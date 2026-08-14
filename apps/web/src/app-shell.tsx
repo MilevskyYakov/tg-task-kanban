@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ButtonHTMLAttributes, type KeyboardEvent, type ReactNode } from 'react';
-import type { NavigationState } from './navigation';
+import { isSettingsNavigation, type NavigationState } from './navigation';
 
 type IconName = 'tasks' | 'plus' | 'settings' | 'close';
 
@@ -25,7 +25,7 @@ function BottomNavigation({ navigation, navigate }: { navigation: NavigationStat
   return <nav className="bottom-navigation" aria-label="Основная навигация">
     <button className={navigation.screen === 'tasks' ? 'active' : ''} aria-current={navigation.screen === 'tasks' ? 'page' : undefined} onClick={() => navigate({ screen: 'tasks' })}><Icon name="tasks"/><span>Задачи</span></button>
     <button className="create" aria-label="Создать задачу" onClick={() => navigate({ screen: 'create' })}><Icon name="plus"/></button>
-    <button className={navigation.screen === 'settings' ? 'active' : ''} aria-current={navigation.screen === 'settings' ? 'page' : undefined} onClick={() => navigate({ screen: 'settings' })}><Icon name="settings"/><span>Настройки</span></button>
+    <button className={isSettingsNavigation(navigation) ? 'active' : ''} aria-current={isSettingsNavigation(navigation) ? 'page' : undefined} onClick={() => navigate({ screen: 'settings' })}><Icon name="settings"/><span>Настройки</span></button>
   </nav>;
 }
 
@@ -76,8 +76,8 @@ export function TasksScreen({ children, boardName, onSelectBoard }: { children: 
   return <><header className="page-header"><div className="title-row"><h1>Задачи</h1><TaskGlyph/></div><button className="board-selector" onClick={onSelectBoard}>{boardName} <span aria-hidden="true">⌄</span></button></header>{children}</>;
 }
 
-export function SettingsScreen({ children }: { children: ReactNode }) {
-  return <><header><p className="eyebrow">НАСТРОЙКИ</p><h1>Рабочие пространства</h1></header>{children}</>;
+export function SettingsScreen({ children, title = 'Настройки', subtitle }: { children: ReactNode; title?: string; subtitle?: string }) {
+  return <><header className="settings-header"><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</header>{children}</>;
 }
 
 export function CreateScreen({ children }: { children: ReactNode }) {

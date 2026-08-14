@@ -4,10 +4,10 @@ import './style.css';
 import { api, ApiError, json } from './api';
 import { AppShell, Avatar, Badge, CreateScreen, FieldRow, SectionHeader, SettingsScreen, Sheet, TasksScreen } from './app-shell';
 import type { Board, Collaboration, Member, Project, Recurrence, Schedule } from './domain';
-import { initialNavigation, type NavigationState } from './navigation';
+import { initialNavigation, settingsSections, type NavigationState } from './navigation';
 import { activeFilterCount, dateInputToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
 
-declare global { interface Window { Telegram?: { WebApp?: { initData: string; initDataUnsafe?: { start_param?: string }; ready(): void; expand(): void } } } }
+declare global { interface Window { Telegram?: { WebApp?: { initData: string; initDataUnsafe?: { start_param?: string; user?: { first_name: string; last_name?: string; username?: string } }; ready(): void; expand(): void } } } }
 type TaskView = 'list' | 'kanban';
 const statuses = Object.keys(statusDisplayName) as TaskStatus[];
 const storedTaskView = restoreTaskViewState(localStorage.getItem('tasks.viewState'));
@@ -50,13 +50,18 @@ function App() {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [recurrences, setRecurrences] = useState<Recurrence[]>([]);
   const [preview, setPreview] = useState('');
+  const [profileName, setProfileName] = useState('Пользователь Telegram');
+  const [profileUsername, setProfileUsername] = useState('');
+  const [recurrenceFrequency, setRecurrenceFrequency] = useState<Recurrence['frequency']>('daily');
   const boardLoadVersion = useRef(0);
   const taskScroll = useRef(storedTaskView.scrollY);
   const touchDrag = useRef<{task?: Task; x: number; y: number; active: boolean; timer?: ReturnType<typeof setTimeout>}>({ x: 0, y: 0, active: false });
   const selectedTaskBoardId = resolveTaskBoard(globalBoardId, boardOverrideId, boards.map((item) => item.id));
   const board = navigation.screen === 'board'
     ? boards.find((item) => item.id === navigation.boardId)
-    : navigation.screen === 'tasks' ? boards.find((item) => item.id === selectedTaskBoardId) : undefined;
+    : navigation.screen === 'tasks' ? boards.find((item) => item.id === selectedTaskBoardId)
+      : (navigation.screen === 'settings-workspace' || navigation.screen === 'settings-automation') && navigation.boardId
+        ? boards.find((item) => item.id === navigation.boardId) : undefined;
   const activeBoardId = useRef<string | undefined>(undefined);
   activeBoardId.current = board?.id;
   const navigate = (next: NavigationState) => { setOpenTask(undefined); setCollaboration(undefined); setMessage(''); setNavigation(next); };
@@ -78,6 +83,11 @@ function App() {
     void api('/api/auth/telegram', json('POST', {initData: webApp.initData}))
       .then(async (auth) => {
         setUserId((auth as {userId: string}).userId);
+        const telegramUser = webApp.initDataUnsafe?.user;
+        if (telegramUser) {
+          setProfileName([telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(' '));
+          setProfileUsername(telegramUser.username ? `@${telegramUser.username}` : '');
+        }
         const token = webApp.initDataUnsafe?.start_param;
         if (token) { const board = await api<Board>('/api/board-links/redeem', json('POST', {token})); setBoardOverrideId(board.id); }
         await loadBoards(); setState('ready');
@@ -92,6 +102,7 @@ function App() {
       else { ++boardLoadVersion.current; void api<{tasks: Task[]}>('/api/tasks/mine').then((data) => { if (!activeBoardId.current) { setTasks(data.tasks); setProjects([]); setMembers([]); setTaskLoadState('ready'); } }).catch((error: Error) => { setMessage(error.message); setTaskLoadState('error'); }); }
     }
     else if (navigation.screen === 'board') void loadBoard(navigation.boardId).catch((error: Error) => setMessage(error.message));
+    else if ((navigation.screen === 'settings-workspace' || navigation.screen === 'settings-automation') && navigation.boardId) void loadBoard(navigation.boardId).catch((error: Error) => setMessage(error.message));
   }, [state, navigation, selectedTaskBoardId, taskReload]);
 
   useEffect(() => {
@@ -130,11 +141,17 @@ function App() {
     try { await run(); if (reload && board) await loadBoard(board.id); setMessage(success); }
     catch (error) { setMessage(error instanceof Error ? error.message : 'Ошибка'); }
   };
-  const activate = async () => {
+  const saveBoardName = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     if (!board) return;
-    const name = window.prompt('Название доски', board.name)?.trim();
-    if (name) await action(() => api(`/api/boards/${board.id}/activate`, json('POST', {name})), 'Доска активирована', false).then(loadBoards);
+    const name = String(new FormData(event.currentTarget).get('name') ?? '').trim();
+    if (!name) return;
+    const path = board.status === 'draft' ? `/api/boards/${board.id}/activate` : `/api/boards/${board.id}`;
+    const method = board.status === 'draft' ? 'POST' : 'PATCH';
+    await action(() => api(path, json(method, {name})), board.status === 'draft' ? 'Доска активирована' : 'Название сохранено', false);
+    await loadBoards();
   };
+  const activate = () => { if (board) navigate({ screen: 'settings-workspace', boardId: board.id }); };
   const create = async () => {
     if (!board || !title.trim()) return;
     try {
@@ -197,28 +214,41 @@ function App() {
     await action(() => api(path, options), 'Сохранено', false);
     setCollaboration(await api(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/collaboration`));
   };
-  const addProject = async () => {
+  const addProject = async (event: React.FormEvent<HTMLFormElement> | React.MouseEvent<HTMLButtonElement>) => {
     if (!board) return;
-    const name = window.prompt('Название проекта')?.trim();
-    if (name) await action(() => api(`/api/boards/${board.id}/projects`, json('POST', {name})), 'Проект создан');
+    if (!(event.currentTarget instanceof HTMLFormElement)) { navigate({ screen: 'settings-workspace', boardId: board.id }); return; }
+    event.preventDefault();
+    const form = event.currentTarget;
+    const name = String(new FormData(form).get('name') ?? '').trim();
+    if (!name) return;
+    await action(() => api(`/api/boards/${board.id}/projects`, json('POST', {name})), 'Проект создан');
+    form.reset();
   };
-  const editProject = async (item: Project) => {
+  const editProject = async (eventOrItem: React.FormEvent<HTMLFormElement> | Project, item?: Project) => {
+    if (!item) { if (board) navigate({ screen: 'settings-workspace', boardId: board.id }); return; }
+    eventOrItem = eventOrItem as React.FormEvent<HTMLFormElement>;
+    eventOrItem.preventDefault();
     if (!board) return;
-    const name = window.prompt('Название проекта', item.name)?.trim(); if (!name) return;
+    const name = String(new FormData(eventOrItem.currentTarget).get('name') ?? '').trim(); if (!name) return;
     await action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {name})), 'Проект переименован');
   };
-  const addRecurrence = async () => {
+  const addRecurrence = async (event: React.FormEvent<HTMLFormElement> | React.MouseEvent<HTMLButtonElement>) => {
     if (!board) return;
-    const taskTitle = window.prompt('Название повторяющейся задачи')?.trim(); if (!taskTitle) return;
-    const frequency = window.prompt('Правило: daily, weekdays, weekly или monthly', 'daily')?.trim() as Recurrence['frequency']; if (!frequency) return;
-    const localTime = window.prompt('Время, HH:MM', '09:00')?.trim(); if (!localTime) return;
-    const timezone = window.prompt('Часовой пояс', Intl.DateTimeFormat().resolvedOptions().timeZone)?.trim(); if (!timezone) return;
-    const weekdayText = frequency === 'weekdays' || frequency === 'weekly' ? window.prompt('Дни недели: 0=вс, 1=пн … 6=сб, через запятую', frequency === 'weekdays' ? '1,2,3,4,5' : String(new Date().getDay()))?.trim() : undefined; if ((frequency === 'weekdays' || frequency === 'weekly') && !weekdayText) return;
-    const weekdays = weekdayText?.split(',').map(Number);
-    const dayText = frequency === 'monthly' ? window.prompt('День месяца', String(new Date().getDate()))?.trim() : undefined; if (frequency === 'monthly' && !dayText) return;
-    const startDate = window.prompt('Дата начала, YYYY-MM-DD', new Date().toISOString().slice(0, 10))?.trim(); if (!startDate) return;
-    const endDate = window.prompt('Дата окончания, YYYY-MM-DD (пусто — без окончания)', '')?.trim(); if (endDate === undefined) return;
-    await action(() => api(`/api/boards/${board.id}/recurrences`, json('POST', { title: taskTitle, frequency, localTime, timezone, weekdays, dayOfMonth: dayText ? Number(dayText) : undefined, startAt: new Date(`${startDate}T00:00:00`).toISOString(), endAt: endDate ? new Date(`${endDate}T23:59:59`).toISOString() : null, projectId: project || null, assigneeUserId: assignee || null, priority })), 'Повтор создан');
+    if (!(event.currentTarget instanceof HTMLFormElement)) { navigate({ screen: 'settings-automation', boardId: board.id }); return; }
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const weekdays = String(data.get('weekdays') ?? '').split(',').map(Number).filter((day) => Number.isInteger(day));
+    const startDate = String(data.get('startDate'));
+    const endDate = String(data.get('endDate'));
+    await action(() => api(`/api/boards/${board.id}/recurrences`, json('POST', {
+      title: String(data.get('title')), frequency: recurrenceFrequency, localTime: String(data.get('localTime')),
+      timezone: String(data.get('timezone')), weekdays: recurrenceFrequency === 'weekdays' || recurrenceFrequency === 'weekly' ? weekdays : undefined,
+      dayOfMonth: recurrenceFrequency === 'monthly' ? Number(data.get('dayOfMonth')) : undefined,
+      startAt: new Date(`${startDate}T00:00:00`).toISOString(), endAt: endDate ? new Date(`${endDate}T23:59:59`).toISOString() : null,
+      projectId: data.get('projectId') || null, assigneeUserId: data.get('assigneeUserId') || null, priority: data.get('priority')
+    })), 'Повтор создан');
+    form.reset(); setRecurrenceFrequency('daily');
   };
   const chooseTaskBoard = (boardId: string) => {
     setBoardOverrideId(undefined);
@@ -374,9 +404,45 @@ function App() {
   };
   const publicationSettings = board?.type === 'chat' && schedules.length ? <details className="publications"><summary>Публикации в чат</summary>{schedules.map((schedule) => <fieldset key={schedule.kind}><legend>{schedule.kind === 'daily' ? 'План дня' : 'Недельная сводка'}</legend><label><input type="checkbox" checked={schedule.enabled} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, enabled: event.target.checked} : item))}/> Включена</label><label>Дни (1–7)<input value={schedule.weekdays.join(',')} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, weekdays: event.target.value.split(',').map(Number).filter(Boolean)} : item))}/></label><label>Время<input type="time" value={schedule.local_time} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, local_time: event.target.value} : item))}/></label><label>Часовой пояс<input value={schedule.timezone} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, timezone: event.target.value} : item))}/></label><div className="status-options">{Object.entries(statusDisplayName).map(([status, name]) => <label key={status}><input type="checkbox" checked={schedule.included_statuses.includes(status as TaskStatus)} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, included_statuses: event.target.checked ? [...item.included_statuses, status as TaskStatus] : item.included_statuses.filter((value) => value !== status)} : item))}/>{name}</label>)}</div><div className="actions"><button onClick={() => void action(() => saveSchedule(schedule), 'Расписание сохранено', false)}>Сохранить</button><button className="secondary" onClick={() => void action(() => saveSchedule(schedule, true), 'Предпросмотр готов', false)}>Предпросмотр</button></div></fieldset>)}{preview && <pre>{preview}</pre>}</details> : null;
 
+  const settingsBoardList = (screen: 'settings-workspace' | 'settings-automation') => <div className="settings-list">{boards.map((item) => <button className="settings-list-row" key={item.id} onClick={() => navigate({ screen, boardId: item.id })}><span><strong>{item.name}</strong><small>{item.type === 'chat' ? 'Чат-доска' : 'Личная доска'}{item.status === 'frozen' ? ' · заморожена' : ''}</small></span><span aria-hidden="true">›</span></button>)}</div>;
+  const settingsRoot = <SettingsScreen subtitle="Управление пространством и приложением">
+    <p className="settings-label">Разделы</p>
+    <div className="settings-root">{settingsSections.map((section, index) => <button className="settings-card" data-tone={section.id} key={section.id} onClick={() => navigate({ screen: `settings-${section.id}` } as NavigationState)}>
+      <span className="settings-card-icon" aria-hidden="true">{section.id === 'workspace' ? '▦' : section.id === 'automation' ? '↻' : initials(profileName)}</span>
+      <span className="settings-card-copy"><strong>{section.title}</strong><small>{section.description}</small><span>{index === 0 ? `${boards.length} ${boards.length === 1 ? 'доска' : boards.length > 1 && boards.length < 5 ? 'доски' : 'досок'}` : index === 1 ? 'Сценарии по доскам' : profileName}</span></span>
+      <span className="settings-chevron" aria-hidden="true">›</span>
+    </button>)}</div>
+    <p className="settings-footer">Версия 0.1 · Помощь</p>
+  </SettingsScreen>;
+  const workspaceSettings = <SettingsScreen title={board?.name ?? 'Рабочее пространство'} subtitle={board ? 'Доска, проекты и участники' : 'Доски, проекты и участники'}>
+    <button className="back" onClick={() => navigate({ screen: 'settings' })}>← Настройки</button>
+    {!board ? settingsBoardList('settings-workspace') : <div className="settings-groups">
+      <section className="settings-group"><h2>Доска</h2>{(board.status === 'draft' || board.role === 'owner' || board.role === 'admin') ? <form className="settings-form inline-form" onSubmit={(event) => void saveBoardName(event)}><label>Название<input name="name" defaultValue={board.name} maxLength={120} required/></label><button>{board.status === 'draft' ? 'Активировать' : 'Сохранить'}</button></form> : <p>{board.name}</p>}<small>{board.type === 'chat' ? 'Права администратора Telegram проверяются при изменении чат-доски.' : 'Личное рабочее пространство.'}</small></section>
+      <section className="settings-group"><h2>Проекты</h2>{projects.filter((item) => !item.archived_at).map((item) => <form className="settings-form inline-form" key={item.id} onSubmit={(event) => void editProject(event, item)}><input aria-label={`Название проекта ${item.name}`} name="name" defaultValue={item.name} maxLength={120} required/><button>Сохранить</button><button className="secondary" type="button" onClick={() => void action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: true})), 'Проект архивирован')}>В архив</button></form>)}<form className="settings-form inline-form" onSubmit={(event) => void addProject(event)}><input aria-label="Название нового проекта" name="name" placeholder="Новый проект" maxLength={120} required/><button>Добавить</button></form></section>
+      <section className="settings-group"><h2>Участники</h2><div className="member-list">{members.map((member) => <div key={member.id}><Avatar initials={initials(member.first_name)} label={member.first_name}/><span><strong>{member.first_name}</strong><small>{member.username ? `@${member.username}` : 'Telegram'}</small></span></div>)}</div></section>
+    </div>}
+  </SettingsScreen>;
+  const automationSettings = <SettingsScreen title={board?.name ?? 'Автоматизация'} subtitle={board ? 'Повторения, публикации и уведомления' : 'Выберите доску для настройки'}>
+    <button className="back" onClick={() => navigate({ screen: 'settings' })}>← Настройки</button>
+    {!board ? settingsBoardList('settings-automation') : <div className="settings-groups">
+      <section className="settings-group"><h2>Повторения</h2><form className="settings-form" onSubmit={(event) => void addRecurrence(event)}>
+        <label>Название задачи<input name="title" maxLength={200} required/></label><label>Период<select value={recurrenceFrequency} onChange={(event) => setRecurrenceFrequency(event.target.value as Recurrence['frequency'])}><option value="daily">Ежедневно</option><option value="weekdays">По будням</option><option value="weekly">Еженедельно</option><option value="monthly">Ежемесячно</option></select></label>
+        {(recurrenceFrequency === 'weekdays' || recurrenceFrequency === 'weekly') && <label>Дни недели (0–6)<input name="weekdays" defaultValue={recurrenceFrequency === 'weekdays' ? '1,2,3,4,5' : String(new Date().getDay())} pattern="[0-6](,[0-6])*" required/></label>}{recurrenceFrequency === 'monthly' && <label>День месяца<input name="dayOfMonth" type="number" min="1" max="31" defaultValue={new Date().getDate()} required/></label>}
+        <label>Время<input name="localTime" type="time" defaultValue="09:00" required/></label><label>Часовой пояс<input name="timezone" defaultValue={Intl.DateTimeFormat().resolvedOptions().timeZone} required/></label><label>Дата начала<input name="startDate" type="date" defaultValue={new Date().toISOString().slice(0, 10)} required/></label><label>Дата окончания<input name="endDate" type="date"/></label>
+        <label>Проект<select name="projectId"><option value="">Без проекта</option>{projects.filter((item) => !item.archived_at).map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label>Исполнитель<select name="assigneeUserId"><option value="">Без ответственного</option>{members.map((member) => <option value={member.id} key={member.id}>{member.first_name}</option>)}</select></label><label>Приоритет<select name="priority"><option value="normal">Обычный</option><option value="urgent">Срочный</option></select></label><button>Добавить повтор</button>
+      </form>{recurrences.filter((item) => !item.archived_at).map((item) => <div className="automation-row" key={item.id}><span><strong>{item.title}</strong><small>{item.frequency} · {item.local_time}</small></span><button className="secondary" onClick={() => void action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {paused: !item.paused_at})), item.paused_at ? 'Повтор включён' : 'Повтор приостановлен')}>{item.paused_at ? 'Включить' : 'Пауза'}</button></div>)}</section>
+      {publicationSettings}<section className="settings-group"><h2>Уведомления</h2><p>Уведомление исполнителю выбирается при назначении задачи. Новых глобальных типов уведомлений пока нет.</p></section>
+    </div>}
+  </SettingsScreen>;
+  const accountSettings = <SettingsScreen title="Аккаунт" subtitle="Профиль и личные параметры"><button className="back" onClick={() => navigate({ screen: 'settings' })}>← Настройки</button><div className="settings-groups"><section className="settings-group account-profile"><Avatar initials={initials(profileName)} label={profileName}/><span><strong>{profileName}</strong>{profileUsername && <small>{profileUsername}</small>}</span></section><section className="settings-group"><h2>Личные параметры</h2><div className="settings-form"><label>Группировка задач<select value={grouping} onChange={(event) => setGrouping(event.target.value as typeof grouping)}><option value="deadline">По срокам</option><option value="project">По проектам</option></select></label><label>Обычная доска<select value={globalBoardId} onChange={(event) => chooseTaskBoard(event.target.value)}><option value="">Все доски</option>{boards.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label></div></section></div></SettingsScreen>;
+
   if (state === 'outside') return <main><section><p className="eyebrow">KAIROS TASKS</p><h1>Задачи живут<br/>в Telegram</h1><p>Откройте приложение через <a href="https://t.me/kairostask_bot">@kairostask_bot</a>.</p></section></main>;
   if (state === 'error') return <main><section><h1>Не удалось войти</h1><p>{message || 'Закройте приложение и откройте его снова через бота.'}</p></section></main>;
   if (state === 'loading') return <main><section><p>Загрузка…</p></section></main>;
+  if (navigation.screen === 'settings') return <AppShell message={message} navigation={navigation} navigate={navigate}>{settingsRoot}</AppShell>;
+  if (navigation.screen === 'settings-workspace') return <AppShell message={message} navigation={navigation} navigate={navigate}>{workspaceSettings}</AppShell>;
+  if (navigation.screen === 'settings-automation') return <AppShell message={message} navigation={navigation} navigate={navigate}>{automationSettings}</AppShell>;
+  if (navigation.screen === 'settings-account') return <AppShell message={message} navigation={navigation} navigate={navigate}>{accountSettings}</AppShell>;
   if (navigation.screen === 'tasks') return <AppShell message={message} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>{taskToolbar}{taskLoadState === 'loading' ? <p className="task-state">Загрузка задач…</p> : taskLoadState === 'error' ? <div className="task-state"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : groupedTaskList}{taskLoadState === 'ready' && !filteredTasks.length && <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>}{boardOverrideId && <p className="context-note">Доска открыта из Telegram-чата и не заменяет ваш обычный выбор.</p>}{boardSheet}{filterSheet}</TasksScreen></AppShell>;
   if (board) return <AppShell message={message} navigation={navigation} navigate={navigate}><button className="back" onClick={() => navigate({ screen: 'tasks' })}>← Задачи</button><header><p className="eyebrow">{board.type === 'chat' ? 'ЧАТ-ДОСКА' : 'ЛИЧНАЯ ДОСКА'}</p><h1>{board.name}</h1></header>{publicationSettings}{board.status === 'frozen' ? <p className="notice">Бот больше не в чате. Данные сохранены, действия заморожены.</p> : board.status === 'draft' ? <section><p>Завершите настройку, чтобы команда начала работу.</p><button onClick={activate}>Активировать</button></section> : <><form className="create-task" onSubmit={(event) => { event.preventDefault(); void create(); }}><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Название задачи" maxLength={200} required/><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Описание"/><select value={project} onChange={(event) => setProject(event.target.value)}><option value="">Без проекта</option>{projects.filter((item) => !item.archived_at).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><select value={assignee} onChange={(event) => setAssignee(event.target.value)}><option value="">Без ответственного</option>{members.map((member) => <option key={member.id} value={member.id}>{member.first_name}</option>)}</select><input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)}/><select value={priority} onChange={(event) => setPriority(event.target.value as Task['priority'])}><option value="normal">Обычный</option><option value="urgent">Срочный</option></select><label className="checkbox"><input type="checkbox" checked={notifyAssignee} disabled={!assignee} onChange={(event) => setNotifyAssignee(event.target.checked)}/> Уведомить исполнителя</label><button>Создать</button></form><section className="recurrences"><div className="project-row"><strong>Повторы</strong><button className="secondary" onClick={addRecurrence}>Добавить повтор</button></div>{recurrences.map((item) => <article className="recurrence" key={item.id}><span>{item.frequency} · {item.local_time} · {item.timezone}</span><strong>{item.title}</strong>{item.next_occurrence_at && <small>Следующий: {new Date(item.next_occurrence_at).toLocaleString('ru-RU')}</small>}<div className="actions">{!item.archived_at && <button onClick={() => action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {paused: !item.paused_at})), item.paused_at ? 'Повтор продолжен' : 'Повтор на паузе')}>{item.paused_at ? 'Продолжить' : 'Пауза'}</button>}<button onClick={() => action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {archived: true})), 'Повтор архивирован')}>В архив</button></div></article>)}</section><div className="project-row"><div>{projects.map((item) => <span key={item.id}><button className="link" onClick={() => item.archived_at ? action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: false})), 'Проект восстановлен') : editProject(item)}>{item.name}{item.archived_at ? ' · восстановить' : ''}</button>{!item.archived_at && <button className="link" onClick={() => action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: true})), 'Проект архивирован')}>×</button>}</span>)}</div><button className="secondary" onClick={addProject}>+ Проект</button></div><button className="secondary" onClick={() => { const next = !showArchive; setShowArchive(next); void loadBoard(board.id, next); }}>{showArchive ? 'Только активные' : 'Показать архив'}</button>{taskControls}{taskView === 'kanban' && !showArchive ? kanban : taskList}{!filteredTasks.length && <p>{filters.search ? 'Ничего не найдено.' : 'Задач в этом срезе пока нет.'}</p>}</>}{board.type === 'chat' && board.status !== 'frozen' && <button className="secondary" onClick={() => action(async () => { const result = await api<{url: string}>(`/api/boards/${board.id}/invites`, {method: 'POST'}); await navigator.clipboard.writeText(result.url); }, 'Ссылка скопирована', false)}>Скопировать приглашение</button>}</AppShell>;
   const boardList = <div className="board-list">{boards.map((item) => <button className="board" key={item.id} onClick={() => { setMessage(''); setNavigation({ screen: 'board', boardId: item.id }); }}><span>{item.type === 'chat' ? 'ЧАТ' : 'ЛИЧНАЯ'}{item.status === 'frozen' ? ' · ЗАМОРОЖЕНА' : ''}</span><strong>{item.name}</strong><small>{item.type === 'chat' ? 'Командное пространство' : 'Только ваши задачи'}</small></button>)}</div>;
