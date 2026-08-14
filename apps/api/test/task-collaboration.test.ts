@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { addChecklistItem, addTaskAttachment, addTaskComment, claimAssignmentNotification, createDatabase, createTask, finishAssignmentNotification, incompleteChecklistCount, pendingNotificationForTask, taskCollaboration, updateChecklistItem, updateTask } from '../src/db.js';
+import { addChecklistItem, addTaskAttachment, addTaskComment, claimAssignmentNotification, createDatabase, createTask, finishAssignmentNotification, incompleteChecklistCount, pendingNotificationForTask, taskCollaboration, tasksForAssignee, tasksForBoard, updateChecklistItem, updateTask } from '../src/db.js';
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url) throw new Error('TEST_DATABASE_URL is required');
@@ -33,6 +33,10 @@ test('task collaboration enforces access, immutable audit and notification idemp
   assert.ok(await updateChecklistItem(db, users[1], boardId, task.id, item.id, { completed: true }));
   assert.ok(await updateChecklistItem(db, users[1], boardId, task.id, secondItem.id, { completed: true }));
   assert.equal(await incompleteChecklistCount(db, users[1], boardId, task.id), 0);
+  const boardTask = (await tasksForBoard(db, users[0], boardId))[0];
+  const assignedTask = (await tasksForAssignee(db, users[1]))[0];
+  assert.deepEqual({ completed: boardTask.checklist_completed, total: boardTask.checklist_total }, { completed: 2, total: 2 });
+  assert.deepEqual({ completed: assignedTask.checklist_completed, total: assignedTask.checklist_total }, { completed: 2, total: 2 });
 
   assert.ok(await addTaskAttachment(db, users[2], boardId, task.id, { kind: 'telegram', telegramFileId: 'private-file-id', telegramFileUniqueId: 'stable-id', fileName: 'brief.pdf' }));
   assert.equal(await taskCollaboration(db, users[3], boardId, task.id), null, 'other board cannot read Telegram file id');
