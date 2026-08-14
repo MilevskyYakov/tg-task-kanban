@@ -104,11 +104,11 @@ function App() {
     const save = () => {
       taskScroll.current = window.scrollY;
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => localStorage.setItem('tasks.viewState', serializeTaskViewState({ ...storedTaskView, grouping, filters, scrollY: taskScroll.current })), 100);
+      timer = setTimeout(() => localStorage.setItem('tasks.viewState', serializeTaskViewState({ ...storedTaskView, view: 'list', grouping, filters, scrollY: taskScroll.current })), 100);
     };
     window.addEventListener('scroll', save, { passive: true });
     save();
-    return () => { window.removeEventListener('scroll', save); if (timer) clearTimeout(timer); taskScroll.current = window.scrollY; localStorage.setItem('tasks.viewState', serializeTaskViewState({ ...storedTaskView, grouping, filters, scrollY: taskScroll.current })); };
+    return () => { window.removeEventListener('scroll', save); if (timer) clearTimeout(timer); taskScroll.current = window.scrollY; localStorage.setItem('tasks.viewState', serializeTaskViewState({ ...storedTaskView, view: 'list', grouping, filters, scrollY: taskScroll.current })); };
   }, [navigation.screen, grouping, filters]);
 
   useEffect(() => {
