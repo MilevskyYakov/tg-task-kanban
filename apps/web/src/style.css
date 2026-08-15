@@ -289,6 +289,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .create-deadline legend { grid-column: 2; padding: 0; }
 .create-deadline > div { grid-column: 2; display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 6px; min-width: 0; }
 .create-deadline input[type=date], .create-deadline input[type=time] { width: 100%; min-width: 0; min-height: 32px; padding: 2px 0; border: 0; background: transparent; font-weight: 600; }
+.create-deadline input::-webkit-calendar-picker-indicator { width: 0; margin: 0; padding: 0; opacity: 0; }
 .create-deadline input:disabled { color: var(--text-muted); opacity: .65; }
 .deadline-fields { display: grid; grid-template-columns: minmax(7rem, 35%) 1fr 1fr; align-items: center; gap: 8px; min-width: 0; min-height: 60px; margin: 0; padding: 0; border: 0; border-bottom: 1px solid var(--border); color: var(--text-muted); }
 .deadline-fields legend { display: contents; }
@@ -430,7 +431,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .create-title textarea { min-height: 84px; font-size: 2rem; }
   .create-title-meta { margin-bottom: 4px; }
   .create-fields .action-row { min-height: 58px; }
-  .create-deadline { padding-right: 24px; }
+  .create-deadline { padding-right: 0; }
   .create-action { padding: 12px calc(12px + env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left)); }
   .create-action button { min-height: 52px; }
   .create-additional-hint { display: none; }
