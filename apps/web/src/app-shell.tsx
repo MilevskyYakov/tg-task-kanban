@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type Key
 import { useTelegramEnvironment } from './environment';
 import { isSettingsNavigation, type NavigationState } from './navigation';
 
-export type IconName = 'tasks' | 'plus' | 'settings' | 'close' | 'chevron' | 'alert' | 'sun' | 'clock' | 'noDeadline';
+export type IconName = 'tasks' | 'plus' | 'settings' | 'close' | 'chevron' | 'alert' | 'sun' | 'clock' | 'noDeadline' | 'project' | 'assignee' | 'calendar' | 'board' | 'sliders';
 
 export function Icon({ name }: { name: IconName }) {
   const paths = {
@@ -14,7 +14,12 @@ export function Icon({ name }: { name: IconName }) {
     alert: <><path d="M12 3 2.8 20h18.4Z"/><path d="M12 9v5m0 3h.01"/></>,
     sun: <><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></>,
     clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,
-    noDeadline: <path d="M5 12h14"/>
+    noDeadline: <path d="M5 12h14"/>,
+    project: <><path d="M3 7h7l2 2h9v10H3z"/><path d="M3 7V5h7l2 2"/></>,
+    assignee: <><circle cx="12" cy="8" r="4"/><path d="M5 21a7 7 0 0 1 14 0"/></>,
+    calendar: <><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4m8-4v4M3 10h18"/><circle cx="15.5" cy="15.5" r="2.5"/></>,
+    board: <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>,
+    sliders: <><path d="M4 7h6m4 0h6M4 17h2m4 0h10"/><circle cx="12" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></>
   };
   return <svg className="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
@@ -64,6 +69,15 @@ export function resolveFocusIndex(current: number, count: number, shift: boolean
   return null;
 }
 
+export function resolveChoiceIndex(current: number, count: number, key: string): number | null {
+  if (count === 0) return null;
+  if (key === 'Home') return 0;
+  if (key === 'End') return count - 1;
+  if (key === 'ArrowDown' || key === 'ArrowRight') return (current + 1) % count;
+  if (key === 'ArrowUp' || key === 'ArrowLeft') return (current - 1 + count) % count;
+  return null;
+}
+
 export function ChoiceSheet({ title, children, onClose, className = '' }: { title: string; children: ReactNode; onClose: () => void; className?: string }) {
   const sheet = useRef<HTMLElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
@@ -90,14 +104,21 @@ export function ActionRow({ label, value, icon, ...props }: { label: string; val
   return <button className="action-row" type="button" {...props}>{icon && <span className="action-row-icon">{icon}</span>}<span className="action-row-copy"><span>{label}</span><strong>{value}</strong></span><Icon name="chevron"/></button>;
 }
 
-export function ChoiceRow({ label, detail, selected, kind = 'radio', ...props }: { label: string; detail?: string; selected: boolean; kind?: 'radio' | 'check' } & ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button className={`choice-row${selected ? ' selected' : ''}`} type="button" role={kind === 'radio' ? 'radio' : 'checkbox'} aria-checked={selected} {...props}><span className="choice-marker" aria-hidden="true"/><span><strong>{label}</strong>{detail && <small>{detail}</small>}</span></button>;
+export function ChoiceRow({ label, detail, selected, kind = 'radio', onKeyDown, ...props }: { label: string; detail?: string; selected: boolean; kind?: 'radio' | 'check' } & ButtonHTMLAttributes<HTMLButtonElement>) {
+  return <button className={`choice-row${selected ? ' selected' : ''}`} type="button" role={kind === 'radio' ? 'radio' : 'checkbox'} aria-checked={selected} tabIndex={kind === 'radio' && !selected ? -1 : undefined} onKeyDown={(event) => {
+    onKeyDown?.(event);
+    if (event.defaultPrevented || kind !== 'radio') return;
+    const choices = [...(event.currentTarget.closest('[role=radiogroup]')?.querySelectorAll<HTMLButtonElement>('[role=radio]:not([disabled])') ?? [])];
+    const next = resolveChoiceIndex(choices.indexOf(event.currentTarget), choices.length, event.key);
+    if (next === null) return;
+    event.preventDefault(); choices[next]?.focus(); choices[next]?.click();
+  }} {...props}><span className="choice-marker" aria-hidden="true"/><span><strong>{label}</strong>{detail && <small>{detail}</small>}</span></button>;
 }
 
-export function Disclosure({ label, children, defaultOpen = false }: { label: string; children: ReactNode; defaultOpen?: boolean }) {
+export function Disclosure({ label, children, defaultOpen = false, icon }: { label: string; children: ReactNode; defaultOpen?: boolean; icon?: ReactNode }) {
   const [open, setOpen] = useState(defaultOpen);
   const contentId = useId();
-  return <section className="disclosure"><button type="button" aria-expanded={open} aria-controls={contentId} onClick={() => setOpen((value) => !value)}><span>{label}</span><Icon name="chevron"/></button>{open && <div id={contentId}>{children}</div>}</section>;
+  return <section className="disclosure"><button type="button" aria-expanded={open} aria-controls={contentId} onClick={() => setOpen((value) => !value)}>{icon}<span>{label}</span><Icon name="chevron"/></button>{open && <div id={contentId}>{children}</div>}</section>;
 }
 
 export function FieldRow({ label, children }: { label: string; children: ReactNode }) {
@@ -120,6 +141,6 @@ export function SettingsScreen({ children, title = 'Настройки', subtitl
   return <><header className="settings-header"><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</header>{children}</>;
 }
 
-export function CreateScreen({ children, onClose }: { children: ReactNode; onClose: () => void }) {
-  return <section className="create-screen"><header><IconButton label="Закрыть" onClick={onClose}><Icon name="close"/></IconButton><h1>Новая задача</h1></header>{children}</section>;
+export function CreateScreen({ children, boardName, onClose, onSelectBoard }: { children: ReactNode; boardName: string; onClose: () => void; onSelectBoard: () => void }) {
+  return <section className="create-screen"><header><IconButton label="Закрыть" onClick={onClose}><Icon name="close"/></IconButton><h1>Новая задача</h1><button className="create-board-selector" type="button" onClick={onSelectBoard}>{boardName}<Icon name="chevron"/></button></header>{children}</section>;
 }

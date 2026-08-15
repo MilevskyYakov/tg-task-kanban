@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolveFocusIndex } from '../src/app-shell.js';
+import { resolveChoiceIndex, resolveFocusIndex } from '../src/app-shell.js';
 import { resolveThemeScheme } from '../src/environment.js';
 import { initialNavigation, isSettingsNavigation, settingsSections } from '../src/navigation.js';
 import { taskDraft, taskPatch } from '../src/task-details.js';
@@ -108,6 +108,15 @@ test('choice sheet focus wraps only at keyboard boundaries', () => {
   assert.equal(resolveFocusIndex(0, 3, true), 2);
   assert.equal(resolveFocusIndex(1, 3, false), null);
   assert.equal(resolveFocusIndex(0, 0, false), null);
+});
+
+test('radio choices support arrow, Home, and End navigation', () => {
+  assert.equal(resolveChoiceIndex(1, 3, 'ArrowDown'), 2);
+  assert.equal(resolveChoiceIndex(2, 3, 'ArrowRight'), 0);
+  assert.equal(resolveChoiceIndex(0, 3, 'ArrowUp'), 2);
+  assert.equal(resolveChoiceIndex(1, 3, 'Home'), 0);
+  assert.equal(resolveChoiceIndex(1, 3, 'End'), 2);
+  assert.equal(resolveChoiceIndex(1, 3, 'Enter'), null);
 });
 
 test('settings root exposes only agreed sections and keeps child navigation active', () => {

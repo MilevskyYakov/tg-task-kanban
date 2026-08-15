@@ -253,26 +253,44 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .sheet-actions .secondary { margin: 0; }
 .context-note { margin: 0; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--primary-soft); color: #405674; font-size: .8125rem; }
 .field-row { display: grid; grid-template-columns: minmax(7rem, 35%) 1fr; align-items: center; gap: 12px; min-height: 52px; border-bottom: 1px solid var(--border); color: var(--text-muted); }
-.create-screen { display: grid; gap: 22px; margin: 0; }
-.create-screen > header { display: flex; align-items: center; gap: 6px; min-height: 58px; border-bottom: 1px solid var(--border); }
+.create-screen { display: grid; gap: 26px; margin: 0; }
+.create-screen > header { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 72px; border-bottom: 1px solid var(--border); }
 .create-screen > header .icon-button { background: transparent; }
-.create-screen > header h1 { margin: 0; font-size: 1.75rem; }
-.create-screen-form { display: grid; gap: 20px; }
-.create-title { display: grid; gap: 6px; color: var(--text-muted); font: 1.3125rem Newsreader, Georgia, serif; }
-.create-title textarea { width: 100%; resize: vertical; border: 0; border-bottom: 2px solid var(--primary); border-radius: 0; background: transparent; color: var(--text); padding: 4px 0 10px; font: 500 clamp(1.75rem, 8vw, 2rem)/1.1 Newsreader, Georgia, serif; }
+.create-screen > header h1 { margin: 0; font-family: Inter, system-ui, sans-serif; font-size: 1.6rem; font-weight: 550; white-space: nowrap; }
+.create-board-selector { display: inline-flex; align-items: center; gap: 6px; max-width: 108px; padding-inline: 4px; background: transparent; color: var(--text); font-size: .875rem; }
+.create-board-selector .icon { flex: 0 0 auto; width: 18px; height: 18px; }
+.create-screen-form { display: grid; gap: 18px; }
+.create-title { display: grid; gap: 12px; color: #738096; font: 1.45rem Newsreader, Georgia, serif; }
+.create-title textarea { field-sizing: content; width: 100%; min-height: 92px; resize: none; overflow: hidden; border: 0; border-bottom: 2px solid var(--primary); border-radius: 0; background: transparent; color: var(--text); padding: 0 0 8px; font: 500 clamp(2.05rem, 9.5vw, 2.45rem)/1.05 Newsreader, Georgia, serif; }
+.create-title-meta { margin: -14px 0 8px; color: #1466e9; font: 700 .6875rem/1.2 'IBM Plex Mono', ui-monospace, monospace; letter-spacing: .04em; }
 .create-fields { display: grid; }
-.create-screen-form textarea, .create-screen-form select, .deadline-fields input { min-height: var(--control-height); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text); padding: 10px 12px; font: inherit; }
+.create-screen-form textarea { min-height: var(--control-height); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text); padding: 10px 12px; font: inherit; }
 .deadline-fields input[type=date], .deadline-fields input[type=time], input[type=date], input[type=time] { min-height: var(--control-height); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text); padding: 10px 12px; font-family: Inter, system-ui, sans-serif; }
 .deadline-fields input:disabled, input[type=date]:disabled, input[type=time]:disabled { background: var(--surface-soft); color: var(--text-muted); opacity: 1; }
 .create-title textarea { border-width: 0 0 2px; }
+.create-fields .action-row { min-height: 62px; grid-template-columns: 46px minmax(0, 1fr) 24px; gap: 14px; padding-block: 7px; }
+.create-fields .action-row-icon { width: 44px; height: 44px; border-radius: 13px; }
+.create-fields .action-row:nth-child(2) .action-row-icon { background: #f1edff; color: #7656d8; }
+.create-fields .action-row:nth-child(4) .action-row-icon { background: #edf3ff; color: #2f6fe8; }
+.create-fields .action-row-copy > span, .create-deadline legend { color: #7a869a; font: 700 .625rem/1.2 'IBM Plex Mono', ui-monospace, monospace; text-transform: uppercase; }
+.create-fields .action-row-copy > strong { margin-top: 4px; font-size: 1rem; }
+.create-deadline { display: grid; grid-template-columns: 46px minmax(0, 1fr); grid-template-rows: auto auto; align-items: center; gap: 2px 14px; min-width: 0; min-height: 62px; margin: 0; padding: 7px 28px 7px 4px; border: 0; border-bottom: 1px solid var(--border); }
+.create-deadline .action-row-icon { grid-row: 1 / 3; width: 44px; height: 44px; border-radius: 13px; background: #eaf5ef; color: #38845d; }
+.create-deadline legend { grid-column: 2; padding: 0; }
+.create-deadline > div { grid-column: 2; display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 6px; min-width: 0; }
+.create-deadline input[type=date], .create-deadline input[type=time] { width: 100%; min-width: 0; min-height: 32px; padding: 2px 0; border: 0; background: transparent; font-weight: 600; }
+.create-deadline input:disabled { color: var(--text-muted); opacity: .65; }
 .deadline-fields { display: grid; grid-template-columns: minmax(7rem, 35%) 1fr 1fr; align-items: center; gap: 8px; min-width: 0; min-height: 60px; margin: 0; padding: 0; border: 0; border-bottom: 1px solid var(--border); color: var(--text-muted); }
 .deadline-fields legend { display: contents; }
 .deadline-fields input { width: 100%; min-width: 0; }
-.create-additional { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-soft); padding: 0 14px; }
-.create-additional summary { display: flex; align-items: center; min-height: 52px; cursor: pointer; font-weight: 700; }
-.create-additional > div { display: grid; gap: 10px; padding-bottom: 14px; }
-.create-additional > div > label:not(.checkbox) { display: grid; gap: 6px; color: var(--text-muted); }
-.create-additional textarea { width: 100%; resize: vertical; }
+.create-screen-form > .disclosure { background: var(--surface-soft); }
+.create-screen-form > .disclosure > button { display: grid; grid-template-columns: 28px minmax(0, 1fr) 24px; gap: 14px; padding-inline: 16px; font-size: 1.05rem; font-weight: 550; }
+.create-screen-form > .disclosure > button > .icon:first-child { color: #52657e; }
+.create-additional-fields { display: grid; gap: 10px; }
+.create-additional-fields > label:not(.checkbox) { display: grid; gap: 6px; color: var(--text-muted); }
+.create-additional-fields textarea { width: 100%; resize: vertical; }
+.create-additional-hint { margin: -10px 0 0; color: #6d7a91; font-size: .8125rem; }
+.create-choice-sheet .sheet-close { width: 100%; margin-top: 20px; }
 .create-action { position: fixed; left: 0; right: 0; bottom: 0; z-index: 3; padding: 18px calc(18px + env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-left)); border-top: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 96%, transparent); }
 .create-action button { width: 100%; min-height: 56px; border-radius: 14px; box-shadow: 0 5px 14px rgb(47 111 237 / 18%); }
 .create-action button:disabled { opacity: .65; }
@@ -376,6 +394,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .field-row { grid-template-columns: 1fr; padding-block: 8px; }
   .deadline-fields { grid-template-columns: 1fr 1fr; padding-block: 8px; }
   .deadline-fields legend { grid-column: 1 / -1; display: block; }
+  .create-screen { gap: 18px; }
+  .create-screen > header { grid-template-columns: 44px minmax(0, 1fr); gap: 8px; padding-bottom: 8px; }
+  .create-screen > header h1 { font-family: Newsreader, Georgia, serif; font-size: 1.75rem; }
+  .create-board-selector { grid-column: 2; justify-self: end; max-width: 100%; min-height: 36px; margin-top: -8px; }
+  .create-screen-form { gap: 14px; }
+  .create-title { font-size: 1.3rem; }
+  .create-title textarea { min-height: 84px; font-size: 2rem; }
+  .create-title-meta { margin-bottom: 4px; }
+  .create-fields .action-row { min-height: 58px; }
+  .create-deadline { padding-right: 24px; }
+  .create-action { padding: 12px calc(12px + env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left)); }
+  .create-action button { min-height: 52px; }
+  .create-additional-hint { display: none; }
   .filter-trigger { width: 80px; overflow: hidden; padding: 10px; }
   .filter-trigger .filter-label { display: none; }
   .filter-count { position: absolute; top: 2px; right: 2px; min-width: 20px; min-height: 20px; }
