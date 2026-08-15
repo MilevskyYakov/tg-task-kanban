@@ -62,6 +62,7 @@ for (const width of [390, 320]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     const action = await page.locator('.create-action').boundingBox();
     expect((action?.y ?? 844) + (action?.height ?? 0)).toBeLessThanOrEqual(845);
+    if (width === 320) expect((await page.getByLabel('Время срока').boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(94);
     await mkdir(evidence, { recursive: true });
     await page.screenshot({ path: `${evidence}/create-${width}x844.png` });
   });
