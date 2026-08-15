@@ -1,8 +1,13 @@
 # TG Task Kanban — согласованный UX-план и implementation backlog
 
 Дата фиксации: 2026-08-14  
-Статус: визуальное направление и основные продуктовые экраны одобрены  
-Канонический макет: `artifacts/ux/task-list-visual-directions.pen`
+Статус: исторический продуктовый и implementation baseline; первый rollout завершён rollback  
+Актуальный visual contract: `artifacts/ux/visual-contract-v2.md`  
+Каноническая композиция: `artifacts/ux/task-list-visual-directions.pen`
+
+> Issue #52 уточнил visual foundation после rollback #37. Этот файл сохраняет принятую
+> продуктовую модель и историю первой implementation-карты; при визуальном конфликте
+> `visual-contract-v2.md` имеет приоритет.
 
 ## 1. Зафиксированное направление
 
