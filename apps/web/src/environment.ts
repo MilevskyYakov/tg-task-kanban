@@ -18,6 +18,21 @@ export function resolveThemeScheme(): 'light' {
   return 'light';
 }
 
+export function readStorage(key: string): string | null {
+  try { return localStorage.getItem(key); }
+  catch { return null; }
+}
+
+export function writeStorage(key: string, value: string): void {
+  try { localStorage.setItem(key, value); }
+  catch { /* Storage may be unavailable inside a Telegram WebView. */ }
+}
+
+export function removeStorage(key: string): void {
+  try { localStorage.removeItem(key); }
+  catch { /* Storage may be unavailable inside a Telegram WebView. */ }
+}
+
 export function useTelegramEnvironment(): boolean {
   const [online, setConnection] = useState(() => navigator.onLine);
 
