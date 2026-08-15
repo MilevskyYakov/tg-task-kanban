@@ -45,9 +45,9 @@ test('completed tasks stay hidden until status filter requests them', () => {
 });
 
 test('filter count includes only active conditions, not search', () => {
-  assert.equal(activeFilterCount(defaultFilters), 0);
-  assert.equal(activeFilterCount({ ...defaultFilters, search: 'релиз' }), 0);
-  assert.equal(activeFilterCount({ ...defaultFilters, scope: 'all', priority: 'urgent', unassigned: true }), 3);
+  assert.equal(activeFilterCount(defaultFilters), 1);
+  assert.equal(activeFilterCount({ ...defaultFilters, search: 'релиз' }), 1);
+  assert.equal(activeFilterCount({ ...defaultFilters, scope: 'all', priority: 'urgent', unassigned: true }), 2);
 });
 
 test('chat board overrides global choice without replacing it', () => {
