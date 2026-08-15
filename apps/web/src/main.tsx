@@ -8,12 +8,15 @@ import { countLabel, initialNavigation, settingsSections, type NavigationState }
 import { TaskDetails } from './task-details';
 import { activeFilterCount, dateInputToIso, dateTimeInputsToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveKanbanSwipe, resolveStartupContext, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
 import { FoundationFixture } from './visual-fixture';
+import { readStorage, removeStorage, writeStorage } from './environment';
 
 type TaskView = 'list' | 'kanban';
 type FilterChoice = 'project' | 'assignee' | 'status' | 'priority' | 'deadline';
 type CreateChoice = 'board' | 'project' | 'assignee' | 'priority';
 const statuses = Object.keys(statusDisplayName) as TaskStatus[];
-const storedTaskView = restoreTaskViewState(localStorage.getItem('tasks.viewState'));
+window.Telegram?.WebApp?.ready();
+window.Telegram?.WebApp?.expand();
+const storedTaskView = restoreTaskViewState(readStorage('tasks.viewState'));
 function App() {
   const [state, setState] = useState<'loading' | 'outside' | 'error' | 'ready'>('loading');
   const [boards, setBoards] = useState<Board[]>([]);
@@ -45,10 +48,10 @@ function App() {
   const [taskReload, setTaskReload] = useState(0);
   const [filters, setFilters] = useState<TaskFilters>(defaultFilters);
   const [filtersLoadedFor, setFiltersLoadedFor] = useState('');
-  const [globalBoardId, setGlobalBoardId] = useState(() => localStorage.getItem('tasks.globalBoardId') ?? '');
+  const [globalBoardId, setGlobalBoardId] = useState(() => readStorage('tasks.globalBoardId') ?? '');
   const [boardOverrideId, setBoardOverrideId] = useState<string>();
   const [recentBoardIds, setRecentBoardIds] = useState<string[]>(() => {
-    try { const value = JSON.parse(localStorage.getItem('tasks.recentBoardIds') ?? '[]'); return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string').slice(0, 3) : []; }
+    try { const value = JSON.parse(readStorage('tasks.recentBoardIds') ?? '[]'); return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string').slice(0, 3) : []; }
     catch { return []; }
   });
   const [boardSearch, setBoardSearch] = useState('');
@@ -115,7 +118,6 @@ function App() {
   useEffect(() => {
     const webApp = window.Telegram?.WebApp;
     if (!webApp?.initData) { setState('outside'); return; }
-    webApp.ready(); webApp.expand();
     void api('/api/auth/telegram', json('POST', {initData: webApp.initData}))
       .then(async (auth) => {
         setUserId((auth as {userId: string}).userId);
@@ -198,11 +200,11 @@ function App() {
     const save = () => {
       taskScroll.current = window.scrollY;
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => localStorage.setItem('tasks.viewState', serializeTaskViewState({ view: taskView, grouping, filters, scrollY: taskScroll.current, kanbanStatus })), 100);
+      timer = setTimeout(() => writeStorage('tasks.viewState', serializeTaskViewState({ view: taskView, grouping, filters, scrollY: taskScroll.current, kanbanStatus })), 100);
     };
     window.addEventListener('scroll', save, { passive: true });
     save();
-    return () => { window.removeEventListener('scroll', save); if (timer) clearTimeout(timer); taskScroll.current = window.scrollY; localStorage.setItem('tasks.viewState', serializeTaskViewState({ view: taskView, grouping, filters, scrollY: taskScroll.current, kanbanStatus })); };
+    return () => { window.removeEventListener('scroll', save); if (timer) clearTimeout(timer); taskScroll.current = window.scrollY; writeStorage('tasks.viewState', serializeTaskViewState({ view: taskView, grouping, filters, scrollY: taskScroll.current, kanbanStatus })); };
   }, [navigation.screen, taskView, grouping, filters, kanbanStatus]);
 
   useEffect(() => {
@@ -349,13 +351,13 @@ function App() {
     setShowBoardSheet(false);
     setBoardSearch('');
     if (boardId) {
-      localStorage.setItem('tasks.globalBoardId', boardId);
+      writeStorage('tasks.globalBoardId', boardId);
       setRecentBoardIds((current) => {
         const next = [boardId, ...current.filter((id) => id !== boardId)].slice(0, 3);
-        localStorage.setItem('tasks.recentBoardIds', JSON.stringify(next));
+        writeStorage('tasks.recentBoardIds', JSON.stringify(next));
         return next;
       });
-    } else localStorage.removeItem('tasks.globalBoardId');
+    } else removeStorage('tasks.globalBoardId');
   };
   const filteredTasks = !showArchive ? filterTasks(tasks, filters, userId) : tasks;
   const filterCount = activeFilterCount(taskView === 'kanban' ? { ...filters, status: '' } : filters);

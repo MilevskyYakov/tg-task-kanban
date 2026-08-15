@@ -45,3 +45,16 @@ for (const width of [390, 320]) {
     expect(await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('button, input')].every((element) => element.scrollHeight <= element.offsetHeight || getComputedStyle(element).overflowY !== 'hidden'))).toBe(true);
   });
 }
+
+test('boot survives unavailable WebView storage', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.addInitScript(() => {
+    for (const method of ['getItem', 'setItem', 'removeItem'] as const) {
+      Object.defineProperty(Storage.prototype, method, { value: () => { throw new DOMException('denied', 'SecurityError'); } });
+    }
+  });
+  await page.goto('/?fixture=foundation');
+  expect(errors).toEqual([]);
+  await expect(page.locator('.foundation-fixture')).toBeVisible();
+});
