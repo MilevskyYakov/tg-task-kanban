@@ -2,9 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 import { api, ApiError, json } from './api';
-import { ActionRow, AppShell, Avatar, Badge, ChoiceRow, CreateScreen, Disclosure, EnvironmentStatus, FieldRow, Icon, SectionHeader, SettingsScreen, Sheet, Skeleton, TasksScreen, type IconName } from './app-shell';
+import { ActionRow, AppShell, Avatar, Badge, ChoiceAction, ChoiceRow, CreateScreen, Disclosure, EnvironmentStatus, FieldRow, Icon, SectionHeader, SettingsScreen, Sheet, Skeleton, TasksScreen, type IconName } from './app-shell';
 import type { Board, Collaboration, Member, Project, Recurrence, Schedule } from './domain';
-import { initialNavigation, settingsSections, type NavigationState } from './navigation';
+import { countLabel, initialNavigation, settingsSections, type NavigationState } from './navigation';
 import { TaskDetails } from './task-details';
 import { activeFilterCount, dateInputToIso, dateTimeInputsToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveKanbanSwipe, resolveStartupContext, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
 import { FoundationFixture } from './visual-fixture';
@@ -14,7 +14,6 @@ type FilterChoice = 'project' | 'assignee' | 'status' | 'priority' | 'deadline';
 type CreateChoice = 'board' | 'project' | 'assignee' | 'priority';
 const statuses = Object.keys(statusDisplayName) as TaskStatus[];
 const storedTaskView = restoreTaskViewState(localStorage.getItem('tasks.viewState'));
-
 function App() {
   const [state, setState] = useState<'loading' | 'outside' | 'error' | 'ready'>('loading');
   const [boards, setBoards] = useState<Board[]>([]);
@@ -65,6 +64,10 @@ function App() {
   const [profileName, setProfileName] = useState('Пользователь Telegram');
   const [profileUsername, setProfileUsername] = useState('');
   const [recurrenceFrequency, setRecurrenceFrequency] = useState<Recurrence['frequency']>('daily');
+  const [recurrenceProjectId, setRecurrenceProjectId] = useState('');
+  const [recurrenceAssigneeId, setRecurrenceAssigneeId] = useState('');
+  const [recurrencePriority, setRecurrencePriority] = useState<Task['priority']>('normal');
+  const [settingsCounts, setSettingsCounts] = useState<{ projects: number; automations: number }>();
   const [createBoardId, setCreateBoardId] = useState('');
   const [createOrigin, setCreateOrigin] = useState<NavigationState>(initialNavigation);
   const [createPending, setCreatePending] = useState(false);
@@ -167,6 +170,23 @@ function App() {
     }).catch((error: Error) => { if (!cancelled) setMessage(error.message); });
     return () => { cancelled = true; };
   }, [navigation.screen, createBoardId]);
+  useEffect(() => {
+    if (navigation.screen !== 'settings' || !boards.length) return;
+    let cancelled = false;
+    void Promise.all(boards.map(async (item: Board) => {
+      const [projectData, recurrenceData] = await Promise.all([
+        api<{projects: Project[]}>(`/api/boards/${item.id}/projects`),
+        api<{recurrences: Recurrence[]}>(`/api/boards/${item.id}/recurrences`)
+      ]);
+      return {
+        projects: projectData.projects.filter((project: Project) => !project.archived_at).length,
+        automations: recurrenceData.recurrences.filter((recurrence: Recurrence) => !recurrence.archived_at && !recurrence.paused_at).length
+      };
+    })).then((counts) => {
+      if (!cancelled) setSettingsCounts(counts.reduce((total: { projects: number; automations: number }, count: { projects: number; automations: number }) => ({ projects: total.projects + count.projects, automations: total.automations + count.automations }), { projects: 0, automations: 0 }));
+    }).catch(() => { if (!cancelled) setSettingsCounts(undefined); });
+    return () => { cancelled = true; };
+  }, [navigation.screen, boards]);
 
   useEffect(() => {
     if (navigation.screen !== 'tasks') return;
@@ -201,8 +221,8 @@ function App() {
   }, [filters, filtersLoadedFor, userId, board?.id]);
 
   const action = async (run: () => Promise<unknown>, success: string, reload = true) => {
-    try { await run(); if (reload && board) await loadBoard(board.id); setMessage(success); }
-    catch (error) { setMessage(error instanceof Error ? error.message : 'Ошибка'); }
+    try { await run(); if (reload && board) await loadBoard(board.id); setMessage(success); return true; }
+    catch (error) { setMessage(error instanceof Error ? error.message : 'Ошибка'); return false; }
   };
   const saveBoardName = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -292,7 +312,7 @@ function App() {
     const form = event.currentTarget;
     const name = String(new FormData(form).get('name') ?? '').trim();
     if (!name) return;
-    await action(() => api(`/api/boards/${board.id}/projects`, json('POST', {name})), 'Проект создан');
+    if (!await action(() => api(`/api/boards/${board.id}/projects`, json('POST', {name})), 'Проект создан')) return;
     form.reset();
   };
   const editProject = async (eventOrItem: React.FormEvent<HTMLFormElement> | Project, item?: Project) => {
@@ -312,14 +332,14 @@ function App() {
     const weekdays = String(data.get('weekdays') ?? '').split(',').map(Number).filter((day) => Number.isInteger(day));
     const startDate = String(data.get('startDate'));
     const endDate = String(data.get('endDate'));
-    await action(() => api(`/api/boards/${board.id}/recurrences`, json('POST', {
+    if (!await action(() => api(`/api/boards/${board.id}/recurrences`, json('POST', {
       title: String(data.get('title')), frequency: recurrenceFrequency, localTime: String(data.get('localTime')),
       timezone: String(data.get('timezone')), weekdays: recurrenceFrequency === 'weekdays' || recurrenceFrequency === 'weekly' ? weekdays : undefined,
       dayOfMonth: recurrenceFrequency === 'monthly' ? Number(data.get('dayOfMonth')) : undefined,
       startAt: new Date(`${startDate}T00:00:00`).toISOString(), endAt: endDate ? new Date(`${endDate}T23:59:59`).toISOString() : null,
       projectId: data.get('projectId') || null, assigneeUserId: data.get('assigneeUserId') || null, priority: data.get('priority')
-    })), 'Повтор создан');
-    form.reset(); setRecurrenceFrequency('daily');
+    })), 'Повтор создан')) return;
+    form.reset(); setRecurrenceFrequency('daily'); setRecurrenceProjectId(''); setRecurrenceAssigneeId(''); setRecurrencePriority('normal');
   };
   const chooseTaskBoard = (boardId: string) => {
     setBoardOverrideId(undefined);
@@ -522,20 +542,26 @@ function App() {
     const result = await api<Schedule | {messages: string[]}>(`/api/boards/${board.id}/publications/${schedule.kind}${previewOnly ? '/preview' : ''}`, json(previewOnly ? 'POST' : 'PUT', schedule));
     if ('messages' in result) setPreview(result.messages.join('\n\n———\n\n')); else setSchedules((items) => items.map((item) => item.kind === result.kind ? result : item));
   };
-  const publicationSettings = board?.type === 'chat' && schedules.length ? <details className="publications"><summary>Публикации в чат</summary>{schedules.map((schedule) => <fieldset key={schedule.kind}><legend>{schedule.kind === 'daily' ? 'План дня' : 'Недельная сводка'}</legend><label><input type="checkbox" checked={schedule.enabled} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, enabled: event.target.checked} : item))}/> Включена</label><label>Дни (1–7)<input value={schedule.weekdays.join(',')} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, weekdays: event.target.value.split(',').map(Number).filter(Boolean)} : item))}/></label><label>Время<input type="time" value={schedule.local_time} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, local_time: event.target.value} : item))}/></label><label>Часовой пояс<input value={schedule.timezone} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, timezone: event.target.value} : item))}/></label><div className="status-options">{Object.entries(statusDisplayName).map(([status, name]) => <label key={status}><input type="checkbox" checked={schedule.included_statuses.includes(status as TaskStatus)} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, included_statuses: event.target.checked ? [...item.included_statuses, status as TaskStatus] : item.included_statuses.filter((value) => value !== status)} : item))}/>{name}</label>)}</div><div className="actions"><button onClick={() => void action(() => saveSchedule(schedule), 'Расписание сохранено', false)}>Сохранить</button><button className="secondary" onClick={() => void action(() => saveSchedule(schedule, true), 'Предпросмотр готов', false)}>Предпросмотр</button></div></fieldset>)}{preview && <pre>{preview}</pre>}</details> : null;
+  const publicationSettings = board?.type === 'chat' && schedules.length ? <Disclosure label="Публикации в чат"><div className="publications">{schedules.map((schedule) => <fieldset key={schedule.kind}><legend>{schedule.kind === 'daily' ? 'План дня' : 'Недельная сводка'}</legend><label><input type="checkbox" checked={schedule.enabled} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, enabled: event.target.checked} : item))}/> Включена</label><label>Дни (1–7)<input value={schedule.weekdays.join(',')} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, weekdays: event.target.value.split(',').map(Number).filter(Boolean)} : item))}/></label><label>Время<input type="time" value={schedule.local_time} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, local_time: event.target.value} : item))}/></label><label>Часовой пояс<input value={schedule.timezone} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, timezone: event.target.value} : item))}/></label><div className="status-options">{Object.entries(statusDisplayName).map(([status, name]) => <label key={status}><input type="checkbox" checked={schedule.included_statuses.includes(status as TaskStatus)} onChange={(event) => setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, included_statuses: event.target.checked ? [...item.included_statuses, status as TaskStatus] : item.included_statuses.filter((value) => value !== status)} : item))}/>{name}</label>)}</div><div className="actions"><button onClick={() => void action(() => saveSchedule(schedule), 'Расписание сохранено', false)}>Сохранить</button><button className="secondary" onClick={() => void action(() => saveSchedule(schedule, true), 'Предпросмотр готов', false)}>Предпросмотр</button></div></fieldset>)}{preview && <pre>{preview}</pre>}</div></Disclosure> : null;
 
-  const settingsBoardList = (screen: 'settings-workspace' | 'settings-automation') => <div className="settings-list">{boards.map((item) => <button className="settings-list-row" key={item.id} onClick={() => navigate({ screen, boardId: item.id })}><span><strong>{item.name}</strong><small>{item.type === 'chat' ? 'Чат-доска' : 'Личная доска'}{item.status === 'frozen' ? ' · заморожена' : ''}</small></span><span aria-hidden="true">›</span></button>)}</div>;
+  const frequencyOptions = [{ value: 'daily', label: 'Ежедневно' }, { value: 'weekdays', label: 'По будням' }, { value: 'weekly', label: 'Еженедельно' }, { value: 'monthly', label: 'Ежемесячно' }];
+  const projectOptions = [{ value: '', label: 'Без проекта' }, ...projects.filter((item) => !item.archived_at).map((item) => ({ value: item.id, label: item.name }))];
+  const assigneeOptions = [{ value: '', label: 'Без ответственного' }, ...members.map((member) => ({ value: member.id, label: member.first_name }))];
+  const priorityOptions = [{ value: 'normal', label: 'Обычный' }, { value: 'urgent', label: 'Срочный' }];
+  const boardOptions = [{ value: '', label: 'Все доски' }, ...boards.map((item) => ({ value: item.id, label: item.name }))];
+
+  const settingsBoardList = (screen: 'settings-workspace' | 'settings-automation') => <div className="settings-list">{boards.map((item) => <button className="settings-list-row" key={item.id} onClick={() => navigate({ screen, boardId: item.id })}><span><strong>{item.name}</strong><small>{item.type === 'chat' ? 'Чат-доска' : 'Личная доска'}{item.status === 'frozen' ? ' · заморожена' : ''}</small></span><Icon name="chevron"/></button>)}</div>;
   const settingsRoot = <SettingsScreen subtitle="Управление пространством и приложением">
     <p className="settings-label">Разделы</p>
-    <div className="settings-root">{settingsSections.map((section, index) => <button className="settings-card" data-tone={section.id} key={section.id} onClick={() => navigate({ screen: `settings-${section.id}` } as NavigationState)}>
-      <span className="settings-card-icon" aria-hidden="true">{section.id === 'workspace' ? '▦' : section.id === 'automation' ? '↻' : initials(profileName)}</span>
-      <span className="settings-card-copy"><strong>{section.title}</strong><small>{section.description}</small><span>{index === 0 ? `${boards.length} ${boards.length === 1 ? 'доска' : boards.length > 1 && boards.length < 5 ? 'доски' : 'досок'}` : index === 1 ? 'Сценарии по доскам' : profileName}</span></span>
-      <span className="settings-chevron" aria-hidden="true">›</span>
+    <div className="settings-root">{settingsSections.map((section) => <button className="settings-card" data-tone={section.id} key={section.id} onClick={() => navigate({ screen: `settings-${section.id}` } as NavigationState)}>
+      <span className="settings-card-icon" aria-hidden="true">{section.id === 'account' ? initials(profileName) : <Icon name={section.id}/>}</span>
+      <span className="settings-card-copy"><strong>{section.title}</strong><small>{section.description}</small><span>{section.id === 'workspace' ? `${countLabel(boards.length, 'доска', 'доски', 'досок')}${settingsCounts ? ` · ${countLabel(settingsCounts.projects, 'проект', 'проекта', 'проектов')}` : ''}` : section.id === 'automation' ? settingsCounts ? `${countLabel(settingsCounts.automations, 'активный сценарий', 'активных сценария', 'активных сценариев')}` : 'Сценарии по доскам' : profileName}</span></span>
+      <Icon name="chevron"/>
     </button>)}</div>
     <p className="settings-footer">Версия 0.1 · Помощь</p>
   </SettingsScreen>;
   const workspaceSettings = <SettingsScreen title={board?.name ?? 'Рабочее пространство'} subtitle={board ? 'Доска, проекты и участники' : 'Доски, проекты и участники'}>
-    <button className="back" onClick={() => navigate({ screen: 'settings' })}>← Настройки</button>
+    <button className="back settings-back" onClick={() => navigate({ screen: 'settings' })}><Icon name="back"/>Настройки</button>
     {!board ? settingsBoardList('settings-workspace') : <div className="settings-groups">
       <section className="settings-group"><h2>Доска</h2>{(board.status === 'draft' || board.role === 'owner' || board.role === 'admin') ? <form className="settings-form inline-form" onSubmit={(event) => void saveBoardName(event)}><label>Название<input name="name" defaultValue={board.name} maxLength={120} required/></label><button>{board.status === 'draft' ? 'Активировать' : 'Сохранить'}</button></form> : <p>{board.name}</p>}<small>{board.type === 'chat' ? 'Права администратора Telegram проверяются при изменении чат-доски.' : 'Личное рабочее пространство.'}</small></section>
       <section className="settings-group"><h2>Проекты</h2>{projects.filter((item) => !item.archived_at).map((item) => <form className="settings-form inline-form" key={item.id} onSubmit={(event) => void editProject(event, item)}><input aria-label={`Название проекта ${item.name}`} name="name" defaultValue={item.name} maxLength={120} required/><button>Сохранить</button><button className="secondary" type="button" onClick={() => void action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: true})), 'Проект архивирован')}>В архив</button></form>)}<form className="settings-form inline-form" onSubmit={(event) => void addProject(event)}><input aria-label="Название нового проекта" name="name" placeholder="Новый проект" maxLength={120} required/><button>Добавить</button></form></section>
@@ -543,18 +569,18 @@ function App() {
     </div>}
   </SettingsScreen>;
   const automationSettings = <SettingsScreen title={board?.name ?? 'Автоматизация'} subtitle={board ? 'Повторения, публикации и уведомления' : 'Выберите доску для настройки'}>
-    <button className="back" onClick={() => navigate({ screen: 'settings' })}>← Настройки</button>
+    <button className="back settings-back" onClick={() => navigate({ screen: 'settings' })}><Icon name="back"/>Настройки</button>
     {!board ? settingsBoardList('settings-automation') : <div className="settings-groups">
       <section className="settings-group"><h2>Повторения</h2><form className="settings-form" onSubmit={(event) => void addRecurrence(event)}>
-        <label>Название задачи<input name="title" maxLength={200} required/></label><label>Период<select value={recurrenceFrequency} onChange={(event) => setRecurrenceFrequency(event.target.value as Recurrence['frequency'])}><option value="daily">Ежедневно</option><option value="weekdays">По будням</option><option value="weekly">Еженедельно</option><option value="monthly">Ежемесячно</option></select></label>
+        <label>Название задачи<input name="title" maxLength={200} required/></label><ChoiceAction label="Период" value={recurrenceFrequency} options={frequencyOptions} onChange={(value) => setRecurrenceFrequency(value as Recurrence['frequency'])}/>
         {(recurrenceFrequency === 'weekdays' || recurrenceFrequency === 'weekly') && <label>Дни недели (0–6)<input name="weekdays" defaultValue={recurrenceFrequency === 'weekdays' ? '1,2,3,4,5' : String(new Date().getDay())} pattern="[0-6](,[0-6])*" required/></label>}{recurrenceFrequency === 'monthly' && <label>День месяца<input name="dayOfMonth" type="number" min="1" max="31" defaultValue={new Date().getDate()} required/></label>}
         <label>Время<input name="localTime" type="time" defaultValue="09:00" required/></label><label>Часовой пояс<input name="timezone" defaultValue={Intl.DateTimeFormat().resolvedOptions().timeZone} required/></label><label>Дата начала<input name="startDate" type="date" defaultValue={new Date().toISOString().slice(0, 10)} required/></label><label>Дата окончания<input name="endDate" type="date"/></label>
-        <label>Проект<select name="projectId"><option value="">Без проекта</option>{projects.filter((item) => !item.archived_at).map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label>Исполнитель<select name="assigneeUserId"><option value="">Без ответственного</option>{members.map((member) => <option value={member.id} key={member.id}>{member.first_name}</option>)}</select></label><label>Приоритет<select name="priority"><option value="normal">Обычный</option><option value="urgent">Срочный</option></select></label><button>Добавить повтор</button>
+        <ChoiceAction label="Проект" name="projectId" value={recurrenceProjectId} options={projectOptions} onChange={setRecurrenceProjectId}/><ChoiceAction label="Исполнитель" name="assigneeUserId" value={recurrenceAssigneeId} options={assigneeOptions} onChange={setRecurrenceAssigneeId}/><ChoiceAction label="Приоритет" name="priority" value={recurrencePriority} options={priorityOptions} onChange={(value) => setRecurrencePriority(value as Task['priority'])}/><button>Добавить повтор</button>
       </form>{recurrences.filter((item) => !item.archived_at).map((item) => <div className="automation-row" key={item.id}><span><strong>{item.title}</strong><small>{item.frequency} · {item.local_time}</small></span><button className="secondary" onClick={() => void action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {paused: !item.paused_at})), item.paused_at ? 'Повтор включён' : 'Повтор приостановлен')}>{item.paused_at ? 'Включить' : 'Пауза'}</button></div>)}</section>
       {publicationSettings}<section className="settings-group"><h2>Уведомления</h2><p>Уведомление исполнителю выбирается при назначении задачи. Новых глобальных типов уведомлений пока нет.</p></section>
     </div>}
   </SettingsScreen>;
-  const accountSettings = <SettingsScreen title="Аккаунт" subtitle="Профиль и личные параметры"><button className="back" onClick={() => navigate({ screen: 'settings' })}>← Настройки</button><div className="settings-groups"><section className="settings-group account-profile"><Avatar initials={initials(profileName)} label={profileName}/><span><strong>{profileName}</strong>{profileUsername && <small>{profileUsername}</small>}</span></section><section className="settings-group"><h2>Личные параметры</h2><div className="settings-form"><label>Группировка задач<select value={grouping} onChange={(event) => setGrouping(event.target.value as typeof grouping)}><option value="deadline">По срокам</option><option value="project">По проектам</option></select></label><label>Обычная доска<select value={globalBoardId} onChange={(event) => chooseTaskBoard(event.target.value)}><option value="">Все доски</option>{boards.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label></div></section></div></SettingsScreen>;
+  const accountSettings = <SettingsScreen title="Аккаунт" subtitle="Профиль и личные параметры"><button className="back settings-back" onClick={() => navigate({ screen: 'settings' })}><Icon name="back"/>Настройки</button><div className="settings-groups"><section className="settings-group account-profile"><Avatar initials={initials(profileName)} label={profileName}/><span><strong>{profileName}</strong>{profileUsername && <small>{profileUsername}</small>}</span></section><section className="settings-group"><h2>Личные параметры</h2><div className="settings-form"><ChoiceAction label="Группировка задач" value={grouping} options={[{ value: 'deadline', label: 'По срокам' }, { value: 'project', label: 'По проектам' }]} onChange={(value) => setGrouping(value as typeof grouping)}/><ChoiceAction label="Обычная доска" value={globalBoardId} options={boardOptions} onChange={chooseTaskBoard}/></div></section></div></SettingsScreen>;
 
   if (state === 'outside') return <main><EnvironmentStatus/><section><p className="eyebrow">KAIROS TASKS</p><h1>Задачи живут<br/>в Telegram</h1><p>Откройте приложение через <a href="https://t.me/kairostask_bot">@kairostask_bot</a>.</p></section></main>;
   if (state === 'error') return <main><EnvironmentStatus/><section role="alert"><h1>Не удалось войти</h1><p>{message || 'Закройте приложение и откройте его снова через бота.'}</p></section></main>;

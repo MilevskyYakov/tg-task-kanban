@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { resolveChoiceIndex, resolveFocusIndex } from '../src/app-shell.js';
 import { resolveThemeScheme } from '../src/environment.js';
-import { initialNavigation, isSettingsNavigation, settingsSections } from '../src/navigation.js';
+import { countLabel, initialNavigation, isSettingsNavigation, settingsSections } from '../src/navigation.js';
 import { taskDraft, taskPatch } from '../src/task-details.js';
 import {
   activeFilterCount,
@@ -123,6 +123,13 @@ test('settings root exposes only agreed sections and keeps child navigation acti
   assert.deepEqual(settingsSections.map(({ title }) => title), ['Рабочее пространство', 'Автоматизация', 'Аккаунт']);
   assert.equal(isSettingsNavigation({ screen: 'settings-workspace' }), true);
   assert.equal(isSettingsNavigation({ screen: 'tasks' }), false);
+});
+
+test('settings counters use Russian singular, few, and many forms', () => {
+  assert.equal(countLabel(1, 'проект', 'проекта', 'проектов'), '1 проект');
+  assert.equal(countLabel(3, 'проект', 'проекта', 'проектов'), '3 проекта');
+  assert.equal(countLabel(11, 'проект', 'проекта', 'проектов'), '11 проектов');
+  assert.equal(countLabel(24, 'проект', 'проекта', 'проектов'), '24 проекта');
 });
 
 test('deadline groups use the requested timezone for the Today boundary', () => {
