@@ -1,15 +1,20 @@
-import { useEffect, useRef, type ButtonHTMLAttributes, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent, type ReactNode } from 'react';
 import { useTelegramEnvironment } from './environment';
 import { isSettingsNavigation, type NavigationState } from './navigation';
 
-type IconName = 'tasks' | 'plus' | 'settings' | 'close';
+export type IconName = 'tasks' | 'plus' | 'settings' | 'close' | 'chevron' | 'alert' | 'sun' | 'clock' | 'noDeadline';
 
-function Icon({ name }: { name: IconName }) {
+export function Icon({ name }: { name: IconName }) {
   const paths = {
     tasks: <><path d="M8 6h11M8 12h11M8 18h11"/><path d="m3 6 1 1 2-2m-3 7 1 1 2-2m-3 7 1 1 2-2"/></>,
     plus: <path d="M12 5v14M5 12h14"/>,
     settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></>,
-    close: <path d="m6 6 12 12M18 6 6 18"/>
+    close: <path d="m6 6 12 12M18 6 6 18"/>,
+    chevron: <path d="m8 10 4 4 4-4"/>,
+    alert: <><path d="M12 3 2.8 20h18.4Z"/><path d="M12 9v5m0 3h.01"/></>,
+    sun: <><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></>,
+    clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,
+    noDeadline: <path d="M5 12h14"/>
   };
   return <svg className="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
@@ -52,23 +57,43 @@ export function SectionHeader({ children, count, tone = 'upcoming' }: { children
   return <header className="section-header" data-tone={tone}><span>{children}</span><strong aria-label={`${count} задач`}>{count}</strong></header>;
 }
 
-export function Sheet({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+export function resolveFocusIndex(current: number, count: number, shift: boolean): number | null {
+  if (count === 0) return null;
+  if (shift && current === 0) return count - 1;
+  if (!shift && current === count - 1) return 0;
+  return null;
+}
+
+export function ChoiceSheet({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
   const sheet = useRef<HTMLElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
+  const titleId = useId();
   useEffect(() => {
     previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    sheet.current?.querySelector<HTMLElement>('button, input, select, [href], [tabindex]:not([tabindex="-1"])')?.focus();
+    sheet.current?.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')?.focus();
     return () => previousFocus.current?.focus();
   }, []);
   const handleKeyDown = (event: KeyboardEvent) => {
     if (event.key === 'Escape') { onClose(); return; }
     if (event.key !== 'Tab') return;
-    const focusable = [...(sheet.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])') ?? [])];
-    const first = focusable[0]; const last = focusable.at(-1);
-    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    const focusable = [...(sheet.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])') ?? [])];
+    const current = focusable.indexOf(document.activeElement as HTMLElement);
+    const next = resolveFocusIndex(current, focusable.length, event.shiftKey);
+    if (next !== null) { event.preventDefault(); focusable[next]?.focus(); }
   };
-  return <section ref={sheet} className="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" onKeyDown={handleKeyDown}><header><h2 id="sheet-title">{title}</h2><IconButton label="Закрыть" onClick={onClose}><Icon name="close"/></IconButton></header>{children}</section>;
+  return <div className="sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section ref={sheet} className="sheet" role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={handleKeyDown}><header><h2 id={titleId}>{title}</h2><IconButton label="Закрыть" onClick={onClose}><Icon name="close"/></IconButton></header>{children}</section></div>;
+}
+
+export const Sheet = ChoiceSheet;
+
+export function ActionRow({ label, value, icon, ...props }: { label: string; value: ReactNode; icon?: ReactNode } & ButtonHTMLAttributes<HTMLButtonElement>) {
+  return <button className="action-row" type="button" {...props}>{icon && <span className="action-row-icon">{icon}</span>}<span className="action-row-copy"><span>{label}</span><strong>{value}</strong></span><Icon name="chevron"/></button>;
+}
+
+export function Disclosure({ label, children, defaultOpen = false }: { label: string; children: ReactNode; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const contentId = useId();
+  return <section className="disclosure"><button type="button" aria-expanded={open} aria-controls={contentId} onClick={() => setOpen((value) => !value)}><span>{label}</span><Icon name="chevron"/></button>{open && <div id={contentId}>{children}</div>}</section>;
 }
 
 export function FieldRow({ label, children }: { label: string; children: ReactNode }) {
@@ -84,7 +109,7 @@ export function Badge({ children, tone = 'neutral' }: { children: ReactNode; ton
 }
 
 export function TasksScreen({ children, boardName, onSelectBoard }: { children: ReactNode; boardName: string; onSelectBoard: () => void }) {
-  return <><header className="page-header"><div className="title-row"><h1>Задачи</h1><TaskGlyph/></div><button className="board-selector" onClick={onSelectBoard}>{boardName} <span aria-hidden="true">⌄</span></button></header>{children}</>;
+  return <><header className="page-header"><div className="title-row"><h1>Задачи</h1><TaskGlyph/></div><button className="board-selector" onClick={onSelectBoard}>{boardName}<Icon name="chevron"/></button></header>{children}</>;
 }
 
 export function SettingsScreen({ children, title = 'Настройки', subtitle }: { children: ReactNode; title?: string; subtitle?: string }) {

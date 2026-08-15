@@ -2,11 +2,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 import { api, ApiError, json } from './api';
-import { AppShell, Avatar, Badge, CreateScreen, EnvironmentStatus, FieldRow, SectionHeader, SettingsScreen, Sheet, Skeleton, TasksScreen } from './app-shell';
+import { AppShell, Avatar, Badge, CreateScreen, EnvironmentStatus, FieldRow, Icon, SectionHeader, SettingsScreen, Sheet, Skeleton, TasksScreen, type IconName } from './app-shell';
 import type { Board, Collaboration, Member, Project, Recurrence, Schedule } from './domain';
 import { initialNavigation, settingsSections, type NavigationState } from './navigation';
 import { TaskDetails } from './task-details';
 import { activeFilterCount, dateInputToIso, dateTimeInputsToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveKanbanSwipe, resolveStartupContext, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
+import { FoundationFixture } from './visual-fixture';
 
 type TaskView = 'list' | 'kanban';
 const statuses = Object.keys(statusDisplayName) as TaskStatus[];
@@ -368,12 +369,12 @@ function App() {
     {task.assignee_name && <Avatar initials={initials(task.assignee_name)} label={`Исполнитель: ${task.assignee_name}`}/>}
   </article>;
   const deadlineGroups = groupTasksByDeadline(filteredTasks);
-  const deadlineSections: { id: DeadlineGroup; label: string; icon: string }[] = [
-    { id: 'overdue', label: 'Просрочено', icon: '!' }, { id: 'today', label: 'Сегодня', icon: '☼' },
-    { id: 'upcoming', label: 'Ближайшие', icon: '◷' }, { id: 'none', label: 'Без срока', icon: '—' }
+  const deadlineSections: { id: DeadlineGroup; label: string; icon: IconName }[] = [
+    { id: 'overdue', label: 'Просрочено', icon: 'alert' }, { id: 'today', label: 'Сегодня', icon: 'sun' },
+    { id: 'upcoming', label: 'Ближайшие', icon: 'clock' }, { id: 'none', label: 'Без срока', icon: 'noDeadline' }
   ];
   const groupedTaskList = <div className="grouped-task-list">{grouping === 'deadline'
-    ? deadlineSections.map((section) => deadlineGroups[section.id].length > 0 && <section className="task-section" key={section.id}><SectionHeader count={deadlineGroups[section.id].length} tone={section.id}><span className="section-title"><span aria-hidden="true">{section.icon}</span>{section.label}</span></SectionHeader>{deadlineGroups[section.id].map(mainTaskRow)}</section>)
+    ? deadlineSections.map((section) => deadlineGroups[section.id].length > 0 && <section className="task-section" key={section.id}><SectionHeader count={deadlineGroups[section.id].length} tone={section.id}><span className="section-title"><span aria-hidden="true"><Icon name={section.icon}/></span>{section.label}</span></SectionHeader>{deadlineGroups[section.id].map(mainTaskRow)}</section>)
     : groupTasksByProject(filteredTasks).map((group) => <section className="task-section project-section" key={group.id ?? 'none'}><SectionHeader count={group.tasks.length} tone="upcoming">{group.name}</SectionHeader>{group.tasks.map(mainTaskRow)}</section>)
   }</div>;
   const kanbanTasks = filterTasks(tasks, { ...filters, status: kanbanStatus }, userId);
@@ -542,4 +543,5 @@ function App() {
   const boardList = <div className="board-list">{boards.map((item) => <button className="board" key={item.id} onClick={() => { setMessage(''); setNavigation({ screen: 'board', boardId: item.id }); }}><span>{item.type === 'chat' ? 'ЧАТ' : 'ЛИЧНАЯ'}{item.status === 'frozen' ? ' · ЗАМОРОЖЕНА' : ''}</span><strong>{item.name}</strong><small>{item.type === 'chat' ? 'Командное пространство' : 'Только ваши задачи'}</small></button>)}</div>;
   return <AppShell message={message} navigation={navigation} navigate={navigate}><SettingsScreen>{boardList}</SettingsScreen></AppShell>;
 }
-createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
+const fixture = new URLSearchParams(location.search).get('fixture');
+createRoot(document.getElementById('root')!).render(<React.StrictMode>{fixture === 'foundation' ? <FoundationFixture/> : <App/>}</React.StrictMode>);

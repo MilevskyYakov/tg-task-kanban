@@ -4,3 +4,6 @@ dist/
 *.log
 *.tsbuildinfo
 .DS_Store
+artifacts/visual-evidence/
+playwright-report/
+test-results/

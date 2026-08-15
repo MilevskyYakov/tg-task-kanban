@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { resolveFocusIndex } from '../src/app-shell.js';
 import { resolveThemeScheme } from '../src/environment.js';
 import { initialNavigation, isSettingsNavigation, settingsSections } from '../src/navigation.js';
 import { taskDraft, taskPatch } from '../src/task-details.js';
@@ -98,11 +99,15 @@ test('app navigation starts on tasks', () => {
   assert.deepEqual(initialNavigation(), { screen: 'tasks' });
 });
 
-test('Telegram theme overrides system preference and system remains fallback', () => {
-  assert.equal(resolveThemeScheme('light', true), 'light');
-  assert.equal(resolveThemeScheme('dark', false), 'dark');
-  assert.equal(resolveThemeScheme(undefined, true), 'dark');
-  assert.equal(resolveThemeScheme(undefined, false), 'light');
+test('visual foundation stays light regardless of Telegram or system theme', () => {
+  assert.equal(resolveThemeScheme(), 'light');
+});
+
+test('choice sheet focus wraps only at keyboard boundaries', () => {
+  assert.equal(resolveFocusIndex(2, 3, false), 0);
+  assert.equal(resolveFocusIndex(0, 3, true), 2);
+  assert.equal(resolveFocusIndex(1, 3, false), null);
+  assert.equal(resolveFocusIndex(0, 0, false), null);
 });
 
 test('settings root exposes only agreed sections and keeps child navigation active', () => {
