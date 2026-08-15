@@ -134,20 +134,19 @@ At 200%, controls grow vertically and content wraps. No fixed-height clipping. I
 
 ## 9. Visual acceptance matrix
 
-| Surface | 390 | 320 | Loading | Empty | Error/offline | Keyboard | Approved target |
-|---|---:|---:|---:|---:|---:|---:|---|
-| Tasks deadline | required | required | required | required | required | search | `xlomj` + contract |
-| Tasks project | required | required | same shell | required | required | search | same row anatomy |
-| Board/filter sheets | required | required | optional | required | required | search | base controls |
-| Create | required | required | submit | n/a | required | required | `lZNQ6` + contract |
-| Details | required | required | required | content sections | required | required | `irWr4` + contract |
-| Kanban | required | required | required | per status | required | status sheet | `hOXuP` + contract |
-| Settings root | required | required | required | required | required | n/a | `mP9O3` + contract |
-| Settings children | required | required | required | required | required | required | base controls |
+| Surface | 390 root / @2x export | Critical 320 root / @2x export | State evidence | Approved target |
+|---|---|---|---|---|
+| Tasks deadline | `xlomj` / `exports/xlomj.png` (780×1688) | `t320Def` / `exports/t320Def.png` (640×1688) | default list, search, active-filter count | root + contract |
+| Board sheet | `xlomj` shell | `t320Brd` / `exports/t320Brd.png` (640×1688) | selected radio, explicit close, safe area | base controls |
+| Filter sheet | `xlomj` shell | `t320Flt` / `exports/t320Flt.png` (640×1688) | checked/unchecked rows, reset, apply | base controls |
+| Create | `lZNQ6` / `exports/lZNQ6.png` (780×1688) | `c320Key` / `exports/c320Key.png` (640×1688) | keyboard open, submit remains visible | root + contract |
+| Details | `irWr4` / `exports/irWr4.png` (780×1688) | `d320Cmp` / `exports/d320Cmp.png` (640×1688) | status action and fixed composer | root + contract |
+| Kanban | `hOXuP` / `exports/hOXuP.png` (780×1688) | `k320One` / `exports/k320One.png` (640×1688) | exactly one status column | root + contract |
+| Settings root | `mP9O3` / `exports/mP9O3.png` (780×1688) | `s320Root` / `exports/s320Root.png` (640×1688) | three lightweight root entries | root + contract |
 
-Текущие пять PNG покрывают только 390×844 logical viewport. Финальный closeout #52
-требует отдельные 320×844 exports критичных states; до их появления matrix задаёт
-однозначные responsive rules, но не считается полным visual evidence.
+Loading, empty, error/offline, disabled and 200% text-zoom behavior remain normative
+state rules for implementation evidence. This design package adds critical 320 layout
+evidence without multiplying every content-state permutation into separate roots.
 
 ## 10. Implementation guardrails
 
