@@ -1,10 +1,11 @@
 import { useState, type FormEvent } from 'react';
 import { ApiError } from './api';
-import { EnvironmentStatus, TaskGlyph } from './app-shell';
+import { ActionRow, Avatar, ChoiceRow, EnvironmentStatus, Icon, Sheet, TaskGlyph } from './app-shell';
 import type { Collaboration, Member, Project } from './domain';
 import { dateInputToIso, priorityDisplayName, statusDisplayName, type Task, type TaskPriority, type TaskStatus } from './tasks';
 
 const statuses = Object.keys(statusDisplayName) as TaskStatus[];
+type DetailChoice = 'status' | 'project' | 'assignee' | 'priority' | 'blocker';
 
 export type TaskDraft = {
   title: string;
@@ -83,6 +84,9 @@ export function TaskDetails({ task, collaboration, projects, members, candidateT
   const [comment, setComment] = useState('');
   const [attachmentUrl, setAttachmentUrl] = useState('');
   const [showAttachment, setShowAttachment] = useState(false);
+  const [choice, setChoice] = useState<DetailChoice>();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const set = <K extends keyof TaskDraft>(key: K, value: TaskDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
@@ -105,23 +109,42 @@ export function TaskDetails({ task, collaboration, projects, members, candidateT
     });
   };
   const completed = collaboration.checklist.filter((item) => item.completed_at).length;
+  const choiceDefinitions = {
+    status: { title: 'Статус', current: draft.status, options: statuses.map((value) => ({ value, label: statusDisplayName[value] })) },
+    project: { title: 'Проект', current: draft.projectId, options: [{ value: '', label: 'Без проекта' }, ...projects.filter((item) => !item.archived_at).map((item) => ({ value: item.id, label: item.name }))] },
+    assignee: { title: 'Исполнитель', current: draft.assigneeUserId, options: [{ value: '', label: 'Без ответственного' }, ...members.map((item) => ({ value: item.id, label: item.first_name }))] },
+    priority: { title: 'Приоритет', current: draft.priority, options: Object.entries(priorityDisplayName).map(([value, label]) => ({ value, label })) },
+    blocker: { title: 'Задача-блокер', current: draft.blockerTaskId, options: [{ value: '', label: 'Внешняя причина' }, ...candidateTasks.map((item) => ({ value: item.id, label: item.title }))] }
+  } satisfies Record<DetailChoice, { title: string; current: string; options: { value: string; label: string }[] }>;
+  const choiceSheet = choice && (() => {
+    const definition = choiceDefinitions[choice];
+    const choose = (value: string) => {
+      if (choice === 'status') set('status', value as TaskStatus);
+      else if (choice === 'priority') set('priority', value as TaskPriority);
+      else if (choice === 'project') set('projectId', value);
+      else if (choice === 'assignee') set('assigneeUserId', value);
+      else set('blockerTaskId', value);
+      setChoice(undefined);
+    };
+    return <Sheet className="task-sheet detail-choice-sheet" title={definition.title} onClose={() => setChoice(undefined)}><div className="choice-list" role="radiogroup">{definition.options.map((option) => <ChoiceRow key={option.value} label={option.label} selected={definition.current === option.value} onClick={() => choose(option.value)}/>)}</div><button className="sheet-close secondary" type="button" onClick={() => setChoice(undefined)}>Закрыть</button></Sheet>;
+  })();
 
   return <main className="task-details">
     <EnvironmentStatus/>
     <h1 className="visually-hidden">Детали задачи</h1>
-    <header className="task-details-bar"><button className="detail-icon" aria-label="Назад к задачам" onClick={onBack}>‹</button><span><i/> {boardName}</span><details><summary aria-label="Другие действия">•••</summary><div className="detail-menu">{task.recurrence_template_id && <p>Повторяющаяся задача</p>}<button className="danger" disabled={busy} onClick={() => void run(onArchive)}>Архивировать</button><details><summary>История</summary>{collaboration.timeline.map((item) => <p key={item.id}>{item.actor_name} · {item.action}<small>{new Date(item.created_at).toLocaleString('ru-RU')}</small></p>)}</details></div></details></header>
+    <header className="task-details-bar"><button className="detail-icon" aria-label="Назад к задачам" onClick={onBack}><Icon name="back"/></button><span><i/> {boardName}</span><div className="detail-menu-wrap"><button className="detail-icon" aria-label="Другие действия" aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)}><Icon name="more"/></button>{menuOpen && <div className="detail-menu">{task.recurrence_template_id && <p>Повторяющаяся задача</p>}<button type="button" aria-expanded={historyOpen} onClick={() => setHistoryOpen((value) => !value)}>История <Icon name="chevron"/></button>{historyOpen && <div className="detail-history">{collaboration.timeline.map((item) => <p key={item.id}>{item.actor_name} · {item.action}<small>{new Date(item.created_at).toLocaleString('ru-RU')}</small></p>)}</div>}<div className="detail-danger-zone"><button type="button" className="danger" disabled={busy} onClick={() => void run(onArchive)}>Архивировать задачу</button></div></div>}</div></header>
 
     <form onSubmit={save}>
       <div className="detail-title"><textarea aria-label="Название задачи" maxLength={200} value={draft.title} onChange={(event) => set('title', event.target.value)}/><TaskGlyph/></div>
-      <div className="detail-status"><select aria-label="Статус" value={draft.status} onChange={(event) => set('status', event.target.value as TaskStatus)}>{statuses.map((status) => <option key={status} value={status}>{statusDisplayName[status]}</option>)}</select>{collaboration.checklist.length > 0 && <span>{completed} из {collaboration.checklist.length} шагов</span>}</div>
+      <div className="detail-status"><button type="button" className="detail-status-action" onClick={() => setChoice('status')}><span className="status-dot"/>{statusDisplayName[draft.status]}<Icon name="chevron"/></button>{collaboration.checklist.length > 0 && <span className="detail-progress"><i><i style={{ width: `${completed / collaboration.checklist.length * 100}%` }}/></i>{completed} из {collaboration.checklist.length} шагов</span>}</div>
 
       <section className="detail-section" data-tone="main"><h2>Главное</h2><div className="detail-fields">
-        <label><span>ПРОЕКТ</span><select value={draft.projectId} onChange={(event) => set('projectId', event.target.value)}><option value="">Без проекта</option>{projects.filter((item) => !item.archived_at).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <label><span>ИСПОЛНИТЕЛЬ</span><select value={draft.assigneeUserId} onChange={(event) => set('assigneeUserId', event.target.value)}><option value="">Без ответственного</option>{members.map((item) => <option key={item.id} value={item.id}>{item.first_name}</option>)}</select></label>
-        <label><span>СРОК</span><input type="date" value={draft.deadline} onChange={(event) => set('deadline', event.target.value)}/></label>
-        <label><span>ПРИОРИТЕТ</span><select value={draft.priority} onChange={(event) => set('priority', event.target.value as TaskPriority)}>{Object.entries(priorityDisplayName).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select></label>
+        <ActionRow label="Проект" value={projects.find((item) => item.id === draft.projectId)?.name ?? 'Без проекта'} icon={<Icon name="project"/>} onClick={() => setChoice('project')}/>
+        <ActionRow label="Исполнитель" value={members.find((item) => item.id === draft.assigneeUserId)?.first_name ?? 'Без ответственного'} icon={draft.assigneeUserId ? <Avatar initials={(members.find((item) => item.id === draft.assigneeUserId)?.first_name ?? '—').slice(0, 2).toLocaleUpperCase('ru-RU')} label={`Исполнитель: ${members.find((item) => item.id === draft.assigneeUserId)?.first_name ?? ''}`}/> : <Icon name="assignee"/>} onClick={() => setChoice('assignee')}/>
+        <label className="detail-date-row"><span className="action-row-icon"><Icon name="calendar"/></span><span className="action-row-copy"><span>Срок</span><input aria-label="Срок" type="date" value={draft.deadline} onChange={(event) => set('deadline', event.target.value)}/></span></label>
+        <ActionRow label="Приоритет" value={priorityDisplayName[draft.priority]} icon={<Icon name="priority"/>} onClick={() => setChoice('priority')}/>
       </div>
-      {draft.status === 'waiting' && <div className="blocker-fields"><label>Задача-блокер<select value={draft.blockerTaskId} onChange={(event) => set('blockerTaskId', event.target.value)}><option value="">Внешняя причина</option>{candidateTasks.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>{!draft.blockerTaskId && <label>Внешняя причина<input maxLength={1000} value={draft.waitReason} onChange={(event) => set('waitReason', event.target.value)}/></label>}<label>Дата проверки<input type="date" value={draft.waitCheckAt} onChange={(event) => set('waitCheckAt', event.target.value)}/></label></div>}
+      {draft.status === 'waiting' && <div className="blocker-fields"><ActionRow label="Задача-блокер" value={candidateTasks.find((item) => item.id === draft.blockerTaskId)?.title ?? 'Внешняя причина'} onClick={() => setChoice('blocker')}/>{!draft.blockerTaskId && <label>Внешняя причина<input maxLength={1000} value={draft.waitReason} onChange={(event) => set('waitReason', event.target.value)}/></label>}<label>Дата проверки<input type="date" value={draft.waitCheckAt} onChange={(event) => set('waitCheckAt', event.target.value)}/></label></div>}
       {task.recurrence_template_id && <label className="checkbox"><input type="checkbox" checked={draft.future} onChange={(event) => set('future', event.target.checked)}/> Изменить этот и будущие повторы</label>}
       {draft.assigneeUserId && draft.assigneeUserId !== task.assignee_user_id && <label className="checkbox"><input type="checkbox" checked={draft.notifyAssignee} onChange={(event) => set('notifyAssignee', event.target.checked)}/> Уведомить нового исполнителя</label>}
       </section>
@@ -134,10 +157,11 @@ export function TaskDetails({ task, collaboration, projects, members, candidateT
       <button className="detail-save" disabled={busy}>Сохранить изменения</button>
     </form>
 
-    <section className="detail-section detail-discussion" data-tone="discussion"><h2>Обсуждение</h2>{collaboration.comments.map((item) => <article key={item.id}><strong>{item.author_name}</strong><small>{new Date(item.created_at).toLocaleString('ru-RU')}</small><p>{item.body}</p></article>)}{collaboration.attachments.map((item) => <p className="detail-attachment" key={item.id}>{item.url ? <a href={item.url} target="_blank" rel="noreferrer">{item.url}</a> : item.file_name ?? 'Файл из Telegram'}</p>)}
+    <section className="detail-section detail-discussion" data-tone="discussion"><h2>Обсуждение</h2>{collaboration.comments.map((item) => <article key={item.id}><Avatar initials={item.author_name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toLocaleUpperCase('ru-RU')} label={item.author_name}/><div><small>{item.author_name} · {new Date(item.created_at).toLocaleString('ru-RU')}</small><p>{item.body}</p></div></article>)}{collaboration.attachments.map((item) => <p className="detail-attachment" key={item.id}>{item.url ? <a href={item.url} target="_blank" rel="noreferrer">{item.url}</a> : item.file_name ?? 'Файл из Telegram'}</p>)}
       {showAttachment && <div className="detail-add"><input aria-label="Ссылка" type="url" value={attachmentUrl} onChange={(event) => setAttachmentUrl(event.target.value)} placeholder="https://…"/><button disabled={busy || !attachmentUrl.trim()} onClick={() => void run(() => onUrlAttachment(attachmentUrl.trim()), () => { setAttachmentUrl(''); setShowAttachment(false); })}>Добавить</button></div>}
     </section>
     {error && <p className="detail-error" role="alert">{error}</p>}
-    <div className="comment-composer"><input aria-label="Комментарий" maxLength={4000} value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Написать комментарий…"/><button className="attach" aria-label="Добавить ссылку" onClick={() => setShowAttachment((value) => !value)}>⌕</button><button disabled={busy || !comment.trim()} aria-label="Отправить комментарий" onClick={() => void run(() => onComment(comment.trim()), () => setComment(''))}>↑</button></div>
+    <div className="comment-composer"><input aria-label="Комментарий" maxLength={4000} value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Написать комментарий…"/><button className="attach" aria-label="Добавить ссылку" onClick={() => setShowAttachment((value) => !value)}><Icon name="attach"/></button><button disabled={busy || !comment.trim()} aria-label="Отправить комментарий" onClick={() => void run(() => onComment(comment.trim()), () => setComment(''))}><Icon name="send"/></button></div>
+    {choiceSheet}
   </main>;
 }
