@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type Key
 import { useTelegramEnvironment } from './environment';
 import { isSettingsNavigation, type NavigationState } from './navigation';
 
-export type IconName = 'tasks' | 'plus' | 'settings' | 'close' | 'chevron' | 'alert' | 'sun' | 'clock' | 'noDeadline' | 'project' | 'assignee' | 'calendar' | 'board' | 'sliders' | 'back' | 'more' | 'attach' | 'send' | 'priority';
+export type IconName = 'tasks' | 'plus' | 'settings' | 'close' | 'chevron' | 'alert' | 'sun' | 'clock' | 'noDeadline' | 'project' | 'assignee' | 'calendar' | 'board' | 'sliders' | 'back' | 'more' | 'attach' | 'send' | 'priority' | 'workspace' | 'automation';
 
 export function Icon({ name }: { name: IconName }) {
   const paths = {
@@ -24,7 +24,9 @@ export function Icon({ name }: { name: IconName }) {
     more: <><circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/></>,
     attach: <path d="m20.5 11.5-8.4 8.4a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 1 1-2.8-2.8l8.5-8.5"/>,
     send: <><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></>,
-    priority: <><path d="M5 21V4"/><path d="M5 5h11l-2 4 2 4H5"/></>
+    priority: <><path d="M5 21V4"/><path d="M5 5h11l-2 4 2 4H5"/></>,
+    workspace: <><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M9 10h12"/></>,
+    automation: <><path d="M20 7h-5V2M4 17h5v5"/><path d="M18.4 18.4A9 9 0 0 1 4.6 15M5.6 5.6A9 9 0 0 1 19.4 9"/></>
   };
   return <svg className="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
@@ -110,6 +112,15 @@ export function ActionRow({ label, value, icon, ...props }: { label: string; val
   return <button className="action-row" type="button" {...props}>{icon && <span className="action-row-icon">{icon}</span>}<span className="action-row-copy"><span>{label}</span><strong>{value}</strong></span><Icon name="chevron"/></button>;
 }
 
+export function ChoiceAction({ label, value, options, onChange, name, icon, disabled = false }: { label: string; value: string; options: { value: string; label: string }[]; onChange: (value: string) => void; name?: string; icon?: ReactNode; disabled?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find((option) => option.value === value)?.label ?? options[0]?.label ?? 'Не выбрано';
+  return <>
+    {name && <input type="hidden" name={name} value={value}/>}<ActionRow label={label} value={selected} icon={icon} disabled={disabled} onClick={() => setOpen(true)}/>
+    {open && <ChoiceSheet className="task-sheet settings-choice-sheet" title={label} onClose={() => setOpen(false)}><div className="choice-list" role="radiogroup">{options.map((option) => <ChoiceRow key={option.value} label={option.label} selected={option.value === value} onClick={() => { onChange(option.value); setOpen(false); }}/>)}</div><button className="sheet-close secondary" onClick={() => setOpen(false)}>Закрыть</button></ChoiceSheet>}
+  </>;
+}
+
 export function ChoiceRow({ label, detail, selected, kind = 'radio', onKeyDown, ...props }: { label: string; detail?: string; selected: boolean; kind?: 'radio' | 'check' } & ButtonHTMLAttributes<HTMLButtonElement>) {
   return <button className={`choice-row${selected ? ' selected' : ''}`} type="button" role={kind === 'radio' ? 'radio' : 'checkbox'} aria-checked={selected} tabIndex={kind === 'radio' && !selected ? -1 : undefined} onKeyDown={(event) => {
     onKeyDown?.(event);
@@ -144,7 +155,7 @@ export function TasksScreen({ children, boardName, onSelectBoard }: { children: 
 }
 
 export function SettingsScreen({ children, title = 'Настройки', subtitle }: { children: ReactNode; title?: string; subtitle?: string }) {
-  return <><header className="settings-header"><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</header>{children}</>;
+  return <section className="settings-screen"><header className="settings-header"><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</header>{children}</section>;
 }
 
 export function CreateScreen({ children, boardName, onClose, onSelectBoard }: { children: ReactNode; boardName: string; onClose: () => void; onSelectBoard: () => void }) {
