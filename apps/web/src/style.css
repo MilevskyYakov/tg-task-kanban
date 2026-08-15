@@ -128,24 +128,33 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .kanban-column h2 { font-family: Newsreader, Georgia, serif; font-size: 1.3125rem; margin: 0 0 12px; }
 .kanban-column h2 small { color: var(--text-muted); }
 .kanban-tasks { display: grid; gap: 12px; }
-.kanban-grouping { display: flex; align-items: center; min-height: 44px; font-weight: 500; }
-.mobile-kanban { display: grid; gap: 18px; min-width: 0; }
+.kanban-grouping { display: flex; align-items: center; min-height: 44px; font-size: 1.125rem; font-weight: 700; }
+.mobile-kanban { display: grid; gap: 26px; min-width: 0; }
 .status-tabs { display: flex; max-width: 100%; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }
 .status-tabs::-webkit-scrollbar { display: none; }
-.status-tabs button { position: relative; flex: 0 0 auto; min-width: auto; padding: 8px 12px 12px; border-radius: 0; background: transparent; color: var(--text-muted); font-size: .875rem; }
-.status-tabs button.active { color: var(--text); }
-.status-tabs button.active::after { content: ''; position: absolute; right: 12px; bottom: 0; left: 12px; height: 3px; border-radius: 3px; background: var(--primary); }
+.status-tabs button { position: relative; flex: 0 0 auto; min-width: auto; padding: 13px 10px 15px; border-radius: 0; background: transparent; color: #667085; font-size: .9375rem; }
+.status-tabs button.active { border-radius: 12px 12px 0 0; background: var(--primary-soft); color: var(--primary); }
+.status-tabs button.active::after { content: ''; position: absolute; right: 10px; bottom: 0; left: 10px; height: 3px; border-radius: 3px; background: var(--primary); }
 .status-tabs small { color: inherit; }
-.active-kanban-column { display: grid; gap: 14px; width: 100%; min-width: 0; margin: 0; touch-action: pan-y; }
-.kanban-column-header { display: flex; align-items: end; justify-content: space-between; gap: 12px; padding: 14px; border-radius: var(--radius); background: var(--primary-soft); }
-.kanban-column-header p { margin: 0 0 5px; }
-.kanban-column-header h2 { margin: 0; font-family: Newsreader, Georgia, serif; font-size: 1.75rem; font-weight: 500; }
-.kanban-column-header h2 small, .kanban-column-header > small { color: var(--text-muted); font: 500 .6875rem/1.3 'IBM Plex Mono', ui-monospace, monospace; }
-.kanban-column-header > small { max-width: 9rem; text-align: right; }
-.kanban-task-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; min-width: 0; padding: 16px 14px; border: 1px solid var(--border); border-left: 4px solid var(--primary); border-radius: var(--radius-sm); background: var(--surface-raised); }
-.kanban-task-row .task-summary > strong { display: block; font-size: 1.0625rem; font-weight: 520; line-height: 1.3; overflow-wrap: anywhere; }
-.kanban-status-control { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; color: var(--text-muted); font-size: .75rem; }
-.kanban-status-control select { width: 100%; min-height: 44px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-soft); color: var(--text); padding: 9px 10px; }
+.active-kanban-column { display: grid; gap: 18px; width: 100%; min-width: 0; margin: 0; touch-action: pan-y; }
+.kanban-column-header { display: flex; align-items: center; gap: 14px; padding: 0 4px; }
+.kanban-column-glyph { display: grid; place-items: center; width: 42px; height: 42px; flex: 0 0 42px; border-radius: 10px; background: #3f7fe8; color: white; box-shadow: 5px -3px 0 #cfe0fb; }
+.kanban-column-header p { margin: 2px 0 0; color: #7a8598; font-size: .8125rem; }
+.kanban-column-header h2 { margin: 0; font-size: 1.75rem; font-weight: 700; }
+.kanban-column-header h2 small { display: inline-grid; place-items: center; min-width: 34px; min-height: 34px; margin-left: 5px; border-radius: 50%; background: var(--primary-soft); color: var(--primary); font: 700 .8125rem/1 'IBM Plex Mono', ui-monospace, monospace; vertical-align: middle; }
+.kanban-task-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px 12px; min-width: 0; padding: 16px 16px 14px 44px; border: 1px solid #dce3ec; border-radius: 12px; background: var(--surface-raised); box-shadow: 0 8px 22px rgb(23 32 51 / 5%); }
+.kanban-task-row::before { content: ''; position: absolute; top: 12px; bottom: auto; left: 0; width: 4px; height: 42px; border-radius: 0 3px 3px 0; background: var(--primary); }
+.kanban-task-row.status-waiting::before { background: var(--coral); }
+.kanban-task-row.status-done::before { background: var(--green); }
+.kanban-task-row .task-summary > strong { display: block; font-size: 1.125rem; font-weight: 620; line-height: 1.25; overflow-wrap: anywhere; }
+.kanban-status-action { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(0, 1fr) 20px; align-items: center; gap: 8px; min-height: 44px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--surface-soft); color: var(--text); text-align: left; }
+.kanban-status-action span { color: var(--text-muted); font-size: .75rem; font-weight: 500; }
+.kanban-status-action strong { font-size: .875rem; }
+.kanban-status-action .icon { width: 18px; height: 18px; transform: rotate(-90deg); }
+.kanban-position { display: flex; align-items: center; gap: 16px; margin: 8px 0 0; font: 500 .75rem/1 'IBM Plex Mono', ui-monospace, monospace; }
+.kanban-position > i { width: 72px; height: 3px; background: #e1e7ef; }
+.kanban-position > i > i { display: block; height: 100%; background: var(--primary); }
+.kanban-status-sheet .sheet-close { width: 100%; margin-top: 20px; }
 .task strong { font-size: 1rem; font-weight: 520; margin: 4px 0; }
 .task small { color: var(--text-muted); margin-top: 5px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -424,6 +433,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .filter-count { position: absolute; top: 2px; right: 2px; min-width: 20px; min-height: 20px; }
   .grouping-tabs { gap: 14px; }
   .grouping-tabs button { font-size: .875rem; }
+  .mobile-kanban { gap: 24px; }
+  .status-tabs { margin-inline: -12px; padding-inline: 6px; }
+  .status-tabs button { padding-inline: 10px; }
+  .kanban-column-glyph { display: none; }
+  .kanban-column-header { padding: 0; }
+  .kanban-column-header h2 { font-family: Newsreader, Georgia, serif; font-size: 2.25rem; font-weight: 500; }
+  .kanban-column-header p { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+  .kanban-task-row { min-height: 190px; padding: 18px 16px 16px 46px; }
+  .kanban-task-row .task-summary > strong { font-size: 1.35rem; font-weight: 700; }
   .main-task-row { padding-inline: 4px; }
   .task-sheet { padding-inline: 24px; }
   .settings-card { grid-template-columns: 44px minmax(0, 1fr) 18px; gap: 10px; padding-inline: 12px; }

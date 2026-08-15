@@ -57,6 +57,7 @@ function App() {
   const [showFilterSheet, setShowFilterSheet] = useState(false);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [filterChoice, setFilterChoice] = useState<FilterChoice>();
+  const [kanbanStatusTask, setKanbanStatusTask] = useState<Task>();
   const [draggedTask, setDraggedTask] = useState<string>();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [recurrences, setRecurrences] = useState<Recurrence[]>([]);
@@ -383,10 +384,10 @@ function App() {
     : groupTasksByProject(filteredTasks).map((group) => <section className="task-section project-section" key={group.id ?? 'none'}><SectionHeader count={group.tasks.length} tone="upcoming">{group.name}</SectionHeader>{group.tasks.map(mainTaskRow)}</section>)
   }</div>;
   const kanbanTasks = filterTasks(tasks, { ...filters, status: kanbanStatus }, userId);
-  const kanbanTaskRow = (task: Task) => <article className="kanban-task-row" key={task.id}>
-    <div className="task-summary"><strong>{task.title}</strong><div className="task-meta"><span>{task.project_name ?? task.board_name ?? 'Без проекта'}</span>{task.deadline && <span>{new Date(task.deadline).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</span>}{task.priority === 'urgent' && <Badge tone="urgent">Срочно</Badge>}</div></div>
+  const kanbanTaskRow = (task: Task) => <article className={`kanban-task-row status-${task.status}`} key={task.id}>
+    <button className="task-summary" onClick={() => void openCollaboration(task)}><strong>{task.title}</strong><div className="task-meta"><span>{task.project_name ?? task.board_name ?? 'Без проекта'}</span>{task.deadline && <span className={task.overdue ? 'deadline-overdue' : ''}>{task.overdue ? 'Дедлайн прошёл' : new Date(task.deadline).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</span>}{task.priority === 'urgent' && <Badge tone="urgent">Срочно</Badge>}</div></button>
     {task.assignee_name && <Avatar initials={initials(task.assignee_name)} label={`Исполнитель: ${task.assignee_name}`}/>}
-    <label className="kanban-status-control">Статус<select aria-label={`Статус задачи ${task.title}`} value={task.status} onChange={(event) => void move(task, event.target.value as TaskStatus)}>{statuses.map((status) => <option key={status} value={status}>{statusDisplayName[status]}</option>)}</select></label>
+    <button className="kanban-status-action" onClick={() => setKanbanStatusTask(task)}><span>Статус</span><strong>{statusDisplayName[task.status]}</strong><Icon name="chevron"/></button>
   </article>;
   const mainKanban = <div className="mobile-kanban">
     <div className="status-tabs" aria-label="Статусы задач">{statuses.map((status) => <button aria-pressed={kanbanStatus === status} className={kanbanStatus === status ? 'active' : ''} key={status} onClick={() => setKanbanStatus(status)}>{statusDisplayName[status]} <small>{filterTasks(tasks, { ...filters, status }, userId).length}</small></button>)}</div>
@@ -394,11 +395,13 @@ function App() {
       onPointerDown={(event) => { if (event.pointerType === 'touch') swipeStart.current = { x: event.clientX, y: event.clientY }; }}
       onPointerUp={(event) => { if (!swipeStart.current) return; setKanbanStatus(resolveKanbanSwipe(kanbanStatus, swipeStart.current.x, swipeStart.current.y, event.clientX, event.clientY)); swipeStart.current = null; }}
       onPointerCancel={() => { swipeStart.current = null; }}>
-      <header className="kanban-column-header"><div><p className="eyebrow">ПО СТАТУСУ</p><h2>{statusDisplayName[kanbanStatus]} <small>{kanbanTasks.length}</small></h2></div><small>Свайпните для смены статуса</small></header>
+      <header className="kanban-column-header"><span className="kanban-column-glyph" aria-hidden="true"><Icon name="tasks"/></span><div><h2>{statusDisplayName[kanbanStatus]} <small>{kanbanTasks.length}</small></h2><p>{window.innerWidth <= 350 ? 'Одна активная колонка' : 'Свайпните для смены статуса'}</p></div></header>
       <div className="kanban-tasks">{kanbanTasks.map(kanbanTaskRow)}</div>
       {!kanbanTasks.length && <p className="task-state">Задач в этом статусе нет.</p>}
+      <p className="kanban-position"><span>{String(statuses.indexOf(kanbanStatus) + 1).padStart(2, '0')} / {String(statuses.length).padStart(2, '0')}</span><i><i style={{ width: `${100 / statuses.length}%` }}/></i></p>
     </section>
   </div>;
+  const kanbanStatusSheet = kanbanStatusTask && <Sheet className="task-sheet kanban-status-sheet" title="Статус" onClose={() => setKanbanStatusTask(undefined)}><div className="choice-list" role="radiogroup">{statuses.map((status) => <ChoiceRow key={status} label={statusDisplayName[status]} selected={kanbanStatusTask.status === status} onClick={() => { const task = kanbanStatusTask; setKanbanStatusTask(undefined); void move(task, status); }}/>)}</div><button className="sheet-close secondary" onClick={() => setKanbanStatusTask(undefined)}>Закрыть</button></Sheet>;
   const kanban = <div className="kanban" aria-label="Канбан">{statuses.map((status) => <section className="kanban-column" data-status={status} key={status}
     onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const task = tasks.find((item) => item.id === event.dataTransfer.getData('text/plain')); if (task) void move(task, status); }}>
     <h2>{statusDisplayName[status]} <small>{filteredTasks.filter((task) => task.status === status).length}</small></h2>
@@ -416,16 +419,15 @@ function App() {
       <label className="checkbox"><input type="checkbox" checked={filters.unassigned} onChange={(event) => setFilter('unassigned', event.target.checked)}/> Без ответственного</label>
       <button className="secondary" onClick={() => setFilters(defaultFilters)}>Сбросить</button>
     </div></details></>;
-  const taskToolbar = <>
-    <div className="list-controls">
+  const viewControls = <div className="list-controls">
       {taskView === 'list' ? <div className="grouping-tabs" aria-label="Группировка задач"><button aria-pressed={grouping === 'deadline'} className={grouping === 'deadline' ? 'active' : ''} onClick={() => setGrouping('deadline')}>По срокам</button><button aria-pressed={grouping === 'project'} className={grouping === 'project' ? 'active' : ''} onClick={() => setGrouping('project')}>По проектам</button></div> : <strong className="kanban-grouping">По статусу</strong>}
       <div className="view-switch" aria-label="Вид задач"><button className={taskView === 'list' ? 'active' : ''} aria-label="Список" aria-pressed={taskView === 'list'} onClick={() => setTaskView('list')}><svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h3v3H5zM11 6h8M5 11h3v3H5zM11 11h8M5 16h3v3H5zM11 16h8"/></svg></button><button className={taskView === 'kanban' ? 'active' : ''} aria-label="Канбан" aria-pressed={taskView === 'kanban'} onClick={() => setTaskView('kanban')}><svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h4v14H5zM10 5h4v14h-4zM15 5h4v14h-4z"/></svg></button></div>
-    </div>
-    <div className="task-toolbar">
+    </div>;
+  const searchControls = <div className="task-toolbar">
       <input className="search" type="search" value={filters.search} onChange={(event) => setFilter('search', event.target.value)} placeholder="Поиск задач" aria-label="Поиск задач"/>
       <button className="filter-trigger" onClick={() => { setShowAdvancedFilters(false); setFilterChoice(undefined); setShowFilterSheet(true); }}><svg className="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M7 14v6"/></svg><span className="filter-label">Фильтры</span>{filterCount > 0 && <span className="filter-count">{filterCount}</span>}</button>
-    </div>
-  </>;
+    </div>;
+  const taskToolbar = taskView === 'kanban' ? <>{searchControls}{viewControls}</> : <>{viewControls}{searchControls}</>;
   const boardSheet = showBoardSheet && <Sheet className="task-sheet board-sheet" title="Выберите доску" onClose={() => setShowBoardSheet(false)}>
     {boards.length > 5 && <input className="sheet-search" type="search" value={boardSearch} onChange={(event) => setBoardSearch(event.target.value)} placeholder="Найти доску" aria-label="Найти доску"/>}
     {!boardSearch && recentBoards.length > 0 && <><h3 className="sheet-label">Недавние</h3><div className="sheet-options">{recentBoards.map((item) => <button key={`recent-${item.id}`} className={item.id === selectedTaskBoardId ? 'selected' : ''} onClick={() => chooseTaskBoard(item.id)}><span>{item.name}</span><small>{item.type === 'chat' ? 'Чат-доска' : 'Личная доска'}</small></button>)}</div></>}
@@ -562,7 +564,7 @@ function App() {
   if (navigation.screen === 'settings-workspace') return <AppShell message={message} navigation={navigation} navigate={navigate}>{workspaceSettings}</AppShell>;
   if (navigation.screen === 'settings-automation') return <AppShell message={message} navigation={navigation} navigate={navigate}>{automationSettings}</AppShell>;
   if (navigation.screen === 'settings-account') return <AppShell message={message} navigation={navigation} navigate={navigate}>{accountSettings}</AppShell>;
-  if (navigation.screen === 'tasks') return <AppShell message={message} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>{taskToolbar}{taskLoadState === 'loading' ? <Skeleton label="Загрузка задач"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : taskView === 'kanban' ? mainKanban : groupedTaskList}{taskLoadState === 'ready' && taskView === 'list' && !filteredTasks.length && <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>}{boardOverrideId && <p className="context-note">Доска открыта из Telegram-чата и не заменяет ваш обычный выбор.</p>}{boardSheet}{filterSheet}{advancedFilterSheet}{filterChoiceSheet}</TasksScreen></AppShell>;
+  if (navigation.screen === 'tasks') return <AppShell message={message} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>{taskToolbar}{taskLoadState === 'loading' ? <Skeleton label="Загрузка задач"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : taskView === 'kanban' ? mainKanban : groupedTaskList}{taskLoadState === 'ready' && taskView === 'list' && !filteredTasks.length && <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>}{boardOverrideId && <p className="context-note">Доска открыта из Telegram-чата и не заменяет ваш обычный выбор.</p>}{boardSheet}{filterSheet}{advancedFilterSheet}{filterChoiceSheet}{kanbanStatusSheet}</TasksScreen></AppShell>;
   if (navigation.screen === 'create') return <AppShell message={message} navigation={navigation} navigate={navigate} hideNavigation><CreateScreen boardName={boards.find((item) => item.id === createBoardId)?.name ?? 'Все доски'} onClose={() => navigate(createOrigin)} onSelectBoard={() => setCreateChoice('board')}>
     <form className="create-screen-form" onSubmit={(event) => { event.preventDefault(); void create(); }}>
       <label className="create-title"><span>Что нужно сделать?</span><textarea autoFocus value={title} onChange={(event) => setTitle(event.target.value)} maxLength={200} rows={2} required placeholder="Название задачи"/></label>
