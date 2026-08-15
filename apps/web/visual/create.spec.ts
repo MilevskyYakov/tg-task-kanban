@@ -45,7 +45,9 @@ async function openFilledCreate(page: Page, width: number) {
   await page.getByRole('textbox', { name: 'Что нужно сделать?' }).fill('Подготовить UX-спецификацию');
   await expect(page.getByRole('button', { name: /Проект.*Без проекта/ })).toBeEnabled();
   await page.getByRole('button', { name: /Проект.*Без проекта/ }).click();
-  await page.getByRole('radio', { name: 'Task Kanban' }).click();
+  await expect(page.getByRole('radio', { name: 'Без проекта' })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('button', { name: /Проект.*Task Kanban/ })).toBeVisible();
   await page.getByRole('button', { name: /Исполнитель.*Без ответственного/ }).click();
   await page.getByRole('radio', { name: 'Данил' }).click();
   await page.getByLabel('Дата срока').fill('2026-08-15');

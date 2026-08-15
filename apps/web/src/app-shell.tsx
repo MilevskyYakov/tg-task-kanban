@@ -69,6 +69,15 @@ export function resolveFocusIndex(current: number, count: number, shift: boolean
   return null;
 }
 
+export function resolveChoiceIndex(current: number, count: number, key: string): number | null {
+  if (count === 0) return null;
+  if (key === 'Home') return 0;
+  if (key === 'End') return count - 1;
+  if (key === 'ArrowDown' || key === 'ArrowRight') return (current + 1) % count;
+  if (key === 'ArrowUp' || key === 'ArrowLeft') return (current - 1 + count) % count;
+  return null;
+}
+
 export function ChoiceSheet({ title, children, onClose, className = '' }: { title: string; children: ReactNode; onClose: () => void; className?: string }) {
   const sheet = useRef<HTMLElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
@@ -95,8 +104,15 @@ export function ActionRow({ label, value, icon, ...props }: { label: string; val
   return <button className="action-row" type="button" {...props}>{icon && <span className="action-row-icon">{icon}</span>}<span className="action-row-copy"><span>{label}</span><strong>{value}</strong></span><Icon name="chevron"/></button>;
 }
 
-export function ChoiceRow({ label, detail, selected, kind = 'radio', ...props }: { label: string; detail?: string; selected: boolean; kind?: 'radio' | 'check' } & ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button className={`choice-row${selected ? ' selected' : ''}`} type="button" role={kind === 'radio' ? 'radio' : 'checkbox'} aria-checked={selected} {...props}><span className="choice-marker" aria-hidden="true"/><span><strong>{label}</strong>{detail && <small>{detail}</small>}</span></button>;
+export function ChoiceRow({ label, detail, selected, kind = 'radio', onKeyDown, ...props }: { label: string; detail?: string; selected: boolean; kind?: 'radio' | 'check' } & ButtonHTMLAttributes<HTMLButtonElement>) {
+  return <button className={`choice-row${selected ? ' selected' : ''}`} type="button" role={kind === 'radio' ? 'radio' : 'checkbox'} aria-checked={selected} tabIndex={kind === 'radio' && !selected ? -1 : undefined} onKeyDown={(event) => {
+    onKeyDown?.(event);
+    if (event.defaultPrevented || kind !== 'radio') return;
+    const choices = [...(event.currentTarget.closest('[role=radiogroup]')?.querySelectorAll<HTMLButtonElement>('[role=radio]:not([disabled])') ?? [])];
+    const next = resolveChoiceIndex(choices.indexOf(event.currentTarget), choices.length, event.key);
+    if (next === null) return;
+    event.preventDefault(); choices[next]?.focus(); choices[next]?.click();
+  }} {...props}><span className="choice-marker" aria-hidden="true"/><span><strong>{label}</strong>{detail && <small>{detail}</small>}</span></button>;
 }
 
 export function Disclosure({ label, children, defaultOpen = false, icon }: { label: string; children: ReactNode; defaultOpen?: boolean; icon?: ReactNode }) {
