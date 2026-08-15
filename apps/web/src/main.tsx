@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 import { api, ApiError, json } from './api';
-import { AppShell, Avatar, Badge, CreateScreen, EnvironmentStatus, FieldRow, Icon, SectionHeader, SettingsScreen, Sheet, Skeleton, TasksScreen, type IconName } from './app-shell';
+import { ActionRow, AppShell, Avatar, Badge, ChoiceRow, CreateScreen, EnvironmentStatus, FieldRow, Icon, SectionHeader, SettingsScreen, Sheet, Skeleton, TasksScreen, type IconName } from './app-shell';
 import type { Board, Collaboration, Member, Project, Recurrence, Schedule } from './domain';
 import { initialNavigation, settingsSections, type NavigationState } from './navigation';
 import { TaskDetails } from './task-details';
@@ -10,6 +10,7 @@ import { activeFilterCount, dateInputToIso, dateTimeInputsToIso, defaultFilters,
 import { FoundationFixture } from './visual-fixture';
 
 type TaskView = 'list' | 'kanban';
+type FilterChoice = 'project' | 'assignee' | 'status' | 'priority' | 'deadline';
 const statuses = Object.keys(statusDisplayName) as TaskStatus[];
 const storedTaskView = restoreTaskViewState(localStorage.getItem('tasks.viewState'));
 
@@ -53,6 +54,8 @@ function App() {
   const [boardSearch, setBoardSearch] = useState('');
   const [showBoardSheet, setShowBoardSheet] = useState(false);
   const [showFilterSheet, setShowFilterSheet] = useState(false);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [filterChoice, setFilterChoice] = useState<FilterChoice>();
   const [draggedTask, setDraggedTask] = useState<string>();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [recurrences, setRecurrences] = useState<Recurrence[]>([]);
@@ -361,7 +364,7 @@ function App() {
         <span>{task.project_name ?? task.board_name ?? 'Без проекта'}</span>
         {task.deadline && <span className={task.overdue ? 'deadline-overdue' : ''}>{task.overdue ? 'Дедлайн прошёл' : new Date(task.deadline).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</span>}
         {task.priority === 'urgent' && <Badge tone="urgent">Срочно</Badge>}
-        {task.status === 'waiting' && <Badge tone="blocker">Блокер</Badge>}
+        {task.status === 'waiting' && !task.wait_reason && <Badge tone="blocker">Блокер</Badge>}
         {Boolean(task.checklist_total) && <span>{task.checklist_completed}/{task.checklist_total}</span>}
       </div>
       {task.status === 'waiting' && task.wait_reason && <small className="blocker-reason">{task.wait_reason}</small>}
@@ -418,41 +421,56 @@ function App() {
     </div>
     <div className="task-toolbar">
       <input className="search" type="search" value={filters.search} onChange={(event) => setFilter('search', event.target.value)} placeholder="Поиск задач" aria-label="Поиск задач"/>
-      <button className="filter-trigger" onClick={() => setShowFilterSheet(true)}><svg className="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M7 14v6"/></svg><span className="filter-label">Фильтры</span>{filterCount > 0 && <span className="filter-count">{filterCount}</span>}</button>
+      <button className="filter-trigger" onClick={() => { setShowAdvancedFilters(false); setFilterChoice(undefined); setShowFilterSheet(true); }}><svg className="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M7 14v6"/></svg><span className="filter-label">Фильтры</span>{filterCount > 0 && <span className="filter-count">{filterCount}</span>}</button>
     </div>
-    {filterCount > 0 && <div className="filter-chips" aria-label="Активные фильтры">
-      {filters.scope === 'all' && <button onClick={() => setFilter('scope', 'mine')}>Все задачи ×</button>}
-      {filters.project && <button onClick={() => setFilter('project', '')}>{projects.find((item) => item.id === filters.project)?.name ?? 'Проект'} ×</button>}
-      {filters.assignee && <button onClick={() => setFilter('assignee', '')}>{members.find((item) => item.id === filters.assignee)?.first_name ?? 'Исполнитель'} ×</button>}
-      {taskView === 'list' && filters.status && <button onClick={() => setFilter('status', '')}>{statusDisplayName[filters.status]} ×</button>}
-      {filters.priority && <button onClick={() => setFilter('priority', '')}>{filters.priority === 'urgent' ? 'Срочные' : 'Обычные'} ×</button>}
-      {filters.deadline && <button onClick={() => setFilter('deadline', '')}>Срок ×</button>}
-      {filters.unassigned && <button onClick={() => setFilter('unassigned', false)}>Без ответственного ×</button>}
-      <button className="reset-chip" onClick={() => setFilters(defaultFilters)}>Сбросить</button>
-    </div>}
   </>;
-  const boardSheet = showBoardSheet && <Sheet title="Доски" onClose={() => setShowBoardSheet(false)}>
-    <input className="sheet-search" type="search" value={boardSearch} onChange={(event) => setBoardSearch(event.target.value)} placeholder="Найти доску" aria-label="Найти доску"/>
+  const boardSheet = showBoardSheet && <Sheet className="task-sheet board-sheet" title="Выберите доску" onClose={() => setShowBoardSheet(false)}>
+    {boards.length > 5 && <input className="sheet-search" type="search" value={boardSearch} onChange={(event) => setBoardSearch(event.target.value)} placeholder="Найти доску" aria-label="Найти доску"/>}
     {!boardSearch && recentBoards.length > 0 && <><h3 className="sheet-label">Недавние</h3><div className="sheet-options">{recentBoards.map((item) => <button key={`recent-${item.id}`} className={item.id === selectedTaskBoardId ? 'selected' : ''} onClick={() => chooseTaskBoard(item.id)}><span>{item.name}</span><small>{item.type === 'chat' ? 'Чат-доска' : 'Личная доска'}</small></button>)}</div></>}
-    <h3 className="sheet-label">Все доски</h3>
-    <div className="sheet-options">
-      {!boardSearch && <button className={!selectedTaskBoardId ? 'selected' : ''} onClick={() => chooseTaskBoard('')}><span>Все доски</span><small>Назначенные вам задачи</small></button>}
-      {matchingBoards.map((item) => <button key={item.id} className={item.id === selectedTaskBoardId ? 'selected' : ''} onClick={() => chooseTaskBoard(item.id)}><span>{item.name}</span><small>{item.type === 'chat' ? 'Чат-доска' : 'Личная доска'}</small></button>)}
+    <div className="choice-list" role="radiogroup" aria-label="Доски">
+      {!boardSearch && <ChoiceRow label="Все доски" detail="Назначенные вам задачи" selected={!selectedTaskBoardId} onClick={() => chooseTaskBoard('')}/>}
+      {matchingBoards.map((item) => <ChoiceRow key={item.id} label={item.name} detail={item.type === 'chat' ? 'Чат-доска' : 'Личная доска'} selected={item.id === selectedTaskBoardId} onClick={() => chooseTaskBoard(item.id)}/>)}
     </div>
-    <button className="manage-boards secondary" onClick={() => { setShowBoardSheet(false); navigate({ screen: 'settings' }); }}>Управление досками</button>
+    <button className="sheet-close secondary" onClick={() => setShowBoardSheet(false)}>Закрыть</button>
   </Sheet>;
-  const filterSheet = showFilterSheet && <Sheet title="Фильтры" onClose={() => setShowFilterSheet(false)}>
-    <div className="filter-sheet">
-      {board && <FieldRow label="Задачи"><select value={filters.scope} onChange={(event) => setFilter('scope', event.target.value as TaskFilters['scope'])}><option value="mine">Мои</option><option value="all">Все</option></select></FieldRow>}
-      {board && <FieldRow label="Проект"><select value={filters.project} onChange={(event) => setFilter('project', event.target.value)}><option value="">Все проекты</option>{projects.filter((item) => !item.archived_at).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></FieldRow>}
-      {board && <FieldRow label="Исполнитель"><select value={filters.assignee} onChange={(event) => setFilter('assignee', event.target.value)}><option value="">Все исполнители</option>{members.map((member) => <option key={member.id} value={member.id}>{member.first_name}</option>)}</select></FieldRow>}
-      {taskView === 'list' && <FieldRow label="Статус"><select value={filters.status} onChange={(event) => setFilter('status', event.target.value as TaskFilters['status'])}><option value="">Без завершённых</option>{statuses.map((status) => <option key={status} value={status}>{statusDisplayName[status]}</option>)}</select></FieldRow>}
-      <FieldRow label="Приоритет"><select value={filters.priority} onChange={(event) => setFilter('priority', event.target.value as TaskFilters['priority'])}><option value="">Любой</option><option value="normal">Обычный</option><option value="urgent">Срочный</option></select></FieldRow>
-      <FieldRow label="Дедлайн"><select value={filters.deadline} onChange={(event) => setFilter('deadline', event.target.value as TaskFilters['deadline'])}><option value="">Любой</option><option value="overdue">Просрочено</option><option value="today">Сегодня</option><option value="week">7 дней</option><option value="none">Без дедлайна</option></select></FieldRow>
-      <label className="checkbox"><input type="checkbox" checked={filters.unassigned} onChange={(event) => setFilter('unassigned', event.target.checked)}/> Без ответственного</label>
-      <div className="sheet-actions"><button className="secondary" onClick={() => setFilters(defaultFilters)}>Сбросить</button><button onClick={() => setShowFilterSheet(false)}>Показать задачи</button></div>
+  const filterSheet = showFilterSheet && !showAdvancedFilters && !filterChoice && <Sheet className="task-sheet filter-choice-sheet" title="Фильтры" onClose={() => setShowFilterSheet(false)}>
+    <div className="quick-filters">
+      <ChoiceRow kind="check" label="Только мои" selected={filters.scope === 'mine'} onClick={() => setFilter('scope', filters.scope === 'mine' ? 'all' : 'mine')}/>
+      <ChoiceRow kind="check" label="Срочные" selected={filters.priority === 'urgent'} onClick={() => setFilter('priority', filters.priority === 'urgent' ? '' : 'urgent')}/>
+      {taskView === 'list' && <ChoiceRow kind="check" label="С блокером" selected={filters.status === 'waiting'} onClick={() => setFilter('status', filters.status === 'waiting' ? '' : 'waiting')}/>}
     </div>
+    <div className="filter-links"><button onClick={() => setShowAdvancedFilters(true)}>Другие фильтры</button><button onClick={() => setFilters(defaultFilters)}>Сбросить</button></div>
+    <button className="filter-apply" onClick={() => setShowFilterSheet(false)}>Показать {filteredTasks.length} задач</button>
   </Sheet>;
+  const advancedFilterSheet = showFilterSheet && showAdvancedFilters && !filterChoice && <Sheet className="task-sheet advanced-filter-sheet" title="Другие фильтры" onClose={() => setShowAdvancedFilters(false)}>
+    <div>
+      {board && <ActionRow label="Проект" value={projects.find((item) => item.id === filters.project)?.name ?? 'Все проекты'} onClick={() => setFilterChoice('project')}/>}
+      {board && <ActionRow label="Исполнитель" value={members.find((item) => item.id === filters.assignee)?.first_name ?? 'Все исполнители'} onClick={() => setFilterChoice('assignee')}/>}
+      {taskView === 'list' && <ActionRow label="Статус" value={filters.status ? statusDisplayName[filters.status] : 'Без завершённых'} onClick={() => setFilterChoice('status')}/>}
+      <ActionRow label="Приоритет" value={filters.priority === 'urgent' ? 'Срочный' : filters.priority === 'normal' ? 'Обычный' : 'Любой'} onClick={() => setFilterChoice('priority')}/>
+      <ActionRow label="Дедлайн" value={{ overdue: 'Просрочено', today: 'Сегодня', week: '7 дней', none: 'Без дедлайна', '': 'Любой' }[filters.deadline]} onClick={() => setFilterChoice('deadline')}/>
+      <ChoiceRow kind="check" label="Без ответственного" selected={filters.unassigned} onClick={() => setFilter('unassigned', !filters.unassigned)}/>
+    </div>
+    <button className="filter-apply" onClick={() => { setShowAdvancedFilters(false); setShowFilterSheet(false); }}>Показать {filteredTasks.length} задач</button>
+  </Sheet>;
+  const filterChoiceDefinitions = {
+    project: { title: 'Проект', current: filters.project, options: [{ value: '', label: 'Все проекты' }, ...projects.filter((item) => !item.archived_at).map((item) => ({ value: item.id, label: item.name }))] },
+    assignee: { title: 'Исполнитель', current: filters.assignee, options: [{ value: '', label: 'Все исполнители' }, ...members.map((member) => ({ value: member.id, label: member.first_name }))] },
+    status: { title: 'Статус', current: filters.status, options: [{ value: '', label: 'Без завершённых' }, ...statuses.map((status) => ({ value: status, label: statusDisplayName[status] }))] },
+    priority: { title: 'Приоритет', current: filters.priority, options: [{ value: '', label: 'Любой' }, { value: 'normal', label: 'Обычный' }, { value: 'urgent', label: 'Срочный' }] },
+    deadline: { title: 'Дедлайн', current: filters.deadline, options: [{ value: '', label: 'Любой' }, { value: 'overdue', label: 'Просрочено' }, { value: 'today', label: 'Сегодня' }, { value: 'week', label: '7 дней' }, { value: 'none', label: 'Без дедлайна' }] }
+  } satisfies Record<FilterChoice, { title: string; current: string; options: { value: string; label: string }[] }>;
+  const filterChoiceSheet = filterChoice && (() => {
+    const choice = filterChoiceDefinitions[filterChoice];
+    const choose = (value: string) => {
+      if (filterChoice === 'project' || filterChoice === 'assignee') setFilter(filterChoice, value);
+      else if (filterChoice === 'status') setFilter('status', value as TaskFilters['status']);
+      else if (filterChoice === 'priority') setFilter('priority', value as TaskFilters['priority']);
+      else setFilter('deadline', value as TaskFilters['deadline']);
+      setFilterChoice(undefined);
+    };
+    return <Sheet className="task-sheet" title={choice.title} onClose={() => setFilterChoice(undefined)}><div className="choice-list" role="radiogroup">{choice.options.map((option) => <ChoiceRow key={option.value} label={option.label} selected={choice.current === option.value} onClick={() => choose(option.value)}/>)}</div><button className="sheet-close secondary" onClick={() => setFilterChoice(undefined)}>Закрыть</button></Sheet>;
+  })();
 
   if (openTask && !collaboration) return <main className="task-details"><EnvironmentStatus/><button className="back" onClick={() => setOpenTask(undefined)}>← Задачи</button><Skeleton label="Загрузка задачи"/></main>;
   if (openTask && collaboration) return <TaskDetails
@@ -525,7 +543,7 @@ function App() {
   if (navigation.screen === 'settings-workspace') return <AppShell message={message} navigation={navigation} navigate={navigate}>{workspaceSettings}</AppShell>;
   if (navigation.screen === 'settings-automation') return <AppShell message={message} navigation={navigation} navigate={navigate}>{automationSettings}</AppShell>;
   if (navigation.screen === 'settings-account') return <AppShell message={message} navigation={navigation} navigate={navigate}>{accountSettings}</AppShell>;
-  if (navigation.screen === 'tasks') return <AppShell message={message} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>{taskToolbar}{taskLoadState === 'loading' ? <Skeleton label="Загрузка задач"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : taskView === 'kanban' ? mainKanban : groupedTaskList}{taskLoadState === 'ready' && taskView === 'list' && !filteredTasks.length && <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>}{boardOverrideId && <p className="context-note">Доска открыта из Telegram-чата и не заменяет ваш обычный выбор.</p>}{boardSheet}{filterSheet}</TasksScreen></AppShell>;
+  if (navigation.screen === 'tasks') return <AppShell message={message} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>{taskToolbar}{taskLoadState === 'loading' ? <Skeleton label="Загрузка задач"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : taskView === 'kanban' ? mainKanban : groupedTaskList}{taskLoadState === 'ready' && taskView === 'list' && !filteredTasks.length && <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>}{boardOverrideId && <p className="context-note">Доска открыта из Telegram-чата и не заменяет ваш обычный выбор.</p>}{boardSheet}{filterSheet}{advancedFilterSheet}{filterChoiceSheet}</TasksScreen></AppShell>;
   if (navigation.screen === 'create') return <AppShell message={message} navigation={navigation} navigate={navigate} hideNavigation><CreateScreen onClose={() => navigate(createOrigin)}>
     <form className="create-screen-form" onSubmit={(event) => { event.preventDefault(); void create(); }}>
       <label className="create-title"><span>Что нужно сделать?</span><textarea autoFocus value={title} onChange={(event) => setTitle(event.target.value)} maxLength={200} rows={2} required placeholder="Название задачи"/></label>

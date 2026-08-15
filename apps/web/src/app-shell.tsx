@@ -64,7 +64,7 @@ export function resolveFocusIndex(current: number, count: number, shift: boolean
   return null;
 }
 
-export function ChoiceSheet({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+export function ChoiceSheet({ title, children, onClose, className = '' }: { title: string; children: ReactNode; onClose: () => void; className?: string }) {
   const sheet = useRef<HTMLElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
   const titleId = useId();
@@ -81,13 +81,17 @@ export function ChoiceSheet({ title, children, onClose }: { title: string; child
     const next = resolveFocusIndex(current, focusable.length, event.shiftKey);
     if (next !== null) { event.preventDefault(); focusable[next]?.focus(); }
   };
-  return <div className="sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section ref={sheet} className="sheet" role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={handleKeyDown}><header><h2 id={titleId}>{title}</h2><IconButton label="Закрыть" onClick={onClose}><Icon name="close"/></IconButton></header>{children}</section></div>;
+  return <div className="sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section ref={sheet} className={`sheet ${className}`} role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={handleKeyDown}><header><h2 id={titleId}>{title}</h2>{!className.includes('task-sheet') && <IconButton label="Закрыть" onClick={onClose}><Icon name="close"/></IconButton>}</header>{children}</section></div>;
 }
 
 export const Sheet = ChoiceSheet;
 
 export function ActionRow({ label, value, icon, ...props }: { label: string; value: ReactNode; icon?: ReactNode } & ButtonHTMLAttributes<HTMLButtonElement>) {
   return <button className="action-row" type="button" {...props}>{icon && <span className="action-row-icon">{icon}</span>}<span className="action-row-copy"><span>{label}</span><strong>{value}</strong></span><Icon name="chevron"/></button>;
+}
+
+export function ChoiceRow({ label, detail, selected, kind = 'radio', ...props }: { label: string; detail?: string; selected: boolean; kind?: 'radio' | 'check' } & ButtonHTMLAttributes<HTMLButtonElement>) {
+  return <button className={`choice-row${selected ? ' selected' : ''}`} type="button" role={kind === 'radio' ? 'radio' : 'checkbox'} aria-checked={selected} {...props}><span className="choice-marker" aria-hidden="true"/><span><strong>{label}</strong>{detail && <small>{detail}</small>}</span></button>;
 }
 
 export function Disclosure({ label, children, defaultOpen = false }: { label: string; children: ReactNode; defaultOpen?: boolean }) {

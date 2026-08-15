@@ -42,7 +42,7 @@ export const defaultFilters: TaskFilters = {
 };
 
 export function activeFilterCount(filters: TaskFilters): number {
-  return Number(filters.scope !== defaultFilters.scope)
+  return Number(filters.scope === 'mine')
     + Number(Boolean(filters.project))
     + Number(Boolean(filters.assignee))
     + Number(Boolean(filters.status))
