@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { createDatabase, createProject, createTask, saveTaskFilterState, setTaskArchived, taskFilterState, tasksForAssignee, tasksForBoard, updateProject, updateTask } from '../src/db.js';
+import { createDatabase, createProject, createTask, ProjectConflictError, saveTaskFilterState, setTaskArchived, taskFilterState, tasksForAssignee, tasksForBoard, updateProject, updateTask } from '../src/db.js';
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url) throw new Error('TEST_DATABASE_URL is required');
@@ -17,6 +17,10 @@ test('task lifecycle enforces tenant, role and transition rules', async () => {
 
   const project = await createProject(db, users[2], boardId, 'Launch');
   assert.ok(project, 'any member can create project');
+  const repeatedProjects = await Promise.all(Array.from({ length: 10 }, () => createProject(db, users[2], boardId, 'launch')));
+  assert.deepEqual(new Set(repeatedProjects.map((item) => item?.id)), new Set([project.id]), 'concurrent project creation is idempotent');
+  const secondProject = await createProject(db, users[2], boardId, 'Support');
+  await assert.rejects(() => updateProject(db, users[2], boardId, secondProject.id, { name: 'LAUNCH' }), ProjectConflictError);
   assert.equal(await createProject(db, users[3], boardId, 'Stolen'), null, 'outsider cannot create project');
 
   const task = await createTask(db, users[0], boardId, { title: 'Ship', projectId: project.id, assigneeUserId: users[1], priority: 'urgent', deadline: '2000-01-01T00:00:00Z' });
