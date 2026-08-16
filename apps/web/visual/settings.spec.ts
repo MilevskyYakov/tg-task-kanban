@@ -96,3 +96,27 @@ test('settings children use shared controls and keep failed input', async ({ pag
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: `${evidence}/settings-account-320x844.png` });
 });
+
+test('project creation ignores repeated submits while request is pending', async ({ page }) => {
+  let creates = 0;
+  await mockSettings(page);
+  await page.route('**/api/boards/*/projects', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    creates += 1;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await route.fulfill({ json: { id: 'project-new', name: 'Новый', archived_at: null } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Настройки' }).click();
+  await page.getByRole('button', { name: /Рабочее пространство/ }).click();
+  await page.getByRole('button', { name: /Primex/ }).click();
+  const input = page.getByRole('textbox', { name: 'Название нового проекта' });
+  await input.fill('Новый');
+  await input.evaluate((element) => {
+    const form = element.closest('form');
+    for (let index = 0; index < 10; index += 1) form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  });
+  await expect(page.getByRole('button', { name: 'Добавляем…' })).toBeDisabled();
+  await expect(input).toHaveValue('');
+  expect(creates).toBe(1);
+});

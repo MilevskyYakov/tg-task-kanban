@@ -7,6 +7,7 @@ const { Pool } = pg;
 export type Database = InstanceType<typeof Pool>;
 export const createDatabase = (connectionString: string): Database => new Pool({ connectionString, max: 10 });
 export class TaskConflictError extends Error {}
+export class ProjectConflictError extends Error {}
 const tokenHash = (token: string, secret: string) => createHash('sha256').update(`${secret}:${token}`).digest('hex');
 const linkHash = (token: string) => createHash('sha256').update(token).digest('hex');
 
@@ -189,17 +190,24 @@ export async function createProject(db: Database, userId: string, boardId: strin
   const result = await db.query(`INSERT INTO projects (id, board_id, name, created_by)
     SELECT $3, b.id, $4, $2 FROM boards b JOIN memberships m ON m.board_id = b.id
     WHERE b.id = $1 AND b.status = 'active' AND m.user_id = $2
+    ON CONFLICT (board_id, lower(btrim(name))) WHERE archived_at IS NULL
+    DO UPDATE SET name = projects.name
     RETURNING id, name, archived_at`, [boardId, userId, randomUUID(), name]);
   return result.rows[0] ?? null;
 }
 
 export async function updateProject(db: Database, userId: string, boardId: string, projectId: string, input: {name?: string; archived?: boolean}) {
-  const result = await db.query(`UPDATE projects p SET name = COALESCE($4, p.name),
-      archived_at = CASE WHEN $5::boolean IS NULL THEN p.archived_at WHEN $5 THEN now() ELSE NULL END
-    FROM boards b, memberships m WHERE p.id = $1 AND p.board_id = $2 AND b.id = p.board_id
-      AND b.status = 'active' AND m.board_id = b.id AND m.user_id = $3
-    RETURNING p.id, p.name, p.archived_at`, [projectId, boardId, userId, input.name ?? null, input.archived ?? null]);
-  return result.rows[0] ?? null;
+  try {
+    const result = await db.query(`UPDATE projects p SET name = COALESCE($4, p.name),
+        archived_at = CASE WHEN $5::boolean IS NULL THEN p.archived_at WHEN $5 THEN now() ELSE NULL END
+      FROM boards b, memberships m WHERE p.id = $1 AND p.board_id = $2 AND b.id = p.board_id
+        AND b.status = 'active' AND m.board_id = b.id AND m.user_id = $3
+      RETURNING p.id, p.name, p.archived_at`, [projectId, boardId, userId, input.name ?? null, input.archived ?? null]);
+    return result.rows[0] ?? null;
+  } catch (error) {
+    if ((error as {code?: string}).code === '23505') throw new ProjectConflictError('active project with this name already exists');
+    throw error;
+  }
 }
 
 const taskColumns = `t.id, t.board_id, t.project_id, p.name AS project_name, t.creator_user_id, t.assignee_user_id,

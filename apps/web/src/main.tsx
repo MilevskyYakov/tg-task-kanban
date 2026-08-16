@@ -74,8 +74,10 @@ function App() {
   const [createBoardId, setCreateBoardId] = useState('');
   const [createOrigin, setCreateOrigin] = useState<NavigationState>(initialNavigation);
   const [createPending, setCreatePending] = useState(false);
+  const [projectCreatePending, setProjectCreatePending] = useState(false);
   const [createChoice, setCreateChoice] = useState<CreateChoice>();
   const boardLoadVersion = useRef(0);
+  const projectCreateLock = useRef(false);
   const skipNextTaskLoad = useRef(false);
   const taskScroll = useRef(storedTaskView.scrollY);
   const swipeStart = useRef<{x: number; y: number} | null>(null);
@@ -311,11 +313,18 @@ function App() {
     if (!board) return;
     if (!(event.currentTarget instanceof HTMLFormElement)) { navigate({ screen: 'settings-workspace', boardId: board.id }); return; }
     event.preventDefault();
+    if (projectCreateLock.current) return;
     const form = event.currentTarget;
     const name = String(new FormData(form).get('name') ?? '').trim();
     if (!name) return;
-    if (!await action(() => api(`/api/boards/${board.id}/projects`, json('POST', {name})), 'Проект создан')) return;
-    form.reset();
+    projectCreateLock.current = true;
+    setProjectCreatePending(true);
+    try {
+      if (await action(() => api(`/api/boards/${board.id}/projects`, json('POST', {name})), 'Проект создан')) form.reset();
+    } finally {
+      projectCreateLock.current = false;
+      setProjectCreatePending(false);
+    }
   };
   const editProject = async (eventOrItem: React.FormEvent<HTMLFormElement> | Project, item?: Project) => {
     if (!item) { if (board) navigate({ screen: 'settings-workspace', boardId: board.id }); return; }
@@ -566,7 +575,7 @@ function App() {
     <button className="back settings-back" onClick={() => navigate({ screen: 'settings' })}><Icon name="back"/>Настройки</button>
     {!board ? settingsBoardList('settings-workspace') : <div className="settings-groups">
       <section className="settings-group"><h2>Доска</h2>{(board.status === 'draft' || board.role === 'owner' || board.role === 'admin') ? <form className="settings-form inline-form" onSubmit={(event) => void saveBoardName(event)}><label>Название<input name="name" defaultValue={board.name} maxLength={120} required/></label><button>{board.status === 'draft' ? 'Активировать' : 'Сохранить'}</button></form> : <p>{board.name}</p>}<small>{board.type === 'chat' ? 'Права администратора Telegram проверяются при изменении чат-доски.' : 'Личное рабочее пространство.'}</small></section>
-      <section className="settings-group"><h2>Проекты</h2>{projects.filter((item) => !item.archived_at).map((item) => <form className="settings-form inline-form" key={item.id} onSubmit={(event) => void editProject(event, item)}><input aria-label={`Название проекта ${item.name}`} name="name" defaultValue={item.name} maxLength={120} required/><button>Сохранить</button><button className="secondary" type="button" onClick={() => void action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: true})), 'Проект архивирован')}>В архив</button></form>)}<form className="settings-form inline-form" onSubmit={(event) => void addProject(event)}><input aria-label="Название нового проекта" name="name" placeholder="Новый проект" maxLength={120} required/><button>Добавить</button></form></section>
+      <section className="settings-group"><h2>Проекты</h2>{projects.filter((item) => !item.archived_at).map((item) => <form className="settings-form inline-form" key={item.id} onSubmit={(event) => void editProject(event, item)}><input aria-label={`Название проекта ${item.name}`} name="name" defaultValue={item.name} maxLength={120} required/><button>Сохранить</button><button className="secondary" type="button" onClick={() => void action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: true})), 'Проект архивирован')}>В архив</button></form>)}<form className="settings-form inline-form" onSubmit={(event) => void addProject(event)}><input aria-label="Название нового проекта" name="name" placeholder="Новый проект" maxLength={120} required/><button disabled={projectCreatePending}>{projectCreatePending ? 'Добавляем…' : 'Добавить'}</button></form></section>
       <section className="settings-group"><h2>Участники</h2><div className="member-list">{members.map((member) => <div key={member.id}><Avatar initials={initials(member.first_name)} label={member.first_name}/><span><strong>{member.first_name}</strong><small>{member.username ? `@${member.username}` : 'Telegram'}</small></span></div>)}</div></section>
     </div>}
   </SettingsScreen>;
