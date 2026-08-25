@@ -7,6 +7,7 @@ const { Pool } = pg;
 export type Database = InstanceType<typeof Pool>;
 export const createDatabase = (connectionString: string): Database => new Pool({ connectionString, max: 10 });
 export class TaskConflictError extends Error {}
+export class TaskActionError extends Error {}
 export class ProjectConflictError extends Error {}
 const tokenHash = (token: string, secret: string) => createHash('sha256').update(`${secret}:${token}`).digest('hex');
 const linkHash = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -288,10 +289,21 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
     const current = await client.query<any>(`SELECT t.* FROM tasks t JOIN boards b ON b.id = t.board_id
       WHERE t.id = $1 AND t.board_id = $2 AND t.archived_at IS NULL AND b.status = 'active' FOR UPDATE`, [taskId, boardId]);
     const task = current.rows[0];
-    if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) { await client.query('ROLLBACK'); return null; }
+    if (!task) { await client.query('ROLLBACK'); return null; }
     const status = input.status ?? task.status;
-    if (status === 'done' && task.status !== 'done' && task.assignee_user_id !== userId) { await client.query('ROLLBACK'); return null; }
-    if (task.status === 'done' && status !== 'done' && task.creator_user_id !== userId) { await client.query('ROLLBACK'); return null; }
+    if (status === 'done' && task.status !== 'done'
+      && task.assignee_user_id !== userId && (task.assignee_user_id !== null || task.creator_user_id !== userId)) {
+      throw new TaskActionError(task.assignee_user_id
+        ? 'Завершить задачу может только назначенный исполнитель'
+        : 'Завершить задачу без исполнителя может только создатель');
+    }
+    if (task.status === 'done' && status !== 'done' && task.creator_user_id !== userId) {
+      throw new TaskActionError('Вернуть задачу в работу может только создатель');
+    }
+    if (task.creator_user_id !== userId && task.assignee_user_id !== userId) {
+      if (input.status !== undefined && input.status !== task.status) throw new TaskActionError('Менять статус может только создатель или исполнитель');
+      await client.query('ROLLBACK'); return null;
+    }
     const blockerTaskId = status === 'waiting' ? (input.blockerTaskId === undefined ? task.blocked_by_task_id : input.blockerTaskId) : null;
     const waitReason = status === 'waiting' ? (input.waitReason === undefined ? task.wait_reason : input.waitReason) : null;
     if (status === 'waiting' && Number(Boolean(blockerTaskId)) + Number(Boolean(waitReason?.trim())) !== 1) { await client.query('ROLLBACK'); return null; }

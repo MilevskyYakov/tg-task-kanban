@@ -23,19 +23,23 @@ test('task collaboration enforces access, immutable audit and notification idemp
   assert.ok(task);
 
   const sessionSecret = 'test-session-secret-with-at-least-32-characters';
-  const tokens = [randomBytes(24).toString('base64url'), randomBytes(24).toString('base64url')];
+  const tokens = users.map(() => randomBytes(24).toString('base64url'));
   await Promise.all(tokens.map((token, index) => db.query("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, now() + interval '1 hour')",
-    [createHash('sha256').update(`${sessionSecret}:${token}`).digest('hex'), users[index + 2]])));
+    [createHash('sha256').update(`${sessionSecret}:${token}`).digest('hex'), users[index]])));
   const config: Config = { botToken: 'test', databaseUrl: url!, sessionSecret, initDataMaxAgeSeconds: 60, sessionMaxAgeSeconds: 60,
     host: '127.0.0.1', port: 2240, production: false, webhookSecret: 'test-webhook-secret-with-at-least-32-characters', publicUrl: 'https://example.test', botUsername: 'test_bot' };
   const app = buildApp(config, db);
-  const allowed = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${task.id}`, headers: { cookie: `session=${tokens[0]}` } });
-  const missing = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${randomUUID()}`, headers: { cookie: `session=${tokens[0]}` } });
-  const forbidden = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${task.id}`, headers: { cookie: `session=${tokens[1]}` } });
+  const allowed = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${task.id}`, headers: { cookie: `session=${tokens[2]}` } });
+  const missing = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${randomUUID()}`, headers: { cookie: `session=${tokens[2]}` } });
+  const forbidden = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${task.id}`, headers: { cookie: `session=${tokens[3]}` } });
+  const creatorClose = await app.inject({ method: 'PATCH', url: `/api/boards/${boardId}/tasks/${task.id}`, headers: { cookie: `session=${tokens[0]}` }, payload: { status: 'done' } });
+  const memberClose = await app.inject({ method: 'PATCH', url: `/api/boards/${boardId}/tasks/${task.id}`, headers: { cookie: `session=${tokens[2]}` }, payload: { status: 'done' } });
   assert.equal(allowed.statusCode, 200);
   assert.equal(allowed.json().title, 'Ship');
   assert.deepEqual([missing.statusCode, missing.json()], [404, { error: 'task not found' }]);
   assert.deepEqual([forbidden.statusCode, forbidden.json()], [403, { error: 'task access forbidden' }], 'outsider receives no task data');
+  assert.deepEqual([creatorClose.statusCode, creatorClose.json()], [403, { error: 'Завершить задачу может только назначенный исполнитель' }]);
+  assert.deepEqual([memberClose.statusCode, memberClose.json()], [403, { error: 'Завершить задачу может только назначенный исполнитель' }]);
   await app.close();
 
   assert.ok(await addTaskComment(db, users[2], boardId, task.id, 'Ready to review'));

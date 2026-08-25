@@ -193,6 +193,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .main-task-row:last-child { border-bottom: 0; }
 .task-completion { appearance: none; width: 24px; height: 24px; margin: 2px 0 0; border: 2px solid #a8b4c4; border-radius: 4px; background: var(--surface-raised); }
 .task-completion:checked { border-color: var(--primary); background: var(--primary); box-shadow: inset 0 0 0 5px var(--surface-raised); }
+.task-completion:disabled:not(:checked) { opacity: .45; }
+.task-action-reason { display: block; margin-top: 5px; color: var(--text-muted); }
+.kanban-action-reason { grid-column: 1 / -1; }
 .task-summary { min-width: 0; width: 100%; min-height: 0; padding: 0; border-radius: 0; background: transparent; color: var(--text); text-align: left; font-weight: inherit; }
 .task-summary > strong { display: block; font-size: 1rem; font-weight: 450; line-height: 1.25; overflow-wrap: anywhere; }
 .task-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px; margin-top: 5px; color: var(--text-muted); font: 500 .75rem/1.3 'IBM Plex Mono', ui-monospace, monospace; }
@@ -222,6 +225,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .choice-row strong { font-size: 1rem; }
 .choice-row small { margin-top: 3px; color: var(--text-muted); font-weight: 400; }
 .choice-row.selected { background: var(--primary-soft); }
+.choice-row:disabled { opacity: .6; }
 .choice-marker { position: relative; width: 24px; height: 24px; justify-self: center; border: 2px solid #9da9ba; border-radius: 50%; }
 .choice-row[role=checkbox] .choice-marker { border-radius: 5px; }
 .choice-row[aria-checked=true] .choice-marker { border-color: var(--primary); }

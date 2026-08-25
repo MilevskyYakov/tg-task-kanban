@@ -6,7 +6,7 @@ import { ActionRow, AppShell, Avatar, Badge, ChoiceAction, ChoiceRow, CreateScre
 import type { Board, Collaboration, Member, Project, Recurrence, Schedule } from './domain';
 import { countLabel, initialNavigation, settingsSections, type NavigationState } from './navigation';
 import { TaskDetails } from './task-details';
-import { activeFilterCount, dateInputToIso, dateTimeInputsToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveKanbanSwipe, resolveStartupContext, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
+import { activeFilterCount, dateInputToIso, dateTimeInputsToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveKanbanSwipe, resolveStartupContext, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, taskStatusRestriction, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
 import { FoundationFixture } from './visual-fixture';
 import { readStorage, removeStorage, writeStorage } from './environment';
 
@@ -260,6 +260,8 @@ function App() {
   };
   const move = async (task: Task, status: TaskStatus) => {
     if (task.status === status) return;
+    const restriction = taskStatusRestriction(task, userId, status);
+    if (restriction) { setMessage(restriction); return; }
     const candidateTasks = tasks.filter((item) => item.board_id === task.board_id && item.id !== task.id && item.status !== 'done' && !item.archived_at);
     const blockerAnswer = status === 'waiting'
       ? window.prompt(`Номер задачи-блокера (пусто — внешняя причина)\n${candidateTasks.map((item, index) => `${index + 1}. ${item.title}`).join('\n')}`, '')
@@ -375,7 +377,7 @@ function App() {
   const setFilter = <K extends keyof TaskFilters>(key: K, value: TaskFilters[K]) => setFilters((current) => ({ ...current, [key]: value }));
   const taskCard = (task: Task) => <article
     className={`task ${task.priority === 'urgent' ? 'urgent' : ''} ${task.overdue ? 'overdue' : ''} ${task.wait_check_due ? 'wait-due' : ''} ${!task.assignee_user_id ? 'unassigned' : ''} ${draggedTask === task.id ? 'dragging' : ''}`}
-    key={task.id} draggable={Boolean(board && !task.archived_at)}
+    key={task.id} draggable={Boolean(board && !task.archived_at && statuses.some((status) => status !== task.status && !taskStatusRestriction(task, userId, status)))}
     onDragStart={(event) => { setDraggedTask(task.id); event.dataTransfer.setData('text/plain', task.id); }} onDragEnd={() => setDraggedTask(undefined)}>
     <div onClick={() => { if (!board && task.board_id) setNavigation({ screen: 'board', boardId: task.board_id }); }}>
       <span>{task.board_name ?? statusDisplayName[task.status]}</span><strong>{task.title}</strong>
@@ -384,14 +386,14 @@ function App() {
       {task.overdue && <small className="flag">Дедлайн прошёл</small>}{task.wait_check_due && <small className="flag">Пора проверить ожидание</small>}{task.blocker_title ? <small>Блокирует: {task.blocker_title}</small> : task.wait_reason && <small>Внешний блокер: {task.wait_reason}</small>}
     </div>
     {board && <div className="actions"><button onClick={() => openCollaboration(task)}>Открыть</button>{task.archived_at ? <button onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}/reopen`, {method: 'POST'}), 'Задача восстановлена')}>Восстановить</button> : <>
-      <label className="status-control">Статус<select aria-label={`Статус задачи ${task.title}`} value={task.status} onChange={(event) => void move(task, event.target.value as TaskStatus)}>{statuses.map((status) => <option key={status} value={status}>{statusDisplayName[status]}</option>)}</select></label>
+      <label className="status-control">Статус<select aria-label={`Статус задачи ${task.title}`} value={task.status} onChange={(event) => void move(task, event.target.value as TaskStatus)}>{statuses.map((status) => <option key={status} value={status} disabled={Boolean(taskStatusRestriction(task, userId, status))}>{statusDisplayName[status]}</option>)}</select></label>{task.status !== 'done' && taskStatusRestriction(task, userId, 'done') && <small className="task-action-reason">{taskStatusRestriction(task, userId, 'done')}</small>}
       <button onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}`, {method: 'DELETE'}), 'Задача архивирована')}>В архив</button>
     </>}</div>}
   </article>;
   const taskList = <div className="task-list">{filteredTasks.map(taskCard)}</div>;
   const initials = (name?: string) => name?.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toLocaleUpperCase('ru-RU') || '—';
-  const mainTaskRow = (task: Task) => <article className="main-task-row" key={task.id}>
-    <input className="task-completion" type="checkbox" checked={task.status === 'done'} disabled={task.status === 'done'} aria-label={`Завершить задачу ${task.title}`} onChange={() => void move(task, 'done')}/>
+  const mainTaskRow = (task: Task) => { const restriction = taskStatusRestriction(task, userId, 'done'); return <article className="main-task-row" key={task.id}>
+    <input className="task-completion" type="checkbox" checked={task.status === 'done'} disabled={task.status === 'done' || Boolean(restriction)} title={restriction ?? undefined} aria-label={`Завершить задачу ${task.title}`} onChange={() => void move(task, 'done')}/>
     <button className="task-summary" onClick={() => void openCollaboration(task)}>
       <strong>{task.title}</strong>
       <div className="task-meta">
@@ -402,9 +404,10 @@ function App() {
         {Boolean(task.checklist_total) && <span>{task.checklist_completed}/{task.checklist_total}</span>}
       </div>
       {task.status === 'waiting' && task.wait_reason && <small className="blocker-reason">{task.wait_reason}</small>}
+      {restriction && <small className="task-action-reason">{restriction}</small>}
     </button>
     {task.assignee_name && <Avatar initials={initials(task.assignee_name)} label={`Исполнитель: ${task.assignee_name}`}/>}
-  </article>;
+  </article>; };
   const deadlineGroups = groupTasksByDeadline(filteredTasks);
   const deadlineSections: { id: DeadlineGroup; label: string; icon: IconName }[] = [
     { id: 'overdue', label: 'Просрочено', icon: 'alert' }, { id: 'today', label: 'Сегодня', icon: 'sun' },
@@ -415,11 +418,12 @@ function App() {
     : groupTasksByProject(filteredTasks).map((group) => <section className="task-section project-section" key={group.id ?? 'none'}><SectionHeader count={group.tasks.length} tone="upcoming">{group.name}</SectionHeader>{group.tasks.map(mainTaskRow)}</section>)
   }</div>;
   const kanbanTasks = filterTasks(tasks, { ...filters, status: kanbanStatus }, userId);
-  const kanbanTaskRow = (task: Task) => <article className={`kanban-task-row status-${task.status}`} key={task.id}>
+  const kanbanTaskRow = (task: Task) => { const hasStatusAction = statuses.some((status) => status !== task.status && !taskStatusRestriction(task, userId, status)); return <article className={`kanban-task-row status-${task.status}`} key={task.id}>
     <button className="task-summary" onClick={() => void openCollaboration(task)}><strong>{task.title}</strong><div className="task-meta"><span>{task.project_name ?? task.board_name ?? 'Без проекта'}</span>{task.deadline && <span className={task.overdue ? 'deadline-overdue' : ''}>{task.overdue ? 'Дедлайн прошёл' : new Date(task.deadline).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</span>}{task.priority === 'urgent' && <Badge tone="urgent">Срочно</Badge>}</div></button>
     {task.assignee_name && <Avatar initials={initials(task.assignee_name)} label={`Исполнитель: ${task.assignee_name}`}/>}
-    <button className="kanban-status-action" onClick={() => setKanbanStatusTask(task)}><span>Статус</span><strong>{statusDisplayName[task.status]}</strong><Icon name="chevron"/></button>
-  </article>;
+    <button className="kanban-status-action" disabled={!hasStatusAction} onClick={() => setKanbanStatusTask(task)}><span>Статус</span><strong>{statusDisplayName[task.status]}</strong><Icon name="chevron"/></button>
+    {!hasStatusAction && <small className="task-action-reason kanban-action-reason">{taskStatusRestriction(task, userId, statuses.find((status) => status !== task.status)!)}</small>}
+  </article>; };
   const mainKanban = <div className="mobile-kanban">
     <div className="status-tabs" aria-label="Статусы задач">{statuses.map((status) => <button aria-pressed={kanbanStatus === status} className={kanbanStatus === status ? 'active' : ''} key={status} onClick={() => setKanbanStatus(status)}>{statusDisplayName[status]} <small>{filterTasks(tasks, { ...filters, status }, userId).length}</small></button>)}</div>
     <section className="active-kanban-column" aria-label={statusDisplayName[kanbanStatus]}
@@ -432,9 +436,9 @@ function App() {
       <p className="kanban-position"><span>{String(statuses.indexOf(kanbanStatus) + 1).padStart(2, '0')} / {String(statuses.length).padStart(2, '0')}</span><i><i style={{ width: `${100 / statuses.length}%` }}/></i></p>
     </section>
   </div>;
-  const kanbanStatusSheet = kanbanStatusTask && <Sheet className="task-sheet kanban-status-sheet" title="Статус" onClose={() => setKanbanStatusTask(undefined)}><div className="choice-list" role="radiogroup">{statuses.map((status) => <ChoiceRow key={status} label={statusDisplayName[status]} selected={kanbanStatusTask.status === status} onClick={() => { const task = kanbanStatusTask; setKanbanStatusTask(undefined); void move(task, status); }}/>)}</div><button className="sheet-close secondary" onClick={() => setKanbanStatusTask(undefined)}>Закрыть</button></Sheet>;
+  const kanbanStatusSheet = kanbanStatusTask && <Sheet className="task-sheet kanban-status-sheet" title="Статус" onClose={() => setKanbanStatusTask(undefined)}><div className="choice-list" role="radiogroup">{statuses.map((status) => { const restriction = taskStatusRestriction(kanbanStatusTask, userId, status); return <ChoiceRow key={status} label={statusDisplayName[status]} detail={restriction ?? undefined} disabled={Boolean(restriction)} selected={kanbanStatusTask.status === status} onClick={() => { const task = kanbanStatusTask; setKanbanStatusTask(undefined); void move(task, status); }}/>; })}</div><button className="sheet-close secondary" onClick={() => setKanbanStatusTask(undefined)}>Закрыть</button></Sheet>;
   const kanban = <div className="kanban" aria-label="Канбан">{statuses.map((status) => <section className="kanban-column" data-status={status} key={status}
-    onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const task = tasks.find((item) => item.id === event.dataTransfer.getData('text/plain')); if (task) void move(task, status); }}>
+    onDragOver={(event) => { const task = tasks.find((item) => item.id === draggedTask); if (task && !taskStatusRestriction(task, userId, status)) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); const task = tasks.find((item) => item.id === event.dataTransfer.getData('text/plain')); if (task) void move(task, status); }}>
     <h2>{statusDisplayName[status]} <small>{filteredTasks.filter((task) => task.status === status).length}</small></h2>
     <div className="kanban-tasks">{filteredTasks.filter((task) => task.status === status).map(taskCard)}</div>
   </section>)}</div>;
@@ -527,6 +531,7 @@ function App() {
   if (openTask && !collaboration) return <main className="task-details"><EnvironmentStatus/><button className="back" onClick={() => setOpenTask(undefined)}>← Задачи</button><Skeleton label="Загрузка задачи"/></main>;
   if (openTask && collaboration) return <TaskDetails
     task={openTask} collaboration={collaboration} projects={detailProjects} members={detailMembers}
+    userId={userId}
     candidateTasks={detailTasks.filter((item) => item.id !== openTask.id && item.status !== 'done' && !item.archived_at)}
     boardName={boards.find((item) => item.id === openTask.board_id)?.name ?? openTask.board_name ?? 'Задача'}
     onBack={() => { setOpenTask(undefined); setCollaboration(undefined); requestAnimationFrame(() => window.scrollTo({ top: taskScroll.current })); }}
