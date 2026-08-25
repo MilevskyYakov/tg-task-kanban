@@ -4,7 +4,7 @@ import Fastify from 'fastify';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateInitData } from './auth.js';
-import { activateChatBoard, addChecklistItem, addTaskAttachment, addTaskComment, boardForUser, boardMembers, boardsForUser, claimAssignmentNotification, connectChatBoard, createInvite, createProject, createRecurrence, createTask, deleteChecklistItem, finishAssignmentNotification, freezeChatBoard, incompleteChecklistCount, login, migrateChatBoard, pendingNotificationForTask, ProjectConflictError, projectsForBoard, recurrencesForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskCollaboration, TaskConflictError, taskFilterState, taskForBoard, tasksForAssignee, tasksForBoard, updateChecklistItem, updateProject, updateRecurrence, updateTask, updateTaskAndFuture, type AttachmentInput, type Database, type RecurrenceInput, type TaskInput } from './db.js';
+import { activateChatBoard, addChecklistItem, addTaskAttachment, addTaskComment, boardForUser, boardMembers, boardsForUser, claimAssignmentNotification, connectChatBoard, createInvite, createProject, createRecurrence, createTask, deleteChecklistItem, finishAssignmentNotification, freezeChatBoard, incompleteChecklistCount, login, migrateChatBoard, pendingNotificationForTask, ProjectConflictError, projectsForBoard, recurrencesForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskCollaboration, TaskActionError, TaskConflictError, taskFilterState, taskForBoard, tasksForAssignee, tasksForBoard, updateChecklistItem, updateProject, updateRecurrence, updateTask, updateTaskAndFuture, type AttachmentInput, type Database, type RecurrenceInput, type TaskInput } from './db.js';
 import type { Config } from './config.js';
 import { isChatAdmin, telegramCall } from './telegram.js';
 import { renderPublication, schedulesForBoard, updateSchedule, validTimezone as validPublicationTimezone, type PublicationKind, type PublicationSchedule } from './publications.js';
@@ -242,6 +242,7 @@ export function buildApp(config: Config, db: Database) {
         : await updateTask(db, id, request.params.id, request.params.taskId, input);
     } catch (error) {
       if (error instanceof TaskConflictError) return reply.code(409).send({ error: error.message });
+      if (error instanceof TaskActionError) return reply.code(403).send({ error: error.message });
       throw error;
     }
     if (!task) return reply.code(403).send({ error: 'task action is not allowed' });

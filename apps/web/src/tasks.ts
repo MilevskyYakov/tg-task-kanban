@@ -62,6 +62,16 @@ export const statusDisplayName: Record<TaskStatus, string> = {
 };
 export const priorityDisplayName: Record<TaskPriority, string> = { normal: 'Обычная', urgent: 'Срочная' };
 
+export function taskStatusRestriction(task: Task, userId: string, status: TaskStatus): string | null {
+  if (task.status === status) return null;
+  if (status === 'done') {
+    if (task.assignee_user_id) return task.assignee_user_id === userId ? null : 'Завершить задачу может только назначенный исполнитель';
+    return task.creator_user_id === userId ? null : 'Завершить задачу без исполнителя может только создатель';
+  }
+  if (task.status === 'done') return task.creator_user_id === userId ? null : 'Вернуть задачу в работу может только создатель';
+  return task.creator_user_id === userId || task.assignee_user_id === userId ? null : 'Менять статус может только создатель или исполнитель';
+}
+
 export type StartupContext =
   | { surface: 'tasks' }
   | { surface: 'board-link'; token: string }

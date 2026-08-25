@@ -22,6 +22,7 @@ import {
   restoreTaskViewState,
   serializeTaskViewState,
   statusDisplayName,
+  taskStatusRestriction,
   validateTaskCreate,
   type Task
 } from '../src/tasks.js';
@@ -59,8 +60,21 @@ test('chat board overrides global choice without replacing it', () => {
 
 test('optimistic update rolls UI back when API rejects change', async () => {
   const renders: string[] = [];
-  await assert.rejects(optimisticUpdate('todo', 'done', (value) => renders.push(value), async () => { throw new Error('forbidden'); }));
+  await assert.rejects(optimisticUpdate('todo', 'done', (value) => renders.push(value), async () => { throw new Error('Завершить задачу может только назначенный исполнитель'); }),
+    /Завершить задачу может только назначенный исполнитель/);
   assert.deepEqual(renders, ['done', 'todo']);
+});
+
+test('status restrictions match creator, assignee and member permissions', () => {
+  const assigned = { ...tasks[0], creator_user_id: 'creator', assignee_user_id: 'assignee' };
+  const unassigned = { ...tasks[1], creator_user_id: 'creator' };
+  assert.equal(taskStatusRestriction(assigned, 'assignee', 'done'), null);
+  assert.equal(taskStatusRestriction(assigned, 'creator', 'done'), 'Завершить задачу может только назначенный исполнитель');
+  assert.equal(taskStatusRestriction(unassigned, 'creator', 'done'), null);
+  assert.equal(taskStatusRestriction(unassigned, 'member', 'done'), 'Завершить задачу без исполнителя может только создатель');
+  assert.equal(taskStatusRestriction({ ...assigned, status: 'done' }, 'assignee', 'in_progress'), 'Вернуть задачу в работу может только создатель');
+  assert.equal(taskStatusRestriction({ ...assigned, status: 'done' }, 'creator', 'in_progress'), null);
+  assert.equal(taskStatusRestriction(assigned, 'member', 'waiting'), 'Менять статус может только создатель или исполнитель');
 });
 
 test('date input rejects malformed and impossible calendar dates', () => {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { createDatabase, createProject, createTask, ProjectConflictError, saveTaskFilterState, setTaskArchived, taskFilterState, tasksForAssignee, tasksForBoard, updateProject, updateTask } from '../src/db.js';
+import { createDatabase, createProject, createTask, ProjectConflictError, saveTaskFilterState, setTaskArchived, TaskActionError, taskFilterState, tasksForAssignee, tasksForBoard, updateProject, updateTask } from '../src/db.js';
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url) throw new Error('TEST_DATABASE_URL is required');
@@ -36,14 +36,23 @@ test('task lifecycle enforces tenant, role and transition rules', async () => {
   assert.equal(await saveTaskFilterState(db, users[3], boardId, { status: 'done' }), null, 'outsider cannot save filter state');
 
   assert.equal(await updateTask(db, users[2], boardId, task.id, { title: 'Hijack' }), null, 'ordinary member cannot edit');
-  assert.equal(await updateTask(db, users[0], boardId, task.id, { status: 'done' }), null, 'creator cannot close assigned task');
+  await assert.rejects(() => updateTask(db, users[0], boardId, task.id, { status: 'done' }),
+    (error: unknown) => error instanceof TaskActionError && error.message === 'Завершить задачу может только назначенный исполнитель');
   assert.equal(await updateTask(db, users[1], boardId, task.id, { status: 'waiting', waitReason: null }), null, 'waiting requires reason');
   const waiting = await updateTask(db, users[1], boardId, task.id, { status: 'waiting', waitReason: 'Client', waitCheckAt: '2000-01-02T00:00:00Z' });
   assert.equal(waiting.status, 'waiting');
   assert.equal((await tasksForBoard(db, users[0], boardId))[0].wait_check_due, true);
   assert.equal((await updateTask(db, users[1], boardId, task.id, { status: 'done' }))?.status, 'done', 'assignee closes task');
-  assert.equal(await updateTask(db, users[1], boardId, task.id, { status: 'in_progress' }), null, 'assignee cannot reopen');
+  await assert.rejects(() => updateTask(db, users[1], boardId, task.id, { status: 'in_progress' }),
+    (error: unknown) => error instanceof TaskActionError && error.message === 'Вернуть задачу в работу может только создатель');
   assert.equal((await updateTask(db, users[0], boardId, task.id, { status: 'in_progress' }))?.status, 'in_progress', 'creator reopens');
+
+  const unassigned = await createTask(db, users[0], boardId, { title: 'Unassigned' });
+  assert.ok(unassigned);
+  await assert.rejects(() => updateTask(db, users[2], boardId, unassigned.id, { status: 'done' }),
+    (error: unknown) => error instanceof TaskActionError && error.message === 'Завершить задачу без исполнителя может только создатель');
+  assert.equal((await updateTask(db, users[0], boardId, unassigned.id, { status: 'done' }))?.status, 'done', 'creator closes unassigned task');
+  await db.query('DELETE FROM tasks WHERE id = $1', [unassigned.id]);
 
   await db.query('DELETE FROM memberships WHERE board_id = $1 AND user_id = $2', [boardId, users[1]]);
   assert.equal((await tasksForBoard(db, users[0], boardId))[0].assignee_user_id, null, 'leaving board clears active assignment');
