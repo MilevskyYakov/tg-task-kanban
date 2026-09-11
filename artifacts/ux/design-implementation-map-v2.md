@@ -1,5 +1,10 @@
 # Telegram Task Kanban — implementation map после design Issue #52
 
+> Эта карта описывает предыдущий UI-цикл. Принятые макеты и решения следующей
+> программы #75–#83 находятся в [UX-handoff #76](issue-76-handoff.md).
+> Он содержит точные roots/exports, формат сообщения с изображением и отказ
+> от дополнительной переделки блокеров; реализация нового цикла здесь не заявлена.
+
 Все Issues ниже меняют только frontend presentation. Backend contracts и функциональный результат merged Issues #27–#36 сохраняются. Production deploy запрещён до финального release gate.
 
 ## Порядок
