@@ -48383,12 +48383,13 @@
       "x": 28040,
       "y": 944,
       "name": "#76 REVIEW 390 — Студия — group_message390",
-      "context": "#80. Композиционный макет Telegram-чата. Это одно и то же постоянное сообщение до и после ручного закрепления, не два отправления. Текст из принятого решения: Задачи команды · {Название доски}; Добавляйте задачи, берите их в работу и отслеживайте выполнение. Кнопка всегда Открыть задачи, включая первое открытие. Первое сообщение сразу корректное: без Настроить доску и сообщений о незавершённой настройке. Название начальной доски берётся из группы. Повторный вход не присылает дубль. Ни обновляющих команд, ни миграции старых закрепов.",
+      "context": "#80. Композиционный макет Telegram-чата. Это одно и то же постоянное сообщение до и после ручного закрепления, не два отправления. Текст из принятого решения: Задачи команды · {Название доски}; Добавляйте задачи, берите их в работу и отслеживайте выполнение. Кнопка всегда Открыть задачи, включая первое открытие. Первое сообщение сразу корректное: без Настроить доску и сообщений о незавершённой настройке. Название начальной доски берётся из группы. Повторный вход не присылает дубль. Ни обновляющих команд, ни миграции старых закрепов. Конечная композиция: общая иллюстрация assets/group-welcome.png сверху, текст подписью и одна кнопка под ним. Картинка не является отдельным сообщением.",
       "metadata": {
         "type": "ux-review",
         "issue": 76,
         "key": "group_message390",
-        "approval": "approved"
+        "approval": "approved",
+        "baseApproval": "approved"
       },
       "clip": true,
       "width": 390,
@@ -48531,86 +48532,6 @@
         },
         {
           "type": "rectangle",
-          "cornerRadius": 14,
-          "id": "O0zlKF",
-          "x": 18,
-          "y": 215,
-          "name": "Одно постоянное сообщение",
-          "fill": "#FFFFFF",
-          "width": 354,
-          "height": 279
-        },
-        {
-          "type": "text",
-          "id": "k1ntN",
-          "x": 32,
-          "y": 230,
-          "name": "Отправитель",
-          "fill": "#0756CB",
-          "textGrowth": "fixed-width",
-          "width": 326,
-          "content": "Задачи",
-          "lineHeight": 1.3,
-          "fontFamily": "Inter",
-          "fontSize": 13,
-          "fontWeight": "600"
-        },
-        {
-          "type": "text",
-          "id": "Mu156",
-          "x": 32,
-          "y": 268,
-          "name": "Постоянный заголовок",
-          "fill": "#172033",
-          "textGrowth": "fixed-width",
-          "width": 326,
-          "content": "Задачи команды · Студия",
-          "lineHeight": 1.3,
-          "fontFamily": "Inter",
-          "fontSize": 22,
-          "fontWeight": "600"
-        },
-        {
-          "type": "text",
-          "id": "ttQSE",
-          "x": 32,
-          "y": 341,
-          "name": "Постоянный текст",
-          "fill": "#172033",
-          "textGrowth": "fixed-width",
-          "width": 326,
-          "content": "Добавляйте задачи, берите их в работу и отслеживайте выполнение.",
-          "lineHeight": 1.3,
-          "fontFamily": "Inter",
-          "fontSize": 15
-        },
-        {
-          "type": "frame",
-          "id": "QXKCL",
-          "x": 30,
-          "y": 428,
-          "name": "Постоянная кнопка",
-          "width": 330,
-          "height": 52,
-          "fill": "#EDF4FF",
-          "cornerRadius": 12,
-          "justifyContent": "center",
-          "alignItems": "center",
-          "children": [
-            {
-              "type": "text",
-              "id": "yD4kP",
-              "name": "Открыть задачи",
-              "fill": "#0756CB",
-              "content": "Открыть задачи",
-              "fontFamily": "Inter",
-              "fontSize": 15,
-              "fontWeight": "600"
-            }
-          ]
-        },
-        {
-          "type": "rectangle",
           "cornerRadius": 24,
           "id": "h3pKQe",
           "x": 18,
@@ -48633,6 +48554,95 @@
           "lineHeight": 1.3,
           "fontFamily": "Inter",
           "fontSize": 15
+        },
+        {
+          "type": "frame",
+          "id": "Wvig4",
+          "x": 18,
+          "y": 184,
+          "name": "Одно постоянное сообщение",
+          "width": 354,
+          "fill": "#FFFFFF",
+          "cornerRadius": 14,
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "vfWe9",
+              "name": "Отправитель",
+              "fill": "#0756CB",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Задачи",
+              "lineHeight": 1.3,
+              "fontFamily": "Inter",
+              "fontSize": 13,
+              "fontWeight": "600"
+            },
+            {
+              "type": "rectangle",
+              "id": "qbSqj",
+              "name": "Общая иллюстрация задач",
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "assets/group-welcome.png",
+                "mode": "fit"
+              },
+              "width": "fill_container",
+              "height": 186
+            },
+            {
+              "type": "text",
+              "id": "kUqy1",
+              "name": "Постоянный заголовок",
+              "fill": "#172033",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Задачи команды · Студия",
+              "lineHeight": 1.3,
+              "fontFamily": "Inter",
+              "fontSize": 22,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "i10aAG",
+              "name": "Постоянный текст",
+              "fill": "#172033",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Добавляйте задачи, берите их в работу и отслеживайте выполнение.",
+              "lineHeight": 1.3,
+              "fontFamily": "Inter",
+              "fontSize": 15
+            },
+            {
+              "type": "frame",
+              "id": "UdHGN",
+              "name": "Постоянная кнопка",
+              "width": "fill_container",
+              "height": 52,
+              "fill": "#EDF4FF",
+              "cornerRadius": 12,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "rjszv",
+                  "name": "Открыть задачи",
+                  "fill": "#0756CB",
+                  "content": "Открыть задачи",
+                  "fontFamily": "Inter",
+                  "fontSize": 15,
+                  "fontWeight": "600"
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -48642,12 +48652,13 @@
       "x": 28510,
       "y": 944,
       "name": "#76 REVIEW 320 — Студия — group_pinned320",
-      "context": "#80. Композиционный макет Telegram-чата. Это одно и то же постоянное сообщение до и после ручного закрепления, не два отправления. Текст из принятого решения: Задачи команды · {Название доски}; Добавляйте задачи, берите их в работу и отслеживайте выполнение. Кнопка всегда Открыть задачи, включая первое открытие. Первое сообщение сразу корректное: без Настроить доску и сообщений о незавершённой настройке. Название начальной доски берётся из группы. Повторный вход не присылает дубль. Ни обновляющих команд, ни миграции старых закрепов.",
+      "context": "#80. Композиционный макет Telegram-чата. Это одно и то же постоянное сообщение до и после ручного закрепления, не два отправления. Текст из принятого решения: Задачи команды · {Название доски}; Добавляйте задачи, берите их в работу и отслеживайте выполнение. Кнопка всегда Открыть задачи, включая первое открытие. Первое сообщение сразу корректное: без Настроить доску и сообщений о незавершённой настройке. Название начальной доски берётся из группы. Повторный вход не присылает дубль. Ни обновляющих команд, ни миграции старых закрепов. Конечная композиция: общая иллюстрация assets/group-welcome.png сверху, текст подписью и одна кнопка под ним. Картинка не является отдельным сообщением.",
       "metadata": {
         "type": "ux-review",
         "issue": 76,
         "key": "group_pinned320",
-        "approval": "approved"
+        "approval": "approved",
+        "baseApproval": "approved"
       },
       "clip": true,
       "width": 320,
@@ -48827,86 +48838,6 @@
         },
         {
           "type": "rectangle",
-          "cornerRadius": 14,
-          "id": "g9PbK",
-          "x": 12,
-          "y": 235,
-          "name": "Одно постоянное сообщение",
-          "fill": "#FFFFFF",
-          "width": 296,
-          "height": 279
-        },
-        {
-          "type": "text",
-          "id": "vueiA",
-          "x": 26,
-          "y": 250,
-          "name": "Отправитель",
-          "fill": "#0756CB",
-          "textGrowth": "fixed-width",
-          "width": 268,
-          "content": "Задачи",
-          "lineHeight": 1.3,
-          "fontFamily": "Inter",
-          "fontSize": 13,
-          "fontWeight": "600"
-        },
-        {
-          "type": "text",
-          "id": "E2sLF",
-          "x": 26,
-          "y": 288,
-          "name": "Постоянный заголовок",
-          "fill": "#172033",
-          "textGrowth": "fixed-width",
-          "width": 268,
-          "content": "Задачи команды · Студия",
-          "lineHeight": 1.3,
-          "fontFamily": "Inter",
-          "fontSize": 22,
-          "fontWeight": "600"
-        },
-        {
-          "type": "text",
-          "id": "FOH1L",
-          "x": 26,
-          "y": 361,
-          "name": "Постоянный текст",
-          "fill": "#172033",
-          "textGrowth": "fixed-width",
-          "width": 268,
-          "content": "Добавляйте задачи, берите их в работу и отслеживайте выполнение.",
-          "lineHeight": 1.3,
-          "fontFamily": "Inter",
-          "fontSize": 15
-        },
-        {
-          "type": "frame",
-          "id": "dne7Z",
-          "x": 24,
-          "y": 448,
-          "name": "Постоянная кнопка",
-          "width": 272,
-          "height": 52,
-          "fill": "#EDF4FF",
-          "cornerRadius": 12,
-          "justifyContent": "center",
-          "alignItems": "center",
-          "children": [
-            {
-              "type": "text",
-              "id": "Q1h2J",
-              "name": "Открыть задачи",
-              "fill": "#0756CB",
-              "content": "Открыть задачи",
-              "fontFamily": "Inter",
-              "fontSize": 15,
-              "fontWeight": "600"
-            }
-          ]
-        },
-        {
-          "type": "rectangle",
           "cornerRadius": 24,
           "id": "MufPZ",
           "x": 12,
@@ -48929,6 +48860,95 @@
           "lineHeight": 1.3,
           "fontFamily": "Inter",
           "fontSize": 15
+        },
+        {
+          "type": "frame",
+          "id": "VOffB",
+          "x": 12,
+          "y": 196,
+          "name": "Одно постоянное сообщение",
+          "width": 296,
+          "fill": "#FFFFFF",
+          "cornerRadius": 14,
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "YN2pg",
+              "name": "Отправитель",
+              "fill": "#0756CB",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Задачи",
+              "lineHeight": 1.3,
+              "fontFamily": "Inter",
+              "fontSize": 13,
+              "fontWeight": "600"
+            },
+            {
+              "type": "rectangle",
+              "id": "T55qZH",
+              "name": "Общая иллюстрация задач",
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "assets/group-welcome.png",
+                "mode": "fit"
+              },
+              "width": "fill_container",
+              "height": 153
+            },
+            {
+              "type": "text",
+              "id": "xYjey",
+              "name": "Постоянный заголовок",
+              "fill": "#172033",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Задачи команды · Студия",
+              "lineHeight": 1.3,
+              "fontFamily": "Inter",
+              "fontSize": 22,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "Dd2mG",
+              "name": "Постоянный текст",
+              "fill": "#172033",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Добавляйте задачи, берите их в работу и отслеживайте выполнение.",
+              "lineHeight": 1.3,
+              "fontFamily": "Inter",
+              "fontSize": 15
+            },
+            {
+              "type": "frame",
+              "id": "WnULs",
+              "name": "Постоянная кнопка",
+              "width": "fill_container",
+              "height": 52,
+              "fill": "#EDF4FF",
+              "cornerRadius": 12,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "CUi9X",
+                  "name": "Открыть задачи",
+                  "fill": "#0756CB",
+                  "content": "Открыть задачи",
+                  "fontFamily": "Inter",
+                  "fontSize": 15,
+                  "fontWeight": "600"
+                }
+              ]
+            }
+          ]
         }
       ]
     },
