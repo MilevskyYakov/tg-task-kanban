@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Database, TaskStatus } from './db.js';
-import { telegramCall } from './telegram.js';
+import { escapeHtml, telegramCall } from './telegram.js';
 
 export type PublicationKind = 'daily' | 'weekly';
 export type PublicationSchedule = {
@@ -26,7 +26,7 @@ type ReportTask = {
 };
 
 export const publicationStatusDisplayName: Record<TaskStatus, string> = { todo: 'Новая', in_progress: 'В работе', waiting: 'Блокер', done: 'Готово' };
-const escapeHtml = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+
 const localParts = (date: Date, timezone: string) => Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
   timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
 }).formatToParts(date).map((part) => [part.type, part.value]));

@@ -106,25 +106,30 @@ export async function renameBoard(db: Database, userId: string, boardId: string,
   });
 }
 
-export async function connectChatBoard(db: Database, chatId: number, name: string) {
+export async function connectChatBoard(db: Database, chatId: number, name: string, updateId?: number, eventDate = 0) {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
-    const board = await client.query<{id: string; status: string}>(`INSERT INTO boards (id, type, name, telegram_chat_id, status)
-      VALUES ($1, 'chat', $2, $3, 'draft') ON CONFLICT (telegram_chat_id) WHERE type = 'chat'
+    const candidateId = randomUUID();
+    const board = await client.query<{id: string; status: string}>(`INSERT INTO boards (id, type, name, telegram_chat_id, status, telegram_member_update_id, telegram_member_date)
+      VALUES ($1, 'chat', $2, $3, 'draft', $4, $5) ON CONFLICT (telegram_chat_id) WHERE type = 'chat'
       DO UPDATE SET name = CASE WHEN boards.status = 'draft' THEN EXCLUDED.name ELSE boards.name END,
         status = CASE WHEN boards.status = 'frozen' THEN COALESCE(boards.frozen_from_status, 'active') ELSE boards.status END,
-        frozen_from_status = NULL RETURNING id, status`,
-      [randomUUID(), name, chatId]);
+        frozen_from_status = NULL, telegram_member_update_id = COALESCE(EXCLUDED.telegram_member_update_id, boards.telegram_member_update_id),
+        telegram_member_date = EXCLUDED.telegram_member_date
+      WHERE $4::bigint IS NULL OR boards.telegram_member_update_id IS NULL OR (COALESCE(boards.telegram_member_date, 0), boards.telegram_member_update_id) < ($5, $4)
+      RETURNING id, status`, [candidateId, name, chatId, updateId ?? null, eventDate]);
+    if (!board.rows[0]) {
+      await client.query('COMMIT');
+      return null;
+    }
     const boardId = board.rows[0].id;
     await client.query(`INSERT INTO publication_schedules (board_id, kind, weekdays, local_time) VALUES
       ($1, 'daily', ARRAY[1,2,3,4,5]::smallint[], '11:00'), ($1, 'weekly', ARRAY[1]::smallint[], '10:30')
       ON CONFLICT DO NOTHING`, [boardId]);
-    await client.query("UPDATE board_links SET revoked_at = now() WHERE board_id = $1 AND kind = 'launch' AND revoked_at IS NULL", [boardId]);
-    const token = `board_${randomBytes(24).toString('base64url')}`;
-    await client.query("INSERT INTO board_links (token_hash, board_id, kind) VALUES ($1, $2, 'launch')", [linkHash(token), boardId]);
+    if (boardId === candidateId) await client.query('INSERT INTO telegram_entry_deliveries (key, board_id) VALUES ($1, $2)', [`board:${boardId}`, boardId]);
     await client.query('COMMIT');
-    return { id: boardId, status: board.rows[0].status, token };
+    return { id: boardId, status: board.rows[0].status };
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 
@@ -132,8 +137,11 @@ export async function migrateChatBoard(db: Database, oldChatId: number, newChatI
   await db.query("UPDATE boards SET telegram_chat_id = $2 WHERE type = 'chat' AND telegram_chat_id = $1", [oldChatId, newChatId]);
 }
 
-export async function freezeChatBoard(db: Database, chatId: number) {
-  await db.query("UPDATE boards SET frozen_from_status = status, status = 'frozen' WHERE type = 'chat' AND telegram_chat_id = $1 AND status <> 'frozen'", [chatId]);
+export async function freezeChatBoard(db: Database, chatId: number, updateId?: number, eventDate = 0) {
+  await db.query(`UPDATE boards SET frozen_from_status = CASE WHEN status = 'frozen' THEN frozen_from_status ELSE status END,
+    status = 'frozen', telegram_member_update_id = COALESCE($2, telegram_member_update_id), telegram_member_date = $3
+    WHERE type = 'chat' AND telegram_chat_id = $1
+      AND ($2::bigint IS NULL OR telegram_member_update_id IS NULL OR (COALESCE(telegram_member_date, 0), telegram_member_update_id) < ($3, $2))`, [chatId, updateId ?? null, eventDate]);
 }
 
 export async function redeemBoardLink(db: Database, userId: string, token: string) {
@@ -144,21 +152,27 @@ export async function redeemBoardLink(db: Database, userId: string, token: strin
       [taskLaunch[1], taskLaunch[2], userId]);
     return task.rows[0] ? boardForUser(db, userId, task.rows[0].id) : null;
   }
-  const result = await db.query<{id: string}>(`SELECT b.id FROM board_links l JOIN boards b ON b.id = l.board_id
-    WHERE l.token_hash = $1 AND l.revoked_at IS NULL AND b.type = 'chat' AND b.status <> 'frozen'`, [linkHash(token)]);
-  const link = result.rows[0];
-  if (!link) return null;
-  await db.query(`INSERT INTO memberships (board_id, user_id, role) VALUES ($1, $2, 'member')
-    ON CONFLICT (board_id, user_id) DO NOTHING`, [link.id, userId]);
-  return boardForUser(db, userId, link.id);
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query<{id: string; status: string}>(`SELECT b.id, b.status FROM board_links l JOIN boards b ON b.id = l.board_id
+      WHERE l.token_hash = $1 AND l.revoked_at IS NULL AND b.type = 'chat' FOR UPDATE OF b, l`, [linkHash(token)]);
+    const link = result.rows[0];
+    if (link && link.status !== 'frozen') await client.query(`INSERT INTO memberships (board_id, user_id, role) VALUES ($1, $2, 'member')
+      ON CONFLICT (board_id, user_id) DO NOTHING`, [link.id, userId]);
+    await client.query('COMMIT');
+    return link ? boardForUser(db, userId, link.id) : null;
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 
 export async function activateChatBoard(db: Database, userId: string, boardId: string, name: string) {
-  const result = await db.query(`UPDATE boards b SET name = $3, status = 'active' FROM memberships m
-    WHERE b.id = $1 AND b.type = 'chat' AND m.board_id = b.id AND m.user_id = $2 RETURNING b.id, b.type, b.name, b.status`,
-    [boardId, userId, name]);
-  if (result.rowCount) await db.query("UPDATE memberships SET role = 'admin' WHERE board_id = $1 AND user_id = $2", [boardId, userId]);
-  return result.rows[0] ?? null;
+  return withBoardLock(db, boardId, async (client) => {
+    const result = await client.query(`UPDATE boards b SET name = CASE WHEN status = 'draft' THEN $3 ELSE name END, status = 'active'
+      FROM memberships m WHERE b.id = $1 AND b.type = 'chat' AND b.status IN ('draft', 'active')
+      AND m.board_id = b.id AND m.user_id = $2 RETURNING b.id, b.type, b.name, b.status`, [boardId, userId, name]);
+    if (result.rowCount) await client.query("UPDATE memberships SET role = 'admin' WHERE board_id = $1 AND user_id = $2", [boardId, userId]);
+    return result.rows[0] ?? null;
+  });
 }
 
 export async function createInvite(db: Database, userId: string, boardId: string) {

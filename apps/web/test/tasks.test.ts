@@ -121,6 +121,8 @@ test('startup context defaults to tasks and distinguishes board and task links',
   const boardId = '123e4567-e89b-12d3-a456-426614174000';
   const taskId = '123e4567-e89b-42d3-a456-426614174001';
   assert.deepEqual(resolveStartupContext(), { surface: 'tasks' });
+  for (const path of ['personal', 'pair', 'group', 'help']) assert.deepEqual(resolveStartupContext(path), { surface: 'entry', path });
+  assert.deepEqual(resolveStartupContext('pair_invite'), { surface: 'board-link', token: 'pair_invite' });
   assert.deepEqual(resolveStartupContext('invite-token'), { surface: 'board-link', token: 'invite-token' });
   assert.deepEqual(resolveStartupContext(`task_${boardId}_${taskId}`), { surface: 'task', boardId, taskId });
   assert.deepEqual(resolveStartupContext('task_missing_task-id'), { surface: 'invalid-task' });

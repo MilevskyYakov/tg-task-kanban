@@ -16,6 +16,7 @@ COPY apps/web/package.json apps/web/package.json
 RUN npm ci --omit=dev --workspace=@task/api && npm cache clean --force
 COPY --from=build /app/apps/api/dist apps/api/dist
 COPY --from=build /app/apps/api/migrations apps/api/migrations
+COPY --from=build /app/artifacts/ux/assets/group-welcome.png artifacts/ux/assets/group-welcome.png
 COPY --from=build /app/apps/web/dist apps/web/dist
 USER node
 CMD ["node", "apps/api/dist/server.js"]

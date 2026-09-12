@@ -16,6 +16,7 @@ import { BulkCreate, type BulkDraft } from './bulk-create';
 import { ClaimTask } from './claim-task';
 import { PairBoard, PairInvite } from './pair-board';
 import { boardTypeName } from './domain';
+import { EntryGuide, GroupSetup, type EntryPath } from './bot-entry';
 
 type TaskView = 'list' | 'kanban';
 type FilterChoice = 'project' | 'assignee' | 'status' | 'priority' | 'deadline';
@@ -29,6 +30,9 @@ function App() {
   const [boards, setBoards] = useState<Board[]>([]);
   const [pairFlow, setPairFlow] = useState<{board?: Board}>();
   const [pairInvite, setPairInvite] = useState('');
+  const [entryPath, setEntryPath] = useState<EntryPath>();
+  const [boardLinkError, setBoardLinkError] = useState<'invalid' | 'network'>();
+  const [startupRetry, setStartupRetry] = useState(0);
   const [accessLost, setAccessLost] = useState(false);
   const [navigation, setNavigation] = useState<NavigationState>(initialNavigation);
   const [message, setMessage] = useState('');
@@ -152,6 +156,7 @@ function App() {
   useEffect(() => {
     const webApp = window.Telegram?.WebApp;
     if (!webApp?.initData) { setState('outside'); return; }
+    setState('loading'); setBoardLinkError(undefined);
     void api('/api/auth/telegram', json('POST', {initData: webApp.initData}))
       .then(async (auth) => {
         setUserId((auth as {userId: string}).userId);
@@ -161,9 +166,13 @@ function App() {
           setProfileUsername(telegramUser.username ? `@${telegramUser.username}` : '');
         }
         const startup = resolveStartupContext(webApp.initDataUnsafe?.start_param);
+        if (startup.surface === 'entry') setEntryPath(startup.path);
         if (startup.surface === 'board-link') {
           if (startup.token.startsWith('pair_')) setPairInvite(startup.token);
-          else { const board = await api<Board>('/api/board-links/redeem', json('POST', {token: startup.token})); setBoardOverrideId(board.id); }
+          else {
+            try { const board = await api<Board>('/api/board-links/redeem', json('POST', {token: startup.token})); setBoardOverrideId(board.id); }
+            catch (error) { setBoardLinkError(error instanceof ApiError && [400, 403, 404].includes(error.status) ? 'invalid' : 'network'); }
+          }
         }
         await loadBoards();
         if (startup.surface === 'invalid-task') setTaskLinkError(404);
@@ -180,7 +189,7 @@ function App() {
         setState('ready');
       })
       .catch((error: Error) => { setMessage(error.message); setState('error'); });
-  }, []);
+  }, [startupRetry]);
   useEffect(() => {
     if (state !== 'ready' || pairFlow) return;
     const currentId = openTask?.board_id ?? (navigation.screen === 'create' ? createBoardId : board?.id);
@@ -642,6 +651,13 @@ function App() {
     pairChanged(updated); setPairFlow(undefined); setPairInvite(''); setBoardOverrideId(updated.id); setNavigation({ screen: 'tasks' }); setFilters({ ...defaultFilters, scope: 'all' });
   };
   if (accessLost) return <main><EnvironmentStatus/><h1>Доступ закрыт</h1><p>Вы больше не участвуете в этой доске. Задачи и история остались у владельца.</p><button onClick={() => { setAccessLost(false); setBoardOverrideId(undefined); setNavigation({ screen: 'tasks' }); }}>К моим задачам</button></main>;
+  if (state === 'ready' && boardLinkError) return <main><EnvironmentStatus/><section role="alert"><h1>{boardLinkError === 'invalid' ? 'Доска недоступна' : 'Не удалось открыть доску'}</h1><p>{boardLinkError === 'invalid' ? 'Ссылка недействительна или доступ закрыт. Попросите администратора проверить вход в группу.' : 'Нет связи. Повторите вход по этой ссылке.'}</p>{boardLinkError === 'network' && <button onClick={() => setStartupRetry((value) => value + 1)}>Повторить</button>}<button className="secondary" onClick={() => { setBoardLinkError(undefined); setBoardOverrideId(undefined); }}>К моим задачам</button></section></main>;
+  if (state === 'ready' && entryPath) return <EntryGuide path={entryPath} onPath={setEntryPath} onClose={() => { setEntryPath(undefined); navigate({ screen: 'tasks' }); }}
+    onPersonal={() => { const personal = boards.find((item) => item.type === 'personal'); if (personal) chooseTaskBoard(personal.id); setEntryPath(undefined); navigate({ screen: 'tasks' }); }}
+    onPair={() => { setEntryPath(undefined); setPairFlow({}); }}/ >;
+  if (state === 'ready' && board?.type === 'chat' && board.status !== 'active' && !openTask && !taskLinkError && !pairInvite && !pairFlow) return <GroupSetup key={board.id} board={board}
+    onReady={(updated) => { setBoards((items) => items.map((item) => item.id === updated.id ? { ...item, ...updated } : item)); setBoardOverrideId(updated.id); setNavigation({ screen: 'tasks' }); setTaskReload((value) => value + 1); }}
+    onClose={() => { setBoardOverrideId(undefined); navigate(globalBoardId === board.id ? { screen: 'settings-workspace' } : { screen: 'tasks' }); }}/ >;
   if (state === 'ready' && pairInvite) return <PairInvite token={pairInvite} onJoined={openPair} onClose={() => setPairInvite('')}/>;
   if (state === 'ready' && pairFlow) return <PairBoard initialBoard={pairFlow.board} onChanged={pairChanged} onOpen={openPair} onClose={() => { setPairFlow(undefined); setTaskReload((value) => value + 1); }}/ >;
   if (bulkOpen && bulkDraft) return <AppShell message="" navigation={navigation} navigate={navigate} hideNavigation><BulkCreate draft={bulkDraft} onDraft={setBulkDraft}
@@ -700,7 +716,7 @@ function App() {
       <span className="settings-card-copy"><strong>{section.title}</strong><small>{section.description}</small><span>{section.id === 'workspace' ? `${countLabel(boards.length, 'доска', 'доски', 'досок')}${settingsCounts ? ` · ${countLabel(settingsCounts.projects, 'проект', 'проекта', 'проектов')}` : ''}` : section.id === 'automation' ? settingsCounts ? `${countLabel(settingsCounts.automations, 'активный сценарий', 'активных сценария', 'активных сценариев')}` : 'Сценарии по доскам' : profileName}</span></span>
       <Icon name="chevron"/>
     </button>)}</div>
-    <p className="settings-footer">Версия 0.1 · Помощь</p>
+    <div className="settings-footer">Версия 0.1 · <button className="link" onClick={() => setEntryPath('help')}>Помощь</button></div>
   </SettingsScreen>;
   const workspaceSettings = <SettingsScreen title={board?.name ?? 'Рабочее пространство'} subtitle={board ? 'Доска, проекты и участники' : 'Доски, проекты и участники'}>
     <button className="back settings-back" onClick={() => navigate({ screen: 'settings' })}><Icon name="back"/>Настройки</button>
@@ -735,7 +751,7 @@ function App() {
   if (navigation.screen === 'settings-account') return <AppShell message={message} navigation={navigation} navigate={navigate}>{accountSettings}</AppShell>;
   if (navigation.screen === 'tasks') return <AppShell message={message} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>
     {board?.type === 'pair' && <><ActionRow label="Доступ" value={board.status === 'archived' ? 'Доска в архиве' : 'Доска на двоих'} onClick={() => setPairFlow({ board })}/>{board.status === 'archived' && <p className="notice">Доска в архиве. Задачи и история доступны только для чтения.</p>}</>}
-    {taskToolbar}{backlog && board ? backlogContent : <>{taskLoadState === 'loading' ? <Skeleton label="Загрузка задач"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : taskView === 'kanban' ? mainKanban : groupedTaskList}{taskLoadState === 'ready' && taskView === 'list' && !filteredTasks.length && (board?.type === 'pair' && board.status === 'active' && !tasks.length ? <section className="task-state"><h2>Начните с первой задачи.</h2><p>Добавьте задачу или вставьте список. Исполнителя можно выбрать позже.</p><button onClick={() => navigate({ screen: 'create' })}>Добавить задачу</button><button className="secondary" onClick={() => { setBulkDraft({ boardId: board.id, boardName: board.name, projects, project: '', text: '', started: false }); setBulkOpen(true); }}>Вставить список</button></section> : <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>)}</>}{boardOverrideId && <p className="context-note">Открыта доска по ссылке; ваш обычный выбор не изменён.</p>}{boardSheet}{filterSheet}{advancedFilterSheet}{filterChoiceSheet}{kanbanStatusSheet}</TasksScreen></AppShell>;
+    {taskToolbar}{backlog && board ? backlogContent : <>{taskLoadState === 'loading' ? <Skeleton label="Загрузка задач"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : taskView === 'kanban' ? mainKanban : groupedTaskList}{taskLoadState === 'ready' && taskView === 'list' && !filteredTasks.length && (board?.status === 'active' && !tasks.length ? <section className="task-state"><h2>Начните с первой задачи.</h2><p>Добавьте задачу или вставьте список. Исполнителя можно выбрать позже.</p><button onClick={() => navigate({ screen: 'create' })}>Добавить задачу</button><button className="secondary" onClick={() => { setBulkDraft({ boardId: board.id, boardName: board.name, projects, project: '', text: '', started: false }); setBulkOpen(true); }}>Вставить список</button></section> : <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>)}</>}{boardOverrideId && <p className="context-note">Открыта доска по ссылке; ваш обычный выбор не изменён.</p>}{boardSheet}{filterSheet}{advancedFilterSheet}{filterChoiceSheet}{kanbanStatusSheet}</TasksScreen></AppShell>;
   if (navigation.screen === 'create') return <AppShell message={message} navigation={navigation} navigate={navigate} hideNavigation><CreateScreen boardName={boards.find((item) => item.id === createBoardId)?.name ?? 'Все доски'} onClose={() => navigate(createOrigin)} onSelectBoard={() => { if (!createLock.current && !createUncertain) setCreateChoice('board'); }}>
     <form onSubmit={(event) => { event.preventDefault(); void create(); }}><fieldset className="create-screen-form" disabled={createPending || createUncertain}>
       <label className="create-title"><span>Что нужно сделать?</span><TaskGlyph/><textarea autoFocus value={title} onChange={(event) => setTitle(event.target.value)} maxLength={200} rows={2} required placeholder="Название задачи"/></label>
