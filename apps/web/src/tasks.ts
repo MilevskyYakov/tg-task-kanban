@@ -44,6 +44,11 @@ export const defaultFilters: TaskFilters = {
   scope: 'mine', project: '', assignee: '', status: '', priority: '', deadline: '', unassigned: false, search: ''
 };
 
+export const isBacklogTask = (task: Pick<Task, 'status' | 'assignee_user_id' | 'archived_at'>): boolean =>
+  task.status === 'todo' && !task.assignee_user_id && !task.archived_at;
+
+export const parseTaskList = (text: string): string[] => text.split(/\r\n|\n|\r/).map((line) => line.trim()).filter(Boolean);
+
 export function activeFilterCount(filters: TaskFilters): number {
   return Number(filters.scope === 'mine')
     + Number(Boolean(filters.project))
@@ -208,6 +213,7 @@ export async function optimisticUpdate<T>(current: T, next: T, render: (value: T
 
 export function validateTaskCreate(title: string, boardId: string): string | null {
   if (!title.trim()) return 'Введите название задачи';
+  if (title.trim().length > 200) return 'Название длиннее 200 символов';
   if (!boardId) return 'Выберите доску';
   return null;
 }

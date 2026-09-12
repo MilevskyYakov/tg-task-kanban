@@ -223,3 +223,32 @@ test('pending create locks input and reuses request id after a failed response',
   await expect.poll(() => payloads.length).toBe(2);
   expect(payloads[1]).toEqual(payloads[0]);
 });
+
+test('series resets assignee, deadline and notification while keeping project and board', async ({ page }) => {
+  const { requests } = await mockCreate(page);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Создать задачу' }).click();
+  await page.getByRole('textbox', { name: 'Что нужно сделать?' }).fill('Первая');
+  await page.getByRole('button', { name: /Проект.*Без проекта/ }).click();
+  await page.getByRole('radio', { name: 'Task Kanban' }).click();
+  await page.getByRole('button', { name: /Исполнитель.*Без ответственного/ }).click();
+  await page.getByRole('radio', { name: 'Данил' }).click();
+  await page.getByRole('button', { name: /Срок.*Без срока/ }).click();
+  await page.getByRole('radio', { name: 'Только дата' }).click();
+  await page.getByLabel('Дата срока').fill('2026-09-18');
+  await page.getByRole('button', { name: 'Применить' }).click();
+  await page.getByRole('button', { name: 'Дополнительно' }).click();
+  await page.getByRole('checkbox', { name: 'Уведомить исполнителя' }).check();
+  await page.getByRole('button', { name: 'Создать и добавить ещё' }).click();
+  await expect(page.getByRole('textbox', { name: 'Что нужно сделать?' })).toHaveValue('');
+  await expect(page.getByRole('button', { name: /Проект.*Task Kanban/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Исполнитель.*Без ответственного/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Срок.*Без срока/ })).toBeVisible();
+  await page.getByRole('textbox', { name: 'Что нужно сделать?' }).fill('Первая');
+  await page.getByRole('button', { name: 'Создать и добавить ещё' }).click();
+  await expect(page.getByRole('textbox', { name: 'Что нужно сделать?' })).toHaveValue('');
+  expect(requests).toHaveLength(2);
+  expect(requests[0]).toMatchObject({ assigneeUserId: 'user-2', notifyAssignee: true, deadlineDate: '2026-09-18' });
+  expect(requests[1]).toMatchObject({ projectId: 'project-1', assigneeUserId: null, notifyAssignee: false, deadline: null, deadlineDate: null, status: 'todo' });
+  expect(requests[0].requestId).not.toBe(requests[1].requestId);
+});

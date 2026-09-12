@@ -11,6 +11,9 @@ import { deadlineDraft, deadlinePatch, formatTaskDeadline, isTaskOverdue } from 
 import { activeFilterCount, dateInputToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveKanbanSwipe, resolveStartupContext, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, taskStatusRestriction, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
 import { FoundationFixture } from './visual-fixture';
 import { readStorage, removeStorage, writeStorage } from './environment';
+import { isBacklogTask } from './tasks';
+import { BulkCreate, type BulkDraft } from './bulk-create';
+import { ClaimTask } from './claim-task';
 
 type TaskView = 'list' | 'kanban';
 type FilterChoice = 'project' | 'assignee' | 'status' | 'priority' | 'deadline';
@@ -84,13 +87,19 @@ function App() {
   const [createBoardId, setCreateBoardId] = useState('');
   const [createOrigin, setCreateOrigin] = useState<NavigationState>(initialNavigation);
   const [createPending, setCreatePending] = useState(false);
+  const [backlog, setBacklog] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkDraft, setBulkDraft] = useState<BulkDraft>();
+  const [claimingTask, setClaimingTask] = useState<Task>();
+  const [createUncertain, setCreateUncertain] = useState(false);
+  const [createReset, setCreateReset] = useState(0);
   const [projectCreatePending, setProjectCreatePending] = useState(false);
   const [createChoice, setCreateChoice] = useState<CreateChoice>();
   const boardLoadVersion = useRef(0);
   const projectCreateLock = useRef(false);
   const createLock = useRef(false);
   const createRequest = useRef<{ payload: string; id: string } | undefined>(undefined);
-  const skipNextTaskLoad = useRef(false);
+  const pendingFilters = useRef<{ boardId: string; filters: TaskFilters } | undefined>(undefined);
   const taskScroll = useRef(storedTaskView.scrollY);
   const swipeStart = useRef<{x: number; y: number} | null>(null);
   const selectedTaskBoardId = resolveTaskBoard(globalBoardId, boardOverrideId, boards.map((item) => item.id));
@@ -102,10 +111,11 @@ function App() {
   const activeBoardId = useRef<string | undefined>(undefined);
   activeBoardId.current = board?.id;
   const navigate = (next: NavigationState) => {
-    if (createLock.current) return;
+    if (createLock.current || createUncertain) return;
     if (next.screen === 'create' && navigation.screen !== 'create') {
       setCreateOrigin(navigation.screen === 'board' ? navigation : { screen: 'tasks' });
       setCreateBoardId(board?.status === 'active' ? board.id : '');
+      setProject(board ? filters.project : '');
     }
     setOpenTask(undefined); setCollaboration(undefined); setDetailProjects([]); setDetailMembers([]); setDetailTasks([]); setMessage(''); setNavigation(next);
   };
@@ -129,6 +139,10 @@ function App() {
     taskScroll.current = window.scrollY;
     setOpenTask(task); setCollaboration(nextCollaboration); setDetailProjects(nextProjects.projects); setDetailMembers(nextMembers.members); setDetailTasks(nextTasks.tasks); setMessage('');
   };
+
+  useEffect(() => {
+    if (createReset) document.querySelector<HTMLTextAreaElement>('.create-title textarea')?.focus();
+  }, [createReset]);
 
   useEffect(() => {
     const webApp = window.Telegram?.WebApp;
@@ -161,11 +175,7 @@ function App() {
   }, []);
   useEffect(() => {
     if (state !== 'ready') return;
-    if (skipNextTaskLoad.current && (navigation.screen === 'tasks' || navigation.screen === 'board')) {
-      skipNextTaskLoad.current = false;
-      setTaskLoadState('ready');
-      return;
-    }
+
     if (navigation.screen === 'tasks') {
       setTaskLoadState('loading');
       if (selectedTaskBoardId) void loadBoard(selectedTaskBoardId).then((loaded) => { if (loaded) setTaskLoadState('ready'); }).catch((error: Error) => { setMessage(error.message); setTaskLoadState('error'); });
@@ -225,6 +235,10 @@ function App() {
 
   useEffect(() => {
     if (!userId || !board) return;
+    if (pendingFilters.current?.boardId === board.id) {
+      setFilters(pendingFilters.current.filters); setFiltersLoadedFor(board.id); pendingFilters.current = undefined;
+      return;
+    }
     let cancelled = false;
     setFiltersLoadedFor('');
     void api<{filters: Partial<TaskFilters>}>(`/api/boards/${board.id}/task-filters`)
@@ -253,7 +267,7 @@ function App() {
     await loadBoards();
   };
   const activate = () => { if (board) navigate({ screen: 'settings-workspace', boardId: board.id }); };
-  const create = async () => {
+  const create = async (another = false) => {
     if (createLock.current) return;
     const validationError = validateTaskCreate(title, createBoardId);
     if (validationError) { setMessage(validationError); return; }
@@ -276,12 +290,23 @@ function App() {
       const presentedTask = presentCreatedTask(task, boards.find((item) => item.id === createBoardId)?.name, projects.find((item) => item.id === project)?.name, members.find((item) => item.id === assignee)?.first_name);
       presentedTask.blocker_title = createTasks.find((item) => item.id === task.blocked_by_task_id)?.title;
       setTasks((current: Task[]) => current.some((item: Task) => item.id === task.id) ? current : [presentedTask, ...current]);
-      skipNextTaskLoad.current = true;
-      setTitle(''); setDescription(''); setProject(''); setAssignee(''); setDue(deadlineDraft()); setPriority('normal'); setNotifyAssignee(false);
+      setTitle(''); setDescription(''); if (!another) setProject(''); setAssignee(''); setDue(deadlineDraft()); setPriority('normal'); setNotifyAssignee(false);
       setCreateStatus('todo'); setCreateWaitReason(''); setCreateBlockerId(''); setCreateWaitCheck(''); createRequest.current = undefined;
+      setBlockerKind('external'); setBlockerSearch(''); setCreateBlockerOpen(false); setStatusChoice('todo'); setCreateReset((value) => value + 1); setCreateUncertain(false);
+      setCreateTasks((current) => [presentedTask, ...current]);
       createLock.current = false;
-      navigate(createOrigin); setMessage(task.notificationWarning ?? 'Задача создана');
-    } catch (error) { setMessage(error instanceof Error ? error.message : 'Ошибка'); }
+      if (!another) {
+        setBoardOverrideId(createBoardId); setShowArchive(false); setBacklog(isBacklogTask(task));
+        const nextFilters: TaskFilters = { ...defaultFilters, scope: 'all', project: task.project_id ?? '', status: task.status };
+        pendingFilters.current = { boardId: createBoardId, filters: nextFilters }; setFilters(nextFilters);
+        setNavigation({ screen: 'tasks' });
+      }
+      setMessage(task.notificationWarning ?? (another ? 'Задача создана. Можно добавить следующую.' : 'Задача создана'));
+    } catch (error) {
+      const uncertain = Boolean(createRequest.current) && !(error instanceof ApiError && [400, 401, 403, 404].includes(error.status));
+      setCreateUncertain(uncertain);
+      setMessage(`${error instanceof Error ? error.message : 'Ошибка'}${uncertain ? '. Повторите отправку, чтобы проверить результат. До подтверждения ввод сохранён и заблокирован.' : ''}`);
+    }
     finally { createLock.current = false; setCreatePending(false); }
   };
   const move = async (task: Task, status: TaskStatus) => {
@@ -381,6 +406,7 @@ function App() {
     form.reset(); setRecurrenceFrequency('daily'); setRecurrenceProjectId(''); setRecurrenceAssigneeId(''); setRecurrencePriority('normal');
   };
   const chooseTaskBoard = (boardId: string) => {
+    setBacklog(false);
     setBoardOverrideId(undefined);
     setGlobalBoardId(boardId);
     setFilters(defaultFilters);
@@ -396,6 +422,7 @@ function App() {
       });
     } else removeStorage('tasks.globalBoardId');
   };
+  const backlogTasks = tasks.filter((task) => task.board_id === board?.id && isBacklogTask(task) && (!filters.project || task.project_id === filters.project));
   const filteredTasks = !showArchive ? filterTasks(tasks, filters, userId) : tasks;
   const filterCount = activeFilterCount(taskView === 'kanban' ? { ...filters, status: '' } : filters);
   const recentBoards = recentBoardIds.map((id) => boards.find((item) => item.id === id)).filter((item): item is Board => Boolean(item));
@@ -486,9 +513,24 @@ function App() {
     </div>;
   const searchControls = <div className="task-toolbar">
       <input className="search" type="search" value={filters.search} onChange={(event) => setFilter('search', event.target.value)} placeholder="Поиск задач" aria-label="Поиск задач"/>
-      <button className="filter-trigger" onClick={() => { setShowAdvancedFilters(false); setFilterChoice(undefined); setShowFilterSheet(true); }}><svg className="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M7 14v6"/></svg><span className="filter-label">Фильтры</span>{filterCount > 0 && <span className="filter-count">{filterCount}</span>}</button>
+      <button className="filter-trigger" aria-label="Фильтры" onClick={() => { setShowAdvancedFilters(false); setFilterChoice(undefined); setShowFilterSheet(true); }}><svg className="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M7 14v6"/></svg><span className="filter-label">Фильтры</span>{filterCount > 0 && <span className="filter-count">{filterCount}</span>}</button>
     </div>;
-  const taskToolbar = taskView === 'kanban' ? <>{searchControls}{viewControls}</> : <>{viewControls}{searchControls}</>;
+  const scopeTabs = board && !showArchive && <div className="scope-tabs" aria-label="Очередь задач">
+    <button aria-pressed={!backlog && filters.scope === 'mine'} onClick={() => { setBacklog(false); setFilters({ ...defaultFilters, scope: 'mine', project: filters.project }); }}>Мои</button>
+    <button aria-pressed={!backlog && filters.scope === 'all'} onClick={() => { setBacklog(false); setFilters({ ...defaultFilters, scope: 'all', project: filters.project }); }}>Все</button>
+    <button aria-pressed={backlog} onClick={() => { setBacklog(true); setShowArchive(false); }}>Бэклог {taskLoadState === 'ready' ? backlogTasks.length : ''}</button>
+  </div>;
+  const backlogContent = <>
+    <ActionRow label="Проект" value={projects.find((item) => item.id === filters.project)?.name ?? 'Все проекты'} icon={<Icon name="project"/>} onClick={() => setFilterChoice('project')}/>
+    <button className="secondary backlog-paste" disabled={board?.status !== 'active'} onClick={() => { if (!bulkDraft || (bulkDraft.started && bulkDraft.rows?.every((row) => row.task))) setBulkDraft({ boardId: board!.id, boardName: board!.name, projects, project: filters.project, text: '', started: false }); setBulkOpen(true); }}>{bulkDraft && (bulkDraft.text || bulkDraft.rows?.some((row) => !row.task)) ? 'Продолжить список' : 'Вставить список'}</button>
+    <h2 className="backlog-heading">На разбор</h2><p className="bulk-context">Без исполнителя · К выполнению</p>
+    {taskLoadState === 'loading' ? <Skeleton label="Загрузка общей очереди"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Нет связи. Очередь не обновилась.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : <>
+      {!backlogTasks.length && <div className="task-state"><h3>Всё разобрано</h3><p>Здесь появятся новые задачи без исполнителя. Добавьте одну или вставьте готовый список.</p></div>}
+      {backlogTasks.map((task) => <article className="backlog-row" key={task.id}><button className="task-summary" onClick={() => void openCollaboration(task)}><strong>{task.title}</strong><small>{task.deadline || task.deadline_date ? formatTaskDeadline(task) : 'Без срока'}</small></button><button className="secondary" disabled={board?.status !== 'active'} onClick={() => setClaimingTask(task)}>Взять себе</button></article>)}
+    </>}
+    <p className="bulk-context">Другие статусы — во вкладке «Все».</p>
+  </>;
+  const taskToolbar = <>{scopeTabs}{!backlog && (taskView === 'kanban' ? <>{searchControls}{viewControls}</> : <>{viewControls}{searchControls}</>)}</>;
   const boardSheet = showBoardSheet && <Sheet className="task-sheet board-sheet" title="Выберите доску" onClose={() => setShowBoardSheet(false)}>
     {boards.length > 5 && <input className="sheet-search" type="search" value={boardSearch} onChange={(event) => setBoardSearch(event.target.value)} placeholder="Найти доску" aria-label="Найти доску"/>}
     {!boardSearch && recentBoards.length > 0 && <><h3 className="sheet-label">Недавние</h3><div className="sheet-options">{recentBoards.map((item) => <button key={`recent-${item.id}`} className={item.id === selectedTaskBoardId ? 'selected' : ''} onClick={() => chooseTaskBoard(item.id)}><span>{item.name}</span><small>{item.type === 'chat' ? 'Чат-доска' : 'Личная доска'}</small></button>)}</div></>}
@@ -514,7 +556,7 @@ function App() {
       {taskView === 'list' && <ActionRow label="Статус" value={filters.status ? statusDisplayName[filters.status] : 'Без завершённых'} onClick={() => setFilterChoice('status')}/>}
       <ActionRow label="Приоритет" value={filters.priority === 'urgent' ? 'Срочный' : filters.priority === 'normal' ? 'Обычный' : 'Любой'} onClick={() => setFilterChoice('priority')}/>
       <ActionRow label="Дедлайн" value={{ overdue: 'Просрочено', today: 'Сегодня', week: '7 дней', none: 'Без дедлайна', '': 'Любой' }[filters.deadline]} onClick={() => setFilterChoice('deadline')}/>
-      <ChoiceRow kind="check" label="Без ответственного" selected={filters.unassigned} onClick={() => setFilter('unassigned', !filters.unassigned)}/>
+      <ChoiceRow kind="check" label="Без ответственного" selected={filters.unassigned} onClick={() => setFilters((current) => ({ ...current, scope: 'all', assignee: '', unassigned: !current.unassigned }))}/>
     </div>
     <button className="filter-apply" onClick={() => { setShowAdvancedFilters(false); setShowFilterSheet(false); }}>Показать {filteredTasks.length} задач</button>
   </Sheet>;
@@ -556,10 +598,18 @@ function App() {
     return <Sheet className="task-sheet create-choice-sheet" title={choice.title} onClose={() => setCreateChoice(undefined)}><div className="choice-list" role="radiogroup">{choice.options.map((option) => <ChoiceRow key={option.value} label={option.label} selected={(createChoice === 'status' ? statusChoice : choice.current) === option.value} onClick={() => createChoice === 'status' ? setStatusChoice(option.value as TaskStatus) : choose(option.value)}/>)}</div>{createChoice === 'status' && <><p>Для «Блокера» понадобится причина. «Готово» доступно с учётом ваших прав.</p><button type="button" className="filter-apply" onClick={() => choose(statusChoice)}>Применить</button></>}<button type="button" className="sheet-close secondary" onClick={() => setCreateChoice(undefined)}>Закрыть</button></Sheet>;
   })();
 
+  if (bulkOpen && bulkDraft) return <AppShell message="" navigation={navigation} navigate={navigate} hideNavigation><BulkCreate draft={bulkDraft} onDraft={setBulkDraft}
+    onClose={() => { const nextFilters: TaskFilters = { ...defaultFilters, scope: 'all', project: bulkDraft.project }; if (board?.id !== bulkDraft.boardId) pendingFilters.current = { boardId: bulkDraft.boardId, filters: nextFilters }; setBulkOpen(false); setBoardOverrideId(bulkDraft.boardId); setFilters(nextFilters); setBacklog(true); setTaskReload((value) => value + 1); }}
+    onCreated={(created, projectId) => { if (activeBoardId.current !== bulkDraft.boardId) return; setTasks((current) => { const ids = new Set(created.map((item) => item.id)); return [...created.map((item) => presentCreatedTask(item, bulkDraft.boardName, bulkDraft.projects.find((project) => project.id === projectId)?.name)), ...current.filter((item) => !ids.has(item.id))]; }); }}/></AppShell>;
+  if (claimingTask) return <AppShell message="" navigation={navigation} navigate={navigate} hideNavigation><ClaimTask key={claimingTask.id} task={claimingTask} userId={userId} boardName={boards.find((item) => item.id === claimingTask.board_id)?.name ?? ''}
+    onBack={() => { setBoardOverrideId(claimingTask.board_id); setNavigation({ screen: 'tasks' }); setClaimingTask(undefined); setOpenTask(undefined); setCollaboration(undefined); setBacklog(true); }}
+    onMine={() => { setBoardOverrideId(claimingTask.board_id); setNavigation({ screen: 'tasks' }); setClaimingTask(undefined); setOpenTask(undefined); setCollaboration(undefined); setBacklog(false); setTaskView('list'); setFilters({ ...defaultFilters, scope: 'mine' }); setTaskReload((value) => value + 1); }}
+    onChanged={(changed) => setTasks((current) => changed ? current.map((item) => item.id === changed.id ? changed : item) : current.filter((item) => item.id !== claimingTask.id))}/></AppShell>;
   if (openTask && !collaboration) return <main className="task-details"><EnvironmentStatus/><button className="back" onClick={() => setOpenTask(undefined)}>← Задачи</button><Skeleton label="Загрузка задачи"/></main>;
   if (openTask && collaboration) return <TaskDetails
     task={openTask} collaboration={collaboration} projects={detailProjects} members={detailMembers}
     userId={userId}
+    onClaim={boards.find((item) => item.id === openTask.board_id)?.status === 'active' && isBacklogTask(openTask) ? () => setClaimingTask(openTask) : undefined}
     candidateTasks={detailTasks.filter((item) => item.id !== openTask.id && item.status !== 'done' && !item.archived_at)}
     boardName={boards.find((item) => item.id === openTask.board_id)?.name ?? openTask.board_name ?? 'Задача'}
     onBack={() => { setOpenTask(undefined); setCollaboration(undefined); requestAnimationFrame(() => window.scrollTo({ top: taskScroll.current })); }}
@@ -635,9 +685,9 @@ function App() {
   if (navigation.screen === 'settings-workspace') return <AppShell message={message} navigation={navigation} navigate={navigate}>{workspaceSettings}</AppShell>;
   if (navigation.screen === 'settings-automation') return <AppShell message={message} navigation={navigation} navigate={navigate}>{automationSettings}</AppShell>;
   if (navigation.screen === 'settings-account') return <AppShell message={message} navigation={navigation} navigate={navigate}>{accountSettings}</AppShell>;
-  if (navigation.screen === 'tasks') return <AppShell message={message} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>{taskToolbar}{taskLoadState === 'loading' ? <Skeleton label="Загрузка задач"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : taskView === 'kanban' ? mainKanban : groupedTaskList}{taskLoadState === 'ready' && taskView === 'list' && !filteredTasks.length && <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>}{boardOverrideId && <p className="context-note">Доска открыта из Telegram-чата и не заменяет ваш обычный выбор.</p>}{boardSheet}{filterSheet}{advancedFilterSheet}{filterChoiceSheet}{kanbanStatusSheet}</TasksScreen></AppShell>;
-  if (navigation.screen === 'create') return <AppShell message={message} navigation={navigation} navigate={navigate} hideNavigation><CreateScreen boardName={boards.find((item) => item.id === createBoardId)?.name ?? 'Все доски'} onClose={() => navigate(createOrigin)} onSelectBoard={() => { if (!createLock.current) setCreateChoice('board'); }}>
-    <form onSubmit={(event) => { event.preventDefault(); void create(); }}><fieldset className="create-screen-form" disabled={createPending}>
+  if (navigation.screen === 'tasks') return <AppShell message={message} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>{taskToolbar}{backlog && board ? backlogContent : <>{taskLoadState === 'loading' ? <Skeleton label="Загрузка задач"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : taskView === 'kanban' ? mainKanban : groupedTaskList}{taskLoadState === 'ready' && taskView === 'list' && !filteredTasks.length && <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>}</>}{boardOverrideId && <p className="context-note">Открыта доска задачи; ваш обычный выбор не изменён.</p>}{boardSheet}{filterSheet}{advancedFilterSheet}{filterChoiceSheet}{kanbanStatusSheet}</TasksScreen></AppShell>;
+  if (navigation.screen === 'create') return <AppShell message={message} navigation={navigation} navigate={navigate} hideNavigation><CreateScreen boardName={boards.find((item) => item.id === createBoardId)?.name ?? 'Все доски'} onClose={() => navigate(createOrigin)} onSelectBoard={() => { if (!createLock.current && !createUncertain) setCreateChoice('board'); }}>
+    <form onSubmit={(event) => { event.preventDefault(); void create(); }}><fieldset className="create-screen-form" disabled={createPending || createUncertain}>
       <label className="create-title"><span>Что нужно сделать?</span><TaskGlyph/><textarea autoFocus value={title} onChange={(event) => setTitle(event.target.value)} maxLength={200} rows={2} required placeholder="Название задачи"/></label>
       <div className="create-fields">
         <ActionRow label="Проект" value={projects.find((item) => item.id === project)?.name ?? 'Без проекта'} icon={<Icon name="project"/>} disabled={!createBoardId} onClick={() => setCreateChoice('project')}/>
@@ -647,11 +697,10 @@ function App() {
         {createStatus === 'waiting' && <ActionRow label="Причина блокера" value={createTasks.find((item) => item.id === createBlockerId)?.title ?? (createWaitReason || 'Укажите причину')} onClick={() => setCreateBlockerOpen(true)}/>}
         <ActionRow label="Доска" value={boards.find((item) => item.id === createBoardId)?.name ?? 'Выберите доску'} icon={<Icon name="board"/>} onClick={() => setCreateChoice('board')}/>
       </div>
-      <Disclosure label="Дополнительно" icon={<Icon name="sliders"/>}><div className="create-additional-fields"><label>Описание<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3}/></label><ActionRow label="Приоритет" value={priority === 'urgent' ? 'Срочный' : 'Обычный'} onClick={() => setCreateChoice('priority')}/><label className="checkbox"><input type="checkbox" checked={notifyAssignee} disabled={!assignee} onChange={(event) => setNotifyAssignee(event.target.checked)}/> Уведомить исполнителя</label></div></Disclosure>
+      <Disclosure key={createReset} label="Дополнительно" icon={<Icon name="sliders"/>}><div className="create-additional-fields"><label>Описание<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3}/></label><ActionRow label="Приоритет" value={priority === 'urgent' ? 'Срочный' : 'Обычный'} onClick={() => setCreateChoice('priority')}/><label className="checkbox"><input type="checkbox" checked={notifyAssignee} disabled={!assignee} onChange={(event) => setNotifyAssignee(event.target.checked)}/> Уведомить исполнителя</label></div></Disclosure>
       <p className="create-additional-hint">Описание, приоритет и уведомление исполнителя</p>
       {createStatus === 'done' && assignee && assignee !== userId && <p className="detail-error" role="alert">Завершить задачу может только назначенный исполнитель. Измените статус или назначьте задачу себе.</p>}
-      <div className="create-action"><button disabled={createPending || !title.trim() || !createBoardId || (createStatus === 'done' && Boolean(assignee) && assignee !== userId)}>{createPending ? 'Создаём…' : 'Создать задачу'}</button></div>
-    </fieldset></form>
+    </fieldset><div className="create-action"><button disabled={createPending || !title.trim() || !createBoardId || (createStatus === 'done' && Boolean(assignee) && assignee !== userId)}>{createPending ? 'Создаём…' : 'Создать задачу'}</button><button type="button" className="secondary" disabled={createPending || !title.trim() || !createBoardId || (createStatus === 'done' && Boolean(assignee) && assignee !== userId)} onClick={() => void create(true)}>Создать и добавить ещё</button></div></form>
     {createChoiceSheet}
     {createBlockerOpen && <Sheet className="task-sheet create-blocker-sheet" title="Причина блокера" onClose={() => setCreateBlockerOpen(false)}>
       <p>{title}</p><div className="choice-list" role="radiogroup" aria-label="Тип блокера">

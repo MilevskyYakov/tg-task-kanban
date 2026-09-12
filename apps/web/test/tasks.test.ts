@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { resolveChoiceIndex, resolveFocusIndex } from '../src/app-shell.js';
 import { resolveThemeScheme } from '../src/environment.js';
 import { countLabel, initialNavigation, isSettingsNavigation, settingsSections } from '../src/navigation.js';
@@ -12,6 +13,8 @@ import {
   deadlinePatch,
   formatTaskDeadline,
   isTaskOverdue,
+  isBacklogTask,
+  parseTaskList,
   defaultFilters,
   defaultTaskViewState,
   filterTasks,
@@ -30,6 +33,17 @@ import {
   validateTaskCreate,
   type Task
 } from '../src/tasks.js';
+
+test('backlog eligibility excludes assigned, archived and all other statuses; list keeps intentional duplicates', () => {
+  for (const status of ['todo', 'in_progress', 'waiting', 'done'] as const) {
+    assert.equal(isBacklogTask({ status }), status === 'todo');
+    assert.equal(isBacklogTask({ status, assignee_user_id: '1' }), false);
+    assert.equal(isBacklogTask({ status, archived_at: '2026-09-12' }), false);
+  }
+  assert.deepEqual(parseTaskList(' One \r\n\nOne\r Two \n  '), ['One', 'One', 'Two']);
+  assert.equal(validateTaskCreate('x'.repeat(200), 'board'), null);
+  assert.equal(validateTaskCreate('x'.repeat(201), 'board'), 'Название длиннее 200 символов');
+});
 
 const tasks: Task[] = [
   { id: '1', board_id: 'b', title: 'Срочный релиз', description: 'Проверить API', project_id: 'p', assignee_user_id: 'u', creator_user_id: 'u', status: 'in_progress', priority: 'urgent', deadline: '2026-08-12T10:00:00Z', overdue: true, wait_check_due: false },

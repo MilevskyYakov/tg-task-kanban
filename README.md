@@ -28,7 +28,9 @@ npm run build
 DATABASE_URL=postgres://task:task@localhost:5432/task npm run migrate
 ```
 
-Интеграционный тест изоляции обязателен и падает без `TEST_DATABASE_URL`.
+Интеграционный тест изоляции обязателен и падает без `TEST_DATABASE_URL`. Для полного browser/API/DB gate также запустите `npm run test:visual` с этой переменной. Используйте только отдельную тестовую PostgreSQL, заранее применив к ней миграции (`DATABASE_URL="$TEST_DATABASE_URL" npm run migrate`); не направляйте тесты или тестовые миграции в production.
+
+Бэклог и быстрое добавление (#78): общая очередь `todo` без исполнителя, атомарное «Взять себе», серия задач с сохранением доски/проекта и вставка списка с безопасным повтором. Локальная проверка и границы: [`docs/issue-78-verification.md`](docs/issue-78-verification.md).
 
 Полный production runbook, backup/restore и pilot gate: [`docs/release-runbook.md`](docs/release-runbook.md) и [`docs/pilot-checklist.md`](docs/pilot-checklist.md). Release gate нового Telegram UX: [`docs/issue-37-release-gate.md`](docs/issue-37-release-gate.md).
 
