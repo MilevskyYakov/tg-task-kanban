@@ -70,6 +70,7 @@ type Props = {
   candidateTasks: Task[];
   boardName: string;
   onBack: () => void;
+  onClaim?: () => void;
   onSave: (patch: ReturnType<typeof taskPatch>, future: boolean, confirmIncompleteChecklist?: boolean) => Promise<void>;
   onArchive: () => Promise<void>;
   onChecklistAdd: (text: string) => Promise<void>;
@@ -79,7 +80,7 @@ type Props = {
   onUrlAttachment: (url: string) => Promise<void>;
 };
 
-export function TaskDetails({ task, userId, collaboration, projects, members, candidateTasks, boardName, onBack, onSave, onArchive, onChecklistAdd, onChecklistUpdate, onChecklistDelete, onComment, onUrlAttachment }: Props) {
+export function TaskDetails({ task, userId, collaboration, projects, members, candidateTasks, boardName, onBack, onClaim, onSave, onArchive, onChecklistAdd, onChecklistUpdate, onChecklistDelete, onComment, onUrlAttachment }: Props) {
   const [draft, setDraft] = useState(() => taskDraft(task));
   const [checklistText, setChecklistText] = useState('');
   const [comment, setComment] = useState('');
@@ -156,6 +157,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
         <div className="detail-add"><input aria-label="Новый пункт чек-листа" maxLength={500} value={checklistText} onChange={(event) => setChecklistText(event.target.value)} placeholder="Новый пункт"/><button type="button" disabled={busy || !checklistText.trim()} onClick={() => void run(() => onChecklistAdd(checklistText.trim()), () => setChecklistText(''))}>Добавить</button></div>
       </section>
 
+      {onClaim && <button className="detail-save" type="button" disabled={busy} onClick={onClaim}>Взять себе</button>}
       <button className="detail-save" disabled={busy}>Сохранить изменения</button>
     </form>
 

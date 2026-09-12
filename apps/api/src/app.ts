@@ -9,6 +9,7 @@ import type { Config } from './config.js';
 import { isChatAdmin, telegramCall } from './telegram.js';
 import { renderPublication, schedulesForBoard, updateSchedule, validTimezone as validPublicationTimezone, type PublicationKind, type PublicationSchedule } from './publications.js';
 import { validTimezone } from './recurrence.js';
+import { claimTask } from './db.js';
 
 type ChatMemberUpdate = {
   chat: { id: number; title?: string; type: string };
@@ -250,6 +251,21 @@ export function buildApp(config: Config, db: Database) {
     }
     if (!task) return reply.code(404).send({ error: 'board, project or assignee not found' });
     return { ...task, notificationWarning: input.notifyAssignee ? await sendTaskNotification(task.id) : null };
+  });
+  app.post<{Params: {id: string; taskId: string}}>('/api/boards/:id/tasks/:taskId/claim', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!uuid.test(request.params.id) || !uuid.test(request.params.taskId)) return reply.code(400).send({ error: 'invalid task reference' });
+    try {
+      const result = await claimTask(db, id, request.params.id, request.params.taskId);
+      if (!result) return reply.code(404).send({ error: 'Задача не найдена' });
+      const task = await taskForBoard(db, id, request.params.id, request.params.taskId);
+      if (result.claimed && !task) return reply.code(403).send({ error: 'Задача больше недоступна' });
+      return result.claimed ? task : reply.code(409).send({ error: 'Задача уже назначена или больше не входит в бэклог', task });
+    } catch (error) {
+      if (error instanceof TaskActionError) return reply.code(403).send({ error: error.message });
+      throw error;
+    }
   });
   app.patch<{Params: {id: string; taskId: string}, Querystring: {scope?: string}, Body: TaskPatchInput}>('/api/boards/:id/tasks/:taskId', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;

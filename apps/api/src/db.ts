@@ -277,7 +277,7 @@ export async function createTask(db: Database, userId: string, boardId: string, 
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
     if (!(await client.query(`SELECT 1 FROM boards b JOIN memberships m ON m.board_id = b.id
-      WHERE b.id = $1 AND b.status = 'active' AND m.user_id = $2`, [boardId, userId])).rowCount) {
+      WHERE b.id = $1 AND b.status = 'active' AND m.user_id = $2 FOR SHARE OF b, m`, [boardId, userId])).rowCount) {
       await client.query('ROLLBACK'); return null;
     }
     const requestHash = createHash('sha256').update(JSON.stringify(Object.entries(input).filter(([key]) => key !== 'requestId').sort(([a], [b]) => a.localeCompare(b)))).digest('hex');
@@ -321,6 +321,29 @@ export async function createTask(db: Database, userId: string, boardId: string, 
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 
+export async function claimTask(db: Database, userId: string, boardId: string, taskId: string) {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
+    const access = await client.query(`SELECT 1 FROM boards b JOIN memberships m ON m.board_id = b.id
+      WHERE b.id = $1 AND b.status = 'active' AND m.user_id = $2 FOR SHARE OF b, m`, [boardId, userId]);
+    if (!access.rowCount) throw new TaskActionError('Нет доступа к активной доске');
+    const current = await client.query('SELECT * FROM tasks WHERE id = $1 AND board_id = $2 FOR UPDATE', [taskId, boardId]);
+    const task = current.rows[0];
+    if (!task) { await client.query('ROLLBACK'); return null; }
+    if (task.archived_at || task.status !== 'todo' || task.assignee_user_id) {
+      await client.query('COMMIT'); return { claimed: false };
+    }
+    const result = await client.query(`UPDATE tasks SET assignee_user_id = $3, updated_at = now()
+      WHERE id = $1 AND board_id = $2 RETURNING *`, [taskId, boardId, userId]);
+    await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, before_data, after_data)
+      VALUES ($1, $2, $3, $4, 'claimed', $5, $6)`, [randomUUID(), boardId, taskId, userId, task, result.rows[0]]);
+    await client.query('COMMIT');
+    return { claimed: true };
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}
+
 export async function updateTask(db: Database, userId: string, boardId: string, taskId: string, input: TaskInput) {
   const client = await db.connect();
   try {
@@ -328,7 +351,8 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
     // ponytail: serialize dependency mutations per board; narrow lock scope only if board write throughput becomes limiting.
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
     const current = await client.query<any>(`SELECT t.*, to_char(t.deadline_date, 'YYYY-MM-DD') AS deadline_date FROM tasks t JOIN boards b ON b.id = t.board_id
-      WHERE t.id = $1 AND t.board_id = $2 AND t.archived_at IS NULL AND b.status = 'active' FOR UPDATE`, [taskId, boardId]);
+      JOIN memberships m ON m.board_id = b.id AND m.user_id = $3
+      WHERE t.id = $1 AND t.board_id = $2 AND t.archived_at IS NULL AND b.status = 'active' FOR UPDATE`, [taskId, boardId, userId]);
     const task = current.rows[0];
     if (!task) { await client.query('ROLLBACK'); return null; }
     const status = input.status ?? task.status;
@@ -411,6 +435,7 @@ export async function setTaskArchived(db: Database, userId: string, boardId: str
     const result = await client.query(`UPDATE tasks t SET archived_at = CASE WHEN $4 THEN now() ELSE NULL END, updated_at = now() FROM boards b
     WHERE t.id = $1 AND t.board_id = $2 AND b.id = t.board_id AND b.status = 'active'
       AND (t.creator_user_id = $3 OR t.assignee_user_id = $3)
+      AND EXISTS (SELECT 1 FROM memberships WHERE board_id = t.board_id AND user_id = $3)
       AND (($4 AND t.archived_at IS NULL) OR (NOT $4 AND t.archived_at IS NOT NULL)) RETURNING t.id`,
     [taskId, boardId, userId, archived]);
     if (result.rowCount) await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, before_data)
