@@ -171,6 +171,9 @@ export type TaskInput = {
   status?: TaskStatus;
   priority?: TaskPriority;
   deadline?: string | null;
+  deadlineDate?: string | null;
+  deadlineTimezone?: string | null;
+  requestId?: string;
   waitReason?: string | null;
   waitCheckAt?: string | null;
   blockerTaskId?: string | null;
@@ -214,11 +217,12 @@ export async function updateProject(db: Database, userId: string, boardId: strin
 const taskColumns = `t.id, t.board_id, t.project_id, p.name AS project_name, t.creator_user_id, t.assignee_user_id,
   assignee.first_name AS assignee_name,
   t.title, t.description, t.status, t.priority, t.deadline, t.wait_reason, t.wait_check_at,
+  to_char(t.deadline_date, 'YYYY-MM-DD') AS deadline_date, t.deadline_timezone,
   t.blocked_by_task_id, blocker.title AS blocker_title,
   t.recurrence_template_id, t.occurrence_at, t.archived_at, t.created_at, t.updated_at,
   (SELECT count(*)::int FROM task_checklist_items ci WHERE ci.task_id = t.id) AS checklist_total,
   (SELECT count(*)::int FROM task_checklist_items ci WHERE ci.task_id = t.id AND ci.completed_at IS NOT NULL) AS checklist_completed,
-  (t.status <> 'done' AND t.deadline < now()) AS overdue,
+  task_deadline_overdue(t.status, t.deadline, t.deadline_date, t.deadline_timezone, now()) AS overdue,
   (t.status = 'waiting' AND t.wait_check_at <= now()) AS wait_check_due`;
 
 export async function tasksForBoard(db: Database, userId: string, boardId: string, archived = false) {
@@ -253,22 +257,59 @@ export async function tasksForAssignee(db: Database, userId: string) {
   return result.rows;
 }
 
+function assertCompletionAllowed(userId: string, creatorId: string, assigneeId: string | null) {
+  if (assigneeId !== userId && (assigneeId !== null || creatorId !== userId)) {
+    throw new TaskActionError(assigneeId
+      ? 'Завершить задачу может только назначенный исполнитель'
+      : 'Завершить задачу без исполнителя может только создатель');
+  }
+}
+
+async function assertBlockerAllowed(client: pg.PoolClient, boardId: string, blockerId: string) {
+  const blocker = await client.query(`SELECT 1 FROM tasks WHERE id = $1 AND board_id = $2
+    AND archived_at IS NULL AND status <> 'done'`, [blockerId, boardId]);
+  if (!blocker.rowCount) throw new TaskConflictError('task blocker must be active task on same board');
+}
+
 export async function createTask(db: Database, userId: string, boardId: string, input: TaskInput) {
-  if (input.status && input.status !== 'todo') return null;
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
+    if (!(await client.query(`SELECT 1 FROM boards b JOIN memberships m ON m.board_id = b.id
+      WHERE b.id = $1 AND b.status = 'active' AND m.user_id = $2`, [boardId, userId])).rowCount) {
+      await client.query('ROLLBACK'); return null;
+    }
+    const requestHash = createHash('sha256').update(JSON.stringify(Object.entries(input).filter(([key]) => key !== 'requestId').sort(([a], [b]) => a.localeCompare(b)))).digest('hex');
+    if (input.requestId) {
+      const existing = await client.query(`SELECT *, to_char(deadline_date, 'YYYY-MM-DD') AS deadline_date FROM tasks
+        WHERE board_id = $1 AND creator_user_id = $2 AND create_request_id = $3`, [boardId, userId, input.requestId]);
+      if (existing.rows[0]) {
+        if (existing.rows[0].create_request_hash !== requestHash) throw new TaskConflictError('creation request already used with different input');
+        await client.query('COMMIT'); return existing.rows[0];
+      }
+    }
+    const status = input.status ?? 'todo';
+    if (status === 'done') assertCompletionAllowed(userId, userId, input.assigneeUserId ?? null);
+    if (status === 'waiting' && Number(Boolean(input.blockerTaskId)) + Number(Boolean(input.waitReason?.trim())) !== 1) {
+      throw new TaskConflictError('choose one blocker task or external reason');
+    }
+    if (status === 'waiting' && input.blockerTaskId) await assertBlockerAllowed(client, boardId, input.blockerTaskId);
     const result = await client.query(`INSERT INTO tasks (id, board_id, project_id, creator_user_id, assignee_user_id,
-      title, description, status, priority, deadline, wait_reason, wait_check_at)
-    SELECT $3, b.id, $4, $2, $5, $6, $7, $8, $9, $10, $11, $12
+      title, description, status, priority, deadline, wait_reason, wait_check_at, blocked_by_task_id,
+      completed_at, deadline_date, deadline_timezone, create_request_id, create_request_hash)
+    SELECT $3, b.id, $4, $2, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+      CASE WHEN $8 = 'done' THEN now() ELSE NULL END, $14, $15, $16, $17
     FROM boards b JOIN memberships creator ON creator.board_id = b.id
     LEFT JOIN projects p ON p.id = $4 AND p.board_id = b.id AND p.archived_at IS NULL
     LEFT JOIN memberships assignee ON assignee.board_id = b.id AND assignee.user_id = $5
     WHERE b.id = $1 AND b.status = 'active' AND creator.user_id = $2
       AND ($4::uuid IS NULL OR p.id IS NOT NULL) AND ($5::bigint IS NULL OR assignee.user_id IS NOT NULL)
-    RETURNING *`, [boardId, userId, randomUUID(), input.projectId ?? null, input.assigneeUserId ?? null,
+    RETURNING *, to_char(deadline_date, 'YYYY-MM-DD') AS deadline_date`, [boardId, userId, randomUUID(), input.projectId ?? null, input.assigneeUserId ?? null,
       input.title!, input.description ?? null, input.status ?? 'todo', input.priority ?? 'normal',
-      input.deadline ?? null, input.waitReason ?? null, input.waitCheckAt ?? null]);
+      input.deadline ?? null, status === 'waiting' ? input.waitReason?.trim() || null : null,
+      status === 'waiting' ? input.waitCheckAt ?? null : null, status === 'waiting' ? input.blockerTaskId ?? null : null,
+      input.deadlineDate ?? null, input.deadlineTimezone ?? null, input.requestId ?? null, input.requestId ? requestHash : null]);
     const task = result.rows[0];
     if (!task) { await client.query('ROLLBACK'); return null; }
     await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, after_data)
@@ -286,17 +327,12 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
     await client.query('BEGIN');
     // ponytail: serialize dependency mutations per board; narrow lock scope only if board write throughput becomes limiting.
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
-    const current = await client.query<any>(`SELECT t.* FROM tasks t JOIN boards b ON b.id = t.board_id
+    const current = await client.query<any>(`SELECT t.*, to_char(t.deadline_date, 'YYYY-MM-DD') AS deadline_date FROM tasks t JOIN boards b ON b.id = t.board_id
       WHERE t.id = $1 AND t.board_id = $2 AND t.archived_at IS NULL AND b.status = 'active' FOR UPDATE`, [taskId, boardId]);
     const task = current.rows[0];
     if (!task) { await client.query('ROLLBACK'); return null; }
     const status = input.status ?? task.status;
-    if (status === 'done' && task.status !== 'done'
-      && task.assignee_user_id !== userId && (task.assignee_user_id !== null || task.creator_user_id !== userId)) {
-      throw new TaskActionError(task.assignee_user_id
-        ? 'Завершить задачу может только назначенный исполнитель'
-        : 'Завершить задачу без исполнителя может только создатель');
-    }
+    if (status === 'done' && task.status !== 'done') assertCompletionAllowed(userId, task.creator_user_id, task.assignee_user_id);
     if (task.status === 'done' && status !== 'done' && task.creator_user_id !== userId) {
       throw new TaskActionError('Вернуть задачу в работу может только создатель');
     }
@@ -309,9 +345,7 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
     if (status === 'waiting' && Number(Boolean(blockerTaskId)) + Number(Boolean(waitReason?.trim())) !== 1) { await client.query('ROLLBACK'); return null; }
     if (blockerTaskId && (blockerTaskId !== task.blocked_by_task_id || task.status !== 'waiting')) {
       if (blockerTaskId === taskId) throw new TaskConflictError('task cannot block itself');
-      const blocker = await client.query(`SELECT 1 FROM tasks WHERE id = $1 AND board_id = $2
-        AND archived_at IS NULL AND status <> 'done'`, [blockerTaskId, boardId]);
-      if (!blocker.rowCount) throw new TaskConflictError('task blocker must be active task on same board');
+      await assertBlockerAllowed(client, boardId, blockerTaskId);
       const cycle = await client.query(`WITH RECURSIVE blockers AS (
           SELECT id, blocked_by_task_id FROM tasks WHERE id = $1 AND board_id = $2
           UNION ALL
@@ -327,12 +361,14 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
     const waiting = status === 'waiting';
     const result = await client.query(`UPDATE tasks SET project_id = $3, assignee_user_id = $4, title = $5,
       description = $6, status = $7, priority = $8, deadline = $9, wait_reason = $10,
-      wait_check_at = $11, blocked_by_task_id = $12,
+      wait_check_at = $11, blocked_by_task_id = $12, deadline_date = $13, deadline_timezone = $14,
       completed_at = CASE WHEN $7 = 'done' AND status <> 'done' THEN now() WHEN $7 <> 'done' THEN NULL ELSE completed_at END,
-      updated_at = now() WHERE id = $1 AND board_id = $2 RETURNING *`,
+      updated_at = now() WHERE id = $1 AND board_id = $2 RETURNING *, to_char(deadline_date, 'YYYY-MM-DD') AS deadline_date`,
       [taskId, boardId, projectId, assigneeId, input.title ?? task.title, input.description === undefined ? task.description : input.description,
-        status, input.priority ?? task.priority, input.deadline === undefined ? task.deadline : input.deadline,
-        waitReason, waiting ? (input.waitCheckAt === undefined ? task.wait_check_at : input.waitCheckAt) : null, blockerTaskId]);
+        status, input.priority ?? task.priority, input.deadline === undefined ? (input.deadlineDate ? null : task.deadline) : input.deadline,
+        waitReason, waiting ? (input.waitCheckAt === undefined ? task.wait_check_at : input.waitCheckAt) : null, blockerTaskId,
+        input.deadlineDate === undefined ? (input.deadline === undefined ? task.deadline_date : null) : input.deadlineDate,
+        input.deadlineTimezone === undefined ? (input.deadline === undefined ? task.deadline_timezone : null) : input.deadlineTimezone]);
     await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, before_data, after_data)
       VALUES ($1, $2, $3, $4, 'updated', $5, $6)`, [randomUUID(), boardId, taskId, userId, task, result.rows[0]]);
     const blockerChanged = task.blocked_by_task_id !== blockerTaskId || task.wait_reason !== waitReason;
@@ -370,6 +406,7 @@ export async function setTaskArchived(db: Database, userId: string, boardId: str
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
     const current = await client.query('SELECT * FROM tasks WHERE id = $1 AND board_id = $2 FOR UPDATE', [taskId, boardId]);
     const result = await client.query(`UPDATE tasks t SET archived_at = CASE WHEN $4 THEN now() ELSE NULL END, updated_at = now() FROM boards b
     WHERE t.id = $1 AND t.board_id = $2 AND b.id = t.board_id AND b.status = 'active'

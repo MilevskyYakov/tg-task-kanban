@@ -25,7 +25,7 @@ test('task lifecycle enforces tenant, role and transition rules', async () => {
 
   const task = await createTask(db, users[0], boardId, { title: 'Ship', projectId: project.id, assigneeUserId: users[1], priority: 'urgent', deadline: '2000-01-01T00:00:00Z' });
   assert.ok(task);
-  assert.equal(await createTask(db, users[0], boardId, { title: 'Bypass', assigneeUserId: users[1], status: 'done' }), null, 'create cannot bypass close permission');
+  await assert.rejects(() => createTask(db, users[0], boardId, { title: 'Bypass', assigneeUserId: users[1], status: 'done' }), TaskActionError, 'create cannot bypass close permission');
   assert.equal(await createTask(db, users[3], boardId, { title: 'Stolen' }), null);
   assert.equal((await tasksForBoard(db, users[2], boardId))[0].overdue, true, 'member reads active board tasks and overdue is computed');
   assert.equal((await tasksForBoard(db, users[3], boardId)).length, 0, 'outsider cannot read tasks');

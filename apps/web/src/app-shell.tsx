@@ -92,13 +92,13 @@ export function ChoiceSheet({ title, children, onClose, className = '' }: { titl
   useEffect(() => {
     previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     (sheet.current?.querySelector<HTMLElement>('[aria-checked="true"]')
-      ?? sheet.current?.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'))?.focus();
+      ?? sheet.current?.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'))?.focus();
     return () => previousFocus.current?.focus();
   }, []);
   const handleKeyDown = (event: KeyboardEvent) => {
     if (event.key === 'Escape') { onClose(); return; }
     if (event.key !== 'Tab') return;
-    const focusable = [...(sheet.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])') ?? [])];
+    const focusable = [...(sheet.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])') ?? [])].filter((element) => element.tabIndex >= 0);
     const current = focusable.indexOf(document.activeElement as HTMLElement);
     const next = resolveFocusIndex(current, focusable.length, event.shiftKey);
     if (next !== null) { event.preventDefault(); focusable[next]?.focus(); }
@@ -159,5 +159,5 @@ export function SettingsScreen({ children, title = 'Настройки', subtitl
 }
 
 export function CreateScreen({ children, boardName, onClose, onSelectBoard }: { children: ReactNode; boardName: string; onClose: () => void; onSelectBoard: () => void }) {
-  return <section className="create-screen"><header><IconButton label="Закрыть" onClick={onClose}><Icon name="close"/></IconButton><h1>Новая задача</h1><button className="create-board-selector" type="button" onClick={onSelectBoard}>{boardName}<Icon name="chevron"/></button></header>{children}</section>;
+  return <section className="create-screen"><header><IconButton label="Закрыть" onClick={onClose}><Icon name="back"/></IconButton><h1>Новая задача</h1></header><button className="create-board-selector" type="button" onClick={onSelectBoard}>{boardName}<Icon name="chevron"/></button>{children}</section>;
 }

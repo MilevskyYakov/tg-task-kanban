@@ -16,6 +16,9 @@ export type Task = {
   status: TaskStatus;
   priority: TaskPriority;
   deadline?: string;
+  deadline_date?: string;
+  deadline_timezone?: string;
+  wait_check_at?: string;
   wait_reason?: string;
   blocked_by_task_id?: string;
   blocker_title?: string;
@@ -153,10 +156,10 @@ export function groupTasksByDeadline(tasks: Task[], now = new Date(), timeZone =
   const groups: Record<DeadlineGroup, Task[]> = { overdue: [], today: [], upcoming: [], none: [] };
   const today = localDateKey(now, timeZone);
   for (const task of tasks) {
-    if (!task.deadline) { groups.none.push(task); continue; }
-    const deadline = new Date(task.deadline);
-    const date = localDateKey(deadline, timeZone);
-    groups[date < today ? 'overdue' : date === today ? 'today' : 'upcoming'].push(task);
+    if (!task.deadline && !task.deadline_date) { groups.none.push(task); continue; }
+    const date = task.deadline_date ?? localDateKey(new Date(task.deadline!), timeZone);
+    const taskToday = task.deadline_date ? localDateKey(now, task.deadline_timezone!) : today;
+    groups[date < taskToday ? 'overdue' : date === taskToday ? 'today' : 'upcoming'].push(task);
   }
   return groups;
 }
@@ -179,6 +182,9 @@ export function filterTasks(tasks: Task[], filters: TaskFilters, userId: string,
 
   return tasks.filter((task) => {
     const deadline = task.deadline ? new Date(task.deadline) : null;
+    const zone = task.deadline_timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const dateToday = localDateKey(now, zone);
+    const dateWeek = new Date(`${dateToday}T00:00:00Z`); dateWeek.setUTCDate(dateWeek.getUTCDate() + 7);
     return (filters.scope === 'all' || task.assignee_user_id === userId)
       && (!filters.project || task.project_id === filters.project)
       && (!filters.assignee || task.assignee_user_id === filters.assignee)
@@ -187,10 +193,10 @@ export function filterTasks(tasks: Task[], filters: TaskFilters, userId: string,
       && (!filters.unassigned || !task.assignee_user_id)
       && (!search || task.title.toLocaleLowerCase('ru-RU').includes(search) || task.description?.toLocaleLowerCase('ru-RU').includes(search))
       && (!filters.deadline
-        || (filters.deadline === 'none' && !deadline)
+        || (filters.deadline === 'none' && !deadline && !task.deadline_date)
         || (filters.deadline === 'overdue' && task.overdue)
-        || (filters.deadline === 'today' && deadline !== null && deadline >= today && deadline < tomorrow)
-        || (filters.deadline === 'week' && deadline !== null && deadline >= today && deadline < nextWeek));
+        || (filters.deadline === 'today' && (task.deadline_date ? task.deadline_date === dateToday : deadline !== null && deadline >= today && deadline < tomorrow))
+        || (filters.deadline === 'week' && (task.deadline_date ? task.deadline_date >= dateToday && task.deadline_date < dateWeek.toISOString().slice(0, 10) : deadline !== null && deadline >= today && deadline < nextWeek)));
   });
 }
 
@@ -210,7 +216,7 @@ export function presentCreatedTask(task: Task, boardName?: string, projectName?:
   return {
     ...task, board_name: boardName, project_name: projectName, assignee_name: assigneeName,
     checklist_total: 0, checklist_completed: 0,
-    overdue: Boolean(task.deadline && task.status !== 'done' && new Date(task.deadline) < now), wait_check_due: false
+    overdue: isTaskOverdue(task, now), wait_check_due: Boolean(task.status === 'waiting' && task.wait_check_at && new Date(task.wait_check_at) <= now)
   };
 }
 
@@ -221,7 +227,44 @@ export function dateInputToIso(value: string): string | null {
 }
 
 export function dateTimeInputsToIso(date: string, time: string): string | null {
-  if (!dateInputToIso(date) || (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time))) return null;
-  const value = new Date(`${date}T${time || '00:00'}:00`);
-  return Number.isNaN(value.valueOf()) ? null : value.toISOString();
+  if (!dateInputToIso(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return null;
+  const value = new Date(`${date}T${time}:00`);
+  return Number.isNaN(value.valueOf()) || localDateKey(value, Intl.DateTimeFormat().resolvedOptions().timeZone) !== date
+    || `${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}` !== time ? null : value.toISOString();
+}
+
+export type DeadlineDraft = { mode: 'none' | 'date' | 'datetime'; date: string; time: string; timezone: string; originalTimestamp?: string };
+export const deadlineModeName = { none: 'Без срока', date: 'Только дата', datetime: 'Дата и время' };
+
+export function deadlineDraft(task?: Pick<Task, 'deadline' | 'deadline_date' | 'deadline_timezone'>): DeadlineDraft {
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const date = task?.deadline ? new Date(task.deadline) : null;
+  return {
+    mode: task?.deadline_date ? 'date' : date ? 'datetime' : 'none',
+    date: task?.deadline_date ?? (date ? localDateKey(date, timezone) : ''),
+    time: date ? `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}` : '',
+    timezone: task?.deadline_timezone ?? timezone, originalTimestamp: task?.deadline
+  };
+}
+
+export function deadlinePatch(draft: DeadlineDraft) {
+  if (draft.mode !== 'none' && !dateInputToIso(draft.date)) throw new Error('Укажите корректный срок');
+  let deadline: string | null = null;
+  if (draft.mode === 'datetime') {
+    const original = deadlineDraft({ deadline: draft.originalTimestamp });
+    deadline = draft.originalTimestamp && original.date === draft.date && original.time === draft.time
+      ? draft.originalTimestamp : dateTimeInputsToIso(draft.date, draft.time);
+    if (!deadline) throw new Error('Укажите корректные дату и время');
+  }
+  return { deadline, deadlineDate: draft.mode === 'date' ? draft.date : null, deadlineTimezone: draft.mode === 'date' ? draft.timezone : null };
+}
+
+export function isTaskOverdue(task: Pick<Task, 'status' | 'deadline' | 'deadline_date' | 'deadline_timezone'>, now = new Date()): boolean {
+  return task.status !== 'done' && (task.deadline_date
+    ? localDateKey(now, task.deadline_timezone!) > task.deadline_date : Boolean(task.deadline && new Date(task.deadline) < now));
+}
+
+export function formatTaskDeadline(task: Pick<Task, 'deadline' | 'deadline_date' | 'deadline_timezone'>): string {
+  if (task.deadline_date) return `${new Date(`${task.deadline_date}T00:00:00Z`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', timeZone: 'UTC' })} · весь день`;
+  return task.deadline ? new Date(task.deadline).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Без срока';
 }

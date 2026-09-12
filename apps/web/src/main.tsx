@@ -2,17 +2,19 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 import { api, ApiError, json } from './api';
-import { ActionRow, AppShell, Avatar, Badge, ChoiceAction, ChoiceRow, CreateScreen, Disclosure, EnvironmentStatus, FieldRow, Icon, SectionHeader, SettingsScreen, Sheet, Skeleton, TasksScreen, type IconName } from './app-shell';
+import { ActionRow, AppShell, Avatar, Badge, ChoiceAction, ChoiceRow, CreateScreen, Disclosure, EnvironmentStatus, FieldRow, Icon, SectionHeader, SettingsScreen, Sheet, Skeleton, TaskGlyph, TasksScreen, type IconName } from './app-shell';
 import type { Board, Collaboration, Member, Project, Recurrence, Schedule } from './domain';
 import { countLabel, initialNavigation, settingsSections, type NavigationState } from './navigation';
 import { TaskDetails } from './task-details';
-import { activeFilterCount, dateInputToIso, dateTimeInputsToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveKanbanSwipe, resolveStartupContext, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, taskStatusRestriction, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
+import { DeadlineField } from './deadline-field';
+import { deadlineDraft, deadlinePatch, formatTaskDeadline, isTaskOverdue } from './tasks';
+import { activeFilterCount, dateInputToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveKanbanSwipe, resolveStartupContext, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, taskStatusRestriction, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
 import { FoundationFixture } from './visual-fixture';
 import { readStorage, removeStorage, writeStorage } from './environment';
 
 type TaskView = 'list' | 'kanban';
 type FilterChoice = 'project' | 'assignee' | 'status' | 'priority' | 'deadline';
-type CreateChoice = 'board' | 'project' | 'assignee' | 'priority';
+type CreateChoice = 'board' | 'project' | 'assignee' | 'priority' | 'status';
 const statuses = Object.keys(statusDisplayName) as TaskStatus[];
 window.Telegram?.WebApp?.ready();
 window.Telegram?.WebApp?.expand();
@@ -29,8 +31,16 @@ function App() {
   const [assignee, setAssignee] = useState('');
   const [project, setProject] = useState('');
   const [description, setDescription] = useState('');
-  const [deadline, setDeadline] = useState('');
-  const [deadlineTime, setDeadlineTime] = useState('');
+  const [due, setDue] = useState(() => deadlineDraft());
+  const [createStatus, setCreateStatus] = useState<TaskStatus>('todo');
+  const [statusChoice, setStatusChoice] = useState<TaskStatus>('todo');
+  const [createWaitReason, setCreateWaitReason] = useState('');
+  const [createBlockerId, setCreateBlockerId] = useState('');
+  const [createWaitCheck, setCreateWaitCheck] = useState('');
+  const [createTasks, setCreateTasks] = useState<Task[]>([]);
+  const [createBlockerOpen, setCreateBlockerOpen] = useState(false);
+  const [blockerKind, setBlockerKind] = useState<'external' | 'task'>('external');
+  const [blockerSearch, setBlockerSearch] = useState('');
   const [priority, setPriority] = useState<Task['priority']>('normal');
   const [notifyAssignee, setNotifyAssignee] = useState(false);
   const [openTask, setOpenTask] = useState<Task>();
@@ -78,6 +88,8 @@ function App() {
   const [createChoice, setCreateChoice] = useState<CreateChoice>();
   const boardLoadVersion = useRef(0);
   const projectCreateLock = useRef(false);
+  const createLock = useRef(false);
+  const createRequest = useRef<{ payload: string; id: string } | undefined>(undefined);
   const skipNextTaskLoad = useRef(false);
   const taskScroll = useRef(storedTaskView.scrollY);
   const swipeStart = useRef<{x: number; y: number} | null>(null);
@@ -90,6 +102,7 @@ function App() {
   const activeBoardId = useRef<string | undefined>(undefined);
   activeBoardId.current = board?.id;
   const navigate = (next: NavigationState) => {
+    if (createLock.current) return;
     if (next.screen === 'create' && navigation.screen !== 'create') {
       setCreateOrigin(navigation.screen === 'board' ? navigation : { screen: 'tasks' });
       setCreateBoardId(board?.status === 'active' ? board.id : '');
@@ -163,14 +176,15 @@ function App() {
   }, [state, navigation, selectedTaskBoardId, taskReload]);
   useEffect(() => {
     if (navigation.screen !== 'create') return;
-    setProjects([]); setMembers([]);
+    setProjects([]); setMembers([]); setCreateTasks([]);
     if (!createBoardId) return;
     let cancelled = false;
     void Promise.all([
       api<{projects: Project[]}>(`/api/boards/${createBoardId}/projects`),
-      api<{members: Member[]}>(`/api/boards/${createBoardId}/members`)
-    ]).then(([projectData, memberData]) => {
-      if (!cancelled) { setProjects(projectData.projects); setMembers(memberData.members); }
+      api<{members: Member[]}>(`/api/boards/${createBoardId}/members`),
+      api<{tasks: Task[]}>(`/api/boards/${createBoardId}/tasks`)
+    ]).then(([projectData, memberData, taskData]) => {
+      if (!cancelled) { setProjects(projectData.projects); setMembers(memberData.members); setCreateTasks(taskData.tasks); }
     }).catch((error: Error) => { if (!cancelled) setMessage(error.message); });
     return () => { cancelled = true; };
   }, [navigation.screen, createBoardId]);
@@ -240,23 +254,35 @@ function App() {
   };
   const activate = () => { if (board) navigate({ screen: 'settings-workspace', boardId: board.id }); };
   const create = async () => {
+    if (createLock.current) return;
     const validationError = validateTaskCreate(title, createBoardId);
     if (validationError) { setMessage(validationError); return; }
-    const deadlineIso = deadline ? dateTimeInputsToIso(deadline, deadlineTime) : null;
-    if (deadline && !deadlineIso) { setMessage('Проверьте срок задачи'); return; }
+    if (createStatus === 'waiting' && !createBlockerId && !createWaitReason.trim()) { setMessage('Укажите задачу-блокер или внешнюю причину'); return; }
+    if (createStatus === 'done' && assignee && assignee !== userId) { setMessage('Завершить задачу может только назначенный исполнитель'); return; }
+    createLock.current = true;
     setCreatePending(true);
     try {
-      const task = await api<Task & {notificationWarning?: string}>(`/api/boards/${createBoardId}/tasks`, json('POST', {
+      const waitCheckAt = createStatus === 'waiting' && createWaitCheck ? dateInputToIso(createWaitCheck) : null;
+      if (createStatus === 'waiting' && createWaitCheck && !waitCheckAt) throw new Error('Проверьте дату проверки');
+      const payload = {
         title: title.trim(), description: description.trim() || null, projectId: project || null,
-        assigneeUserId: assignee || null, deadline: deadlineIso, priority, notifyAssignee
-      }));
+        assigneeUserId: assignee || null, ...deadlinePatch(due), priority, notifyAssignee, status: createStatus,
+        blockerTaskId: createStatus === 'waiting' ? createBlockerId || null : null,
+        waitReason: createStatus === 'waiting' && !createBlockerId ? createWaitReason.trim() : null, waitCheckAt
+      };
+      const serialized = JSON.stringify([createBoardId, payload]);
+      if (createRequest.current?.payload !== serialized) createRequest.current = { payload: serialized, id: crypto.randomUUID() };
+      const task = await api<Task & {notificationWarning?: string}>(`/api/boards/${createBoardId}/tasks`, json('POST', { ...payload, requestId: createRequest.current.id }));
       const presentedTask = presentCreatedTask(task, boards.find((item) => item.id === createBoardId)?.name, projects.find((item) => item.id === project)?.name, members.find((item) => item.id === assignee)?.first_name);
+      presentedTask.blocker_title = createTasks.find((item) => item.id === task.blocked_by_task_id)?.title;
       setTasks((current: Task[]) => current.some((item: Task) => item.id === task.id) ? current : [presentedTask, ...current]);
       skipNextTaskLoad.current = true;
-      setTitle(''); setDescription(''); setProject(''); setAssignee(''); setDeadline(''); setDeadlineTime(''); setPriority('normal'); setNotifyAssignee(false);
+      setTitle(''); setDescription(''); setProject(''); setAssignee(''); setDue(deadlineDraft()); setPriority('normal'); setNotifyAssignee(false);
+      setCreateStatus('todo'); setCreateWaitReason(''); setCreateBlockerId(''); setCreateWaitCheck(''); createRequest.current = undefined;
+      createLock.current = false;
       navigate(createOrigin); setMessage(task.notificationWarning ?? 'Задача создана');
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Ошибка'); }
-    finally { setCreatePending(false); }
+    finally { createLock.current = false; setCreatePending(false); }
   };
   const move = async (task: Task, status: TaskStatus) => {
     if (task.status === status) return;
@@ -382,7 +408,7 @@ function App() {
     <div onClick={() => { if (!board && task.board_id) setNavigation({ screen: 'board', boardId: task.board_id }); }}>
       <span>{task.board_name ?? statusDisplayName[task.status]}</span><strong>{task.title}</strong>
       {task.description && <small>{task.description}</small>}
-      <div className="meta">{task.project_name && <small>{task.project_name}</small>}<small>{task.assignee_name ?? 'Без ответственного'}</small>{task.deadline && <small>До {new Date(task.deadline).toLocaleDateString('ru-RU')}</small>}</div>
+      <div className="meta">{task.project_name && <small>{task.project_name}</small>}<small>{task.assignee_name ?? 'Без ответственного'}</small>{(task.deadline || task.deadline_date) && <small>{formatTaskDeadline(task)}</small>}</div>
       {task.overdue && <small className="flag">Дедлайн прошёл</small>}{task.wait_check_due && <small className="flag">Пора проверить ожидание</small>}{task.blocker_title ? <small>Блокирует: {task.blocker_title}</small> : task.wait_reason && <small>Внешний блокер: {task.wait_reason}</small>}
     </div>
     {board && <div className="actions"><button onClick={() => openCollaboration(task)}>Открыть</button>{task.archived_at ? <button onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}/reopen`, {method: 'POST'}), 'Задача восстановлена')}>Восстановить</button> : <>
@@ -398,7 +424,7 @@ function App() {
       <strong>{task.title}</strong>
       <div className="task-meta">
         <span>{task.project_name ?? task.board_name ?? 'Без проекта'}</span>
-        {task.deadline && <span className={task.overdue ? 'deadline-overdue' : ''}>{task.overdue ? 'Дедлайн прошёл' : new Date(task.deadline).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</span>}
+        {(task.deadline || task.deadline_date) && <span className={task.overdue ? 'deadline-overdue' : ''}>{formatTaskDeadline(task)}{task.overdue ? ' · Дедлайн прошёл' : ''}</span>}
         {task.priority === 'urgent' && <Badge tone="urgent">Срочно</Badge>}
         {task.status === 'waiting' && !task.wait_reason && <Badge tone="blocker">Блокер</Badge>}
         {Boolean(task.checklist_total) && <span>{task.checklist_completed}/{task.checklist_total}</span>}
@@ -419,7 +445,7 @@ function App() {
   }</div>;
   const kanbanTasks = filterTasks(tasks, { ...filters, status: kanbanStatus }, userId);
   const kanbanTaskRow = (task: Task) => { const hasStatusAction = statuses.some((status) => status !== task.status && !taskStatusRestriction(task, userId, status)); return <article className={`kanban-task-row status-${task.status}`} key={task.id}>
-    <button className="task-summary" onClick={() => void openCollaboration(task)}><strong>{task.title}</strong><div className="task-meta"><span>{task.project_name ?? task.board_name ?? 'Без проекта'}</span>{task.deadline && <span className={task.overdue ? 'deadline-overdue' : ''}>{task.overdue ? 'Дедлайн прошёл' : new Date(task.deadline).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</span>}{task.priority === 'urgent' && <Badge tone="urgent">Срочно</Badge>}</div></button>
+    <button className="task-summary" onClick={() => void openCollaboration(task)}><strong>{task.title}</strong><div className="task-meta"><span>{task.project_name ?? task.board_name ?? 'Без проекта'}</span>{(task.deadline || task.deadline_date) && <span className={task.overdue ? 'deadline-overdue' : ''}>{formatTaskDeadline(task)}{task.overdue ? ' · Дедлайн прошёл' : ''}</span>}{task.priority === 'urgent' && <Badge tone="urgent">Срочно</Badge>}</div></button>
     {task.assignee_name && <Avatar initials={initials(task.assignee_name)} label={`Исполнитель: ${task.assignee_name}`}/>}
     <button className="kanban-status-action" disabled={!hasStatusAction} onClick={() => setKanbanStatusTask(task)}><span>Статус</span><strong>{statusDisplayName[task.status]}</strong><Icon name="chevron"/></button>
     {!hasStatusAction && <small className="task-action-reason kanban-action-reason">{taskStatusRestriction(task, userId, statuses.find((status) => status !== task.status)!)}</small>}
@@ -514,18 +540,20 @@ function App() {
     board: { title: 'Доска', current: createBoardId, options: [{ value: '', label: 'Выберите доску' }, ...boards.filter((item) => item.status === 'active').map((item) => ({ value: item.id, label: item.name }))] },
     project: { title: 'Проект', current: project, options: [{ value: '', label: 'Без проекта' }, ...projects.filter((item) => !item.archived_at).map((item) => ({ value: item.id, label: item.name }))] },
     assignee: { title: 'Исполнитель', current: assignee, options: [{ value: '', label: 'Без ответственного' }, ...members.map((member) => ({ value: member.id, label: member.first_name }))] },
-    priority: { title: 'Приоритет', current: priority, options: [{ value: 'normal', label: 'Обычный' }, { value: 'urgent', label: 'Срочный' }] }
+    priority: { title: 'Приоритет', current: priority, options: [{ value: 'normal', label: 'Обычный' }, { value: 'urgent', label: 'Срочный' }] },
+    status: { title: 'Статус задачи', current: createStatus, options: statuses.map((value) => ({ value, label: value === 'todo' ? 'К выполнению' : statusDisplayName[value] })) }
   } satisfies Record<CreateChoice, { title: string; current: string; options: { value: string; label: string }[] }>;
   const createChoiceSheet = createChoice && (() => {
     const choice = createChoiceDefinitions[createChoice];
     const choose = (value: string) => {
-      if (createChoice === 'board') { setMessage(''); setCreateBoardId(value); setProject(''); setAssignee(''); setNotifyAssignee(false); }
+      if (createChoice === 'board') { setMessage(''); setCreateBoardId(value); setProject(''); setAssignee(''); setNotifyAssignee(false); setCreateBlockerId(''); }
       else if (createChoice === 'project') setProject(value);
       else if (createChoice === 'assignee') { setAssignee(value); if (!value) setNotifyAssignee(false); }
+      else if (createChoice === 'status') { setCreateStatus(value as TaskStatus); if (value === 'waiting') setCreateBlockerOpen(true); }
       else setPriority(value as Task['priority']);
       setCreateChoice(undefined);
     };
-    return <Sheet className="task-sheet create-choice-sheet" title={choice.title} onClose={() => setCreateChoice(undefined)}><div className="choice-list" role="radiogroup">{choice.options.map((option) => <ChoiceRow key={option.value} label={option.label} selected={choice.current === option.value} onClick={() => choose(option.value)}/>)}</div><button className="sheet-close secondary" onClick={() => setCreateChoice(undefined)}>Закрыть</button></Sheet>;
+    return <Sheet className="task-sheet create-choice-sheet" title={choice.title} onClose={() => setCreateChoice(undefined)}><div className="choice-list" role="radiogroup">{choice.options.map((option) => <ChoiceRow key={option.value} label={option.label} selected={(createChoice === 'status' ? statusChoice : choice.current) === option.value} onClick={() => createChoice === 'status' ? setStatusChoice(option.value as TaskStatus) : choose(option.value)}/>)}</div>{createChoice === 'status' && <><p>Для «Блокера» понадобится причина. «Готово» доступно с учётом ваших прав.</p><button type="button" className="filter-apply" onClick={() => choose(statusChoice)}>Применить</button></>}<button type="button" className="sheet-close secondary" onClick={() => setCreateChoice(undefined)}>Закрыть</button></Sheet>;
   })();
 
   if (openTask && !collaboration) return <main className="task-details"><EnvironmentStatus/><button className="back" onClick={() => setOpenTask(undefined)}>← Задачи</button><Skeleton label="Загрузка задачи"/></main>;
@@ -536,13 +564,14 @@ function App() {
     boardName={boards.find((item) => item.id === openTask.board_id)?.name ?? openTask.board_name ?? 'Задача'}
     onBack={() => { setOpenTask(undefined); setCollaboration(undefined); requestAnimationFrame(() => window.scrollTo({ top: taskScroll.current })); }}
     onSave={async (patch, future, confirmIncompleteChecklist = false) => {
-      await api(`/api/boards/${openTask.board_id}/tasks/${openTask.id}${future ? '?scope=future' : ''}`, json('PATCH', { ...patch, confirmIncompleteChecklist }));
+      const saved = await api<Task>(`/api/boards/${openTask.board_id}/tasks/${openTask.id}${future ? '?scope=future' : ''}`, json('PATCH', { ...patch, confirmIncompleteChecklist }));
       if (board) await loadBoard(board.id);
       else setTasks((current) => current.map((item) => item.id === openTask.id ? {
         ...item, title: patch.title, description: patch.description ?? undefined, status: patch.status, priority: patch.priority,
         project_id: patch.projectId ?? undefined, project_name: detailProjects.find((project) => project.id === patch.projectId)?.name,
         assignee_user_id: patch.assigneeUserId ?? undefined, assignee_name: detailMembers.find((member) => member.id === patch.assigneeUserId)?.first_name,
-        deadline: patch.deadline ?? undefined, blocked_by_task_id: patch.blockerTaskId ?? undefined, wait_reason: patch.waitReason ?? undefined
+        deadline: saved.deadline, deadline_date: saved.deadline_date, deadline_timezone: saved.deadline_timezone,
+        overdue: isTaskOverdue(saved), blocked_by_task_id: patch.blockerTaskId ?? undefined, wait_reason: patch.waitReason ?? undefined
       } : item));
       setMessage('Задача обновлена');
     }}
@@ -607,21 +636,38 @@ function App() {
   if (navigation.screen === 'settings-automation') return <AppShell message={message} navigation={navigation} navigate={navigate}>{automationSettings}</AppShell>;
   if (navigation.screen === 'settings-account') return <AppShell message={message} navigation={navigation} navigate={navigate}>{accountSettings}</AppShell>;
   if (navigation.screen === 'tasks') return <AppShell message={message} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>{taskToolbar}{taskLoadState === 'loading' ? <Skeleton label="Загрузка задач"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : taskView === 'kanban' ? mainKanban : groupedTaskList}{taskLoadState === 'ready' && taskView === 'list' && !filteredTasks.length && <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>}{boardOverrideId && <p className="context-note">Доска открыта из Telegram-чата и не заменяет ваш обычный выбор.</p>}{boardSheet}{filterSheet}{advancedFilterSheet}{filterChoiceSheet}{kanbanStatusSheet}</TasksScreen></AppShell>;
-  if (navigation.screen === 'create') return <AppShell message={message} navigation={navigation} navigate={navigate} hideNavigation><CreateScreen boardName={boards.find((item) => item.id === createBoardId)?.name ?? 'Все доски'} onClose={() => navigate(createOrigin)} onSelectBoard={() => setCreateChoice('board')}>
-    <form className="create-screen-form" onSubmit={(event) => { event.preventDefault(); void create(); }}>
-      <label className="create-title"><span>Что нужно сделать?</span><textarea autoFocus value={title} onChange={(event) => setTitle(event.target.value)} maxLength={200} rows={2} required placeholder="Название задачи"/></label>
-      <p className="create-title-meta">НАЗВАНИЕ · ВВОД</p>
+  if (navigation.screen === 'create') return <AppShell message={message} navigation={navigation} navigate={navigate} hideNavigation><CreateScreen boardName={boards.find((item) => item.id === createBoardId)?.name ?? 'Все доски'} onClose={() => navigate(createOrigin)} onSelectBoard={() => { if (!createLock.current) setCreateChoice('board'); }}>
+    <form onSubmit={(event) => { event.preventDefault(); void create(); }}><fieldset className="create-screen-form" disabled={createPending}>
+      <label className="create-title"><span>Что нужно сделать?</span><TaskGlyph/><textarea autoFocus value={title} onChange={(event) => setTitle(event.target.value)} maxLength={200} rows={2} required placeholder="Название задачи"/></label>
       <div className="create-fields">
         <ActionRow label="Проект" value={projects.find((item) => item.id === project)?.name ?? 'Без проекта'} icon={<Icon name="project"/>} disabled={!createBoardId} onClick={() => setCreateChoice('project')}/>
         <ActionRow label="Исполнитель" value={members.find((item) => item.id === assignee)?.first_name ?? 'Без ответственного'} icon={<Icon name="assignee"/>} disabled={!createBoardId} onClick={() => setCreateChoice('assignee')}/>
-        <fieldset className="create-deadline"><span className="action-row-icon"><Icon name="calendar"/></span><legend>Срок</legend><div><input aria-label="Дата срока" type="date" value={deadline} onChange={(event) => { setDeadline(event.target.value); if (!event.target.value) setDeadlineTime(''); }}/><input aria-label="Время срока" type="time" disabled={!deadline} value={deadlineTime} onChange={(event) => setDeadlineTime(event.target.value)}/></div></fieldset>
+        <DeadlineField value={due} onChange={setDue} disabled={createPending}/>
+        <ActionRow label="Статус" value={createStatus === 'todo' ? 'К выполнению' : statusDisplayName[createStatus]} icon={<Icon name="tasks"/>} disabled={createPending} onClick={() => { setStatusChoice(createStatus); setCreateChoice('status'); }}/>
+        {createStatus === 'waiting' && <ActionRow label="Причина блокера" value={createTasks.find((item) => item.id === createBlockerId)?.title ?? (createWaitReason || 'Укажите причину')} onClick={() => setCreateBlockerOpen(true)}/>}
         <ActionRow label="Доска" value={boards.find((item) => item.id === createBoardId)?.name ?? 'Выберите доску'} icon={<Icon name="board"/>} onClick={() => setCreateChoice('board')}/>
       </div>
       <Disclosure label="Дополнительно" icon={<Icon name="sliders"/>}><div className="create-additional-fields"><label>Описание<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3}/></label><ActionRow label="Приоритет" value={priority === 'urgent' ? 'Срочный' : 'Обычный'} onClick={() => setCreateChoice('priority')}/><label className="checkbox"><input type="checkbox" checked={notifyAssignee} disabled={!assignee} onChange={(event) => setNotifyAssignee(event.target.checked)}/> Уведомить исполнителя</label></div></Disclosure>
       <p className="create-additional-hint">Описание, приоритет и уведомление исполнителя</p>
-      <div className="create-action"><button disabled={createPending || !title.trim() || !createBoardId}>{createPending ? 'Создаём…' : 'Создать задачу'}</button></div>
-    </form>
+      {createStatus === 'done' && assignee && assignee !== userId && <p className="detail-error" role="alert">Завершить задачу может только назначенный исполнитель. Измените статус или назначьте задачу себе.</p>}
+      <div className="create-action"><button disabled={createPending || !title.trim() || !createBoardId || (createStatus === 'done' && Boolean(assignee) && assignee !== userId)}>{createPending ? 'Создаём…' : 'Создать задачу'}</button></div>
+    </fieldset></form>
     {createChoiceSheet}
+    {createBlockerOpen && <Sheet className="task-sheet create-blocker-sheet" title="Причина блокера" onClose={() => setCreateBlockerOpen(false)}>
+      <p>{title}</p><div className="choice-list" role="radiogroup" aria-label="Тип блокера">
+        <ChoiceRow label="Внешняя причина" selected={blockerKind === 'external'} onClick={() => { setBlockerKind('external'); setCreateBlockerId(''); }}/>
+        <ChoiceRow label="Другая задача" selected={blockerKind === 'task'} onClick={() => { setBlockerKind('task'); setCreateWaitReason(''); }}/>
+      </div>
+      {blockerKind === 'external' ? <label>Что мешает начать?<textarea aria-label="Внешняя причина" value={createWaitReason} maxLength={1000} onChange={(event) => setCreateWaitReason(event.target.value)}/></label> : <>
+        <input type="search" aria-label="Найти задачу-блокер" placeholder="Найти задачу" value={blockerSearch} onChange={(event) => setBlockerSearch(event.target.value)}/>
+        <div className="choice-list" role="radiogroup" aria-label="Задача-блокер">{createTasks.filter((item) => item.status !== 'done' && !item.archived_at && item.title.toLocaleLowerCase('ru').includes(blockerSearch.toLocaleLowerCase('ru'))).map((item) => <ChoiceRow key={item.id} label={item.title} selected={createBlockerId === item.id} onClick={() => setCreateBlockerId(item.id)}/>)}</div>
+        {!createTasks.some((item) => item.status !== 'done' && !item.archived_at) && <p>Доступных задач-блокеров нет. Укажите внешнюю причину.</p>}
+      </>}
+      <label>Дата проверки<input type="date" value={createWaitCheck} onChange={(event) => setCreateWaitCheck(event.target.value)}/></label>
+      <small>Причина будет видна участникам доски.</small>
+      <button type="button" className="filter-apply" disabled={!createBlockerId && !createWaitReason.trim()} onClick={() => setCreateBlockerOpen(false)}>Подтвердить блокер</button>
+      <button type="button" className="sheet-close secondary" onClick={() => setCreateBlockerOpen(false)}>Назад</button>
+    </Sheet>}
   </CreateScreen></AppShell>;
   if (board) return <AppShell message={message} navigation={navigation} navigate={navigate}><button className="back" onClick={() => navigate({ screen: 'tasks' })}>← Задачи</button><header><p className="eyebrow">{board.type === 'chat' ? 'ЧАТ-ДОСКА' : 'ЛИЧНАЯ ДОСКА'}</p><h1>{board.name}</h1></header>{publicationSettings}{board.status === 'frozen' ? <p className="notice">Бот больше не в чате. Данные сохранены, действия заморожены.</p> : board.status === 'draft' ? <section><p>Завершите настройку, чтобы команда начала работу.</p><button onClick={activate}>Активировать</button></section> : <><section className="recurrences"><div className="project-row"><strong>Повторы</strong><button className="secondary" onClick={addRecurrence}>Добавить повтор</button></div>{recurrences.map((item) => <article className="recurrence" key={item.id}><span>{item.frequency} · {item.local_time} · {item.timezone}</span><strong>{item.title}</strong>{item.next_occurrence_at && <small>Следующий: {new Date(item.next_occurrence_at).toLocaleString('ru-RU')}</small>}<div className="actions">{!item.archived_at && <button onClick={() => action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {paused: !item.paused_at})), item.paused_at ? 'Повтор продолжен' : 'Повтор на паузе')}>{item.paused_at ? 'Продолжить' : 'Пауза'}</button>}<button onClick={() => action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {archived: true})), 'Повтор архивирован')}>В архив</button></div></article>)}</section><div className="project-row"><div>{projects.map((item) => <span key={item.id}><button className="link" onClick={() => item.archived_at ? action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: false})), 'Проект восстановлен') : editProject(item)}>{item.name}{item.archived_at ? ' · восстановить' : ''}</button>{!item.archived_at && <button className="link" onClick={() => action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: true})), 'Проект архивирован')}>×</button>}</span>)}</div><button className="secondary" onClick={addProject}>+ Проект</button></div><button className="secondary" onClick={() => { const next = !showArchive; setShowArchive(next); void loadBoard(board.id, next); }}>{showArchive ? 'Только активные' : 'Показать архив'}</button>{taskControls}{taskView === 'kanban' && !showArchive ? kanban : taskList}{!filteredTasks.length && <p>{filters.search ? 'Ничего не найдено.' : 'Задач в этом срезе пока нет.'}</p>}</>}{board.type === 'chat' && board.status !== 'frozen' && <button className="secondary" onClick={() => action(async () => { const result = await api<{url: string}>(`/api/boards/${board.id}/invites`, {method: 'POST'}); await navigator.clipboard.writeText(result.url); }, 'Ссылка скопирована', false)}>Скопировать приглашение</button>}</AppShell>;
   const boardList = <div className="board-list">{boards.map((item) => <button className="board" key={item.id} onClick={() => { setMessage(''); setNavigation({ screen: 'board', boardId: item.id }); }}><span>{item.type === 'chat' ? 'ЧАТ' : 'ЛИЧНАЯ'}{item.status === 'frozen' ? ' · ЗАМОРОЖЕНА' : ''}</span><strong>{item.name}</strong><small>{item.type === 'chat' ? 'Командное пространство' : 'Только ваши задачи'}</small></button>)}</div>;

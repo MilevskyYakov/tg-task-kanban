@@ -17,6 +17,9 @@ type ReportTask = {
   status: TaskStatus;
   priority: string;
   deadline: string | null;
+  deadline_date: string | null;
+  deadline_timezone: string | null;
+  overdue: boolean;
   wait_check_at: string | null;
   project_name: string | null;
   assignee_name: string | null;
@@ -48,12 +51,14 @@ export async function updateSchedule(db: Database, boardId: string, kind: Public
 }
 
 async function reportTasks(db: Database, boardId: string, kind: PublicationKind, statuses: string[], timezone: string, now: Date) {
-  const params: unknown[] = kind === 'weekly' ? [boardId, statuses, now.toISOString(), timezone] : [boardId, statuses];
+  const params: unknown[] = kind === 'weekly' ? [boardId, statuses, now.toISOString(), timezone] : [boardId, statuses, now.toISOString()];
   const filter = kind === 'weekly' ? `((t.archived_at IS NULL AND t.status <> 'done' AND t.status = ANY($2::text[]))
       OR (t.status = 'done' AND t.completed_at >= (date_trunc('week', $3::timestamptz AT TIME ZONE $4) - interval '1 week') AT TIME ZONE $4
       AND t.completed_at < date_trunc('week', $3::timestamptz AT TIME ZONE $4) AT TIME ZONE $4))`
     : `t.archived_at IS NULL AND t.status = ANY($2::text[])`;
   const result = await db.query<ReportTask>(`SELECT t.id, t.title, t.status, t.priority, t.deadline, t.wait_check_at,
+      to_char(t.deadline_date, 'YYYY-MM-DD') AS deadline_date, t.deadline_timezone,
+      task_deadline_overdue(t.status, t.deadline, t.deadline_date, t.deadline_timezone, $3::timestamptz) AS overdue,
       p.name AS project_name, u.first_name AS assignee_name FROM tasks t
     LEFT JOIN projects p ON p.id = t.project_id LEFT JOIN users u ON u.id = t.assignee_user_id
     WHERE t.board_id = $1 AND (${filter})
@@ -62,7 +67,7 @@ async function reportTasks(db: Database, boardId: string, kind: PublicationKind,
 }
 
 function taskLine(task: ReportTask, now: Date, botUsername: string, boardId: string) {
-  const labels = [task.priority === 'urgent' ? '🔥' : '', task.deadline && new Date(task.deadline) < now && task.status !== 'done' ? 'ПРОСРОЧЕНО' : '', task.wait_check_at && new Date(task.wait_check_at) <= now && task.status === 'waiting' ? 'ПРОВЕРИТЬ' : ''].filter(Boolean).join(' · ');
+  const labels = [task.priority === 'urgent' ? '🔥' : '', task.overdue ? 'ПРОСРОЧЕНО' : '', task.deadline_date ? `${task.deadline_date} · весь день (${task.deadline_timezone})` : '', task.wait_check_at && new Date(task.wait_check_at) <= now && task.status === 'waiting' ? 'ПРОВЕРИТЬ' : ''].filter(Boolean).join(' · ');
   const start = `task_${boardId}_${task.id}`;
   return `• <a href="https://t.me/${botUsername}?startapp=${start}">${escapeHtml(task.title)}</a>${labels ? ` — <b>${labels}</b>` : ''}`;
 }
@@ -84,7 +89,7 @@ export async function renderPublication(db: Database, boardId: string, kind: Pub
   const sections = [`<b>${title}</b>`];
   if (kind === 'weekly') {
     const count = (predicate: (task: ReportTask) => boolean) => tasks.filter(predicate).length;
-    sections.push(`Выполнено: <b>${count((task) => task.status === 'done')}</b> · Просрочено: <b>${count((task) => task.status !== 'done' && !!task.deadline && new Date(task.deadline) < now)}</b> · ${publicationStatusDisplayName.waiting}: <b>${count((task) => task.status === 'waiting')}</b> · Активно: <b>${count((task) => task.status !== 'done')}</b>`);
+    sections.push(`Выполнено: <b>${count((task) => task.status === 'done')}</b> · Просрочено: <b>${count((task) => task.overdue)}</b> · ${publicationStatusDisplayName.waiting}: <b>${count((task) => task.status === 'waiting')}</b> · Активно: <b>${count((task) => task.status !== 'done')}</b>`);
   }
   for (const [person, projects] of groups) for (const [project, statusesMap] of projects) for (const [status, list] of statusesMap) {
     sections.push(`<b>${escapeHtml(person)}</b> · ${escapeHtml(project)} · ${publicationStatusDisplayName[status as TaskStatus]}\n${list.map((task) => taskLine(task, now, botUsername, boardId)).join('\n')}`);
