@@ -29,7 +29,7 @@
 .mcp-create fieldset { margin-bottom: 24px; }
 .mcp-screen .secondary { background: var(--primary-soft); color: var(--primary); border: 0; min-height: 52px; }
 .mcp-screen .danger, .mcp-sheet .danger { background: var(--coral-soft); color: #ac303b; }
-.mcp-screen .mcp-code { font: 500 .8125rem/1.6 'IBM Plex Mono', monospace; overflow-wrap: anywhere; word-break: break-word; user-select: text; color: var(--text); }
+.mcp-screen .mcp-code, .mcp-sheet .mcp-code { font: 500 .8125rem/1.6 'IBM Plex Mono', monospace; overflow-wrap: anywhere; word-break: break-word; user-select: text; color: var(--text); }
 .mcp-code:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .mcp-key { padding: 12px; border-radius: 8px; background: var(--surface-soft); }
 .mcp-summary strong { font-size: 1rem; font-weight: 600; }
@@ -53,3 +53,9 @@
 .mcp-sheet label { display: grid; gap: 8px; color: var(--text-muted); font-size: .875rem; }
 .mcp-sheet input { min-width: 0; width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 1rem; }
 .mcp-sheet > button { min-height: 52px; margin: 0; }
+.mcp-help-steps { display: grid; gap: 24px; margin: 0; padding-left: 24px; min-width: 0; }
+.mcp-help-steps li { min-width: 0; font-size: .875rem; overflow-wrap: anywhere; }
+.mcp-help-steps ul { display: grid; gap: 12px; margin: 12px 0; padding-left: 18px; }
+.mcp-help-steps button { width: 100%; min-height: 52px; margin: 0; }
+.mcp-command { padding: 12px; border-radius: 8px; background: var(--surface-soft); white-space: pre-wrap; }
+.mcp-command code { font: inherit; }

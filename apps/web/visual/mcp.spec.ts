@@ -49,7 +49,7 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
     const shot=async(name:string)=>{
       await page.evaluate(()=>document.fonts.ready);
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-      await page.screenshot({path:`${evidence}/${name}-${width}.png`,fullPage:true,mask:[page.locator('.mcp-key')],maskColor:'#d7dde6'});
+      await page.screenshot({path:`${evidence}/${name}-${width}.png`,fullPage:!await page.getByRole('dialog',{name:'Как подключить Hermes'}).isVisible(),style:'.mcp-key { color: transparent !important; -webkit-text-fill-color: transparent !important; background: #d7dde6 !important; }'});
     };
     const choose=async()=>{
       await page.getByRole('button',{name:/Доски.*Выберите/}).click();
@@ -106,6 +106,37 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
     expect((await db.query('SELECT key_hash FROM mcp_connections WHERE user_id=$1',[person.userId])).rows[0].key_hash).not.toBe(secret);
     expect(await page.evaluate(key=>JSON.stringify({...localStorage,...sessionStorage}).includes(key),secret)).toBe(false);
     await shot('secret');
+    await page.getByRole('button',{name:'Как подключить Hermes',exact:true}).click();
+    const help=page.getByRole('dialog',{name:'Как подключить Hermes'});
+    const commands=["hermes mcp add task_kanban --url 'http://127.0.0.1:4173/mcp' --auth header",'hermes mcp test task_kanban'];
+    await expect(help.locator('.mcp-command')).toHaveText(commands);
+    await expect(help).toContainText('API key / Bearer token');
+    await expect(help).toContainText('Ввод скрыт');
+    await expect(help).toContainText('вводить не нужно — Hermes добавляет их сам');
+    expect((await help.innerText()).includes(secret)).toBe(false);
+    await shot('help');
+    await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new Error('clipboard denied');}}}));
+    await help.getByRole('button',{name:'Копировать команду подключения',exact:true}).click();
+    await expect(help.getByRole('alert')).toContainText('Выделите команду');
+    await page.evaluate(()=>{
+      (window as any).mcpCommandCopies=[];
+      Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async(value:string)=>{(window as any).mcpCommandCopies.push(value);}}});
+    });
+    await help.getByRole('button',{name:'Копировать команду подключения',exact:true}).click();
+    await expect(help.getByRole('status')).toHaveText('Команда скопирована');
+    await help.getByRole('button',{name:'Копировать команду проверки',exact:true}).click();
+    expect(await page.evaluate(()=>(window as any).mcpCommandCopies)).toEqual(commands);
+    if (width===320) {
+      const scaling=await page.addStyleTag({content:'html {font-size:200% !important;}'});
+      await help.getByRole('button',{name:'Готово',exact:true}).scrollIntoViewIfNeeded();
+      await expect(help.getByRole('button',{name:'Готово',exact:true})).toBeInViewport();
+      expect(await help.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
+      await shot('help-text-200-percent');
+      await scaling.evaluate(element=>element.parentNode?.removeChild(element));
+    }
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('button',{name:'Как подключить Hermes',exact:true})).toBeFocused();
+    expect(await page.locator('.mcp-key').innerText()).toBe(secret);
     if (width===320) {
       const scaling=await page.addStyleTag({content:'html {font-size:200% !important;}'});
       await shot('text-200-percent');
@@ -129,6 +160,10 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
     await shot('list');
     await page.getByRole('button',{name:/Мой Hermes.*Чтение/}).click();
     await expect(page.getByText('Ключ скрыт. Повторный показ недоступен.')).toBeVisible();
+    await page.getByRole('button',{name:'Как подключить Hermes',exact:true}).click();
+    await expect(help.locator('.mcp-command')).toHaveText(commands);
+    await expect(page.locator('.mcp-key')).toHaveCount(0);
+    await help.getByRole('button',{name:'Готово',exact:true}).click();
     await shot('details');
     await page.getByRole('button',{name:'Отозвать доступ',exact:true}).click();
     await shot('revoke');
