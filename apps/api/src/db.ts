@@ -7,6 +7,9 @@ const { Pool } = pg;
 export type Database = InstanceType<typeof Pool>;
 export const createDatabase = (connectionString: string): Database => new Pool({ connectionString, max: 10 });
 export class TaskConflictError extends Error {}
+export class ChecklistConfirmationError extends TaskConflictError {
+  constructor(readonly count: number) { super('incomplete checklist confirmation required'); }
+}
 export class TaskActionError extends Error {}
 export class ProjectConflictError extends Error {}
 const tokenHash = (token: string, secret: string) => createHash('sha256').update(`${secret}:${token}`).digest('hex');
@@ -207,6 +210,7 @@ export type TaskInput = {
   waitCheckAt?: string | null;
   blockerTaskId?: string | null;
   notifyAssignee?: boolean;
+  confirmIncompleteChecklist?: boolean;
 };
 
 export type RecurrenceInput = TaskInput & RecurrenceRule;
@@ -305,14 +309,14 @@ async function assertBlockerAllowed(client: pg.PoolClient, boardId: string, bloc
   if (!blocker.rowCount) throw new TaskConflictError('task blocker must be active task on same board');
 }
 
-export async function createTask(db: Database, userId: string, boardId: string, input: TaskInput) {
-  const client = await db.connect();
+export async function createTask(db: Database, userId: string, boardId: string, input: TaskInput, transaction?: pg.PoolClient) {
+  const client = transaction ?? await db.connect();
   try {
-    await client.query('BEGIN');
+    if (!transaction) await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
     if (!(await client.query(`SELECT 1 FROM boards b JOIN memberships m ON m.board_id = b.id
       WHERE b.id = $1 AND b.status = 'active' AND m.user_id = $2 FOR SHARE OF b, m`, [boardId, userId])).rowCount) {
-      await client.query('ROLLBACK'); return null;
+      if (!transaction) await client.query('ROLLBACK'); return null;
     }
     const requestHash = createHash('sha256').update(JSON.stringify(Object.entries(input).filter(([key]) => key !== 'requestId').sort(([a], [b]) => a.localeCompare(b)))).digest('hex');
     if (input.requestId) {
@@ -320,7 +324,7 @@ export async function createTask(db: Database, userId: string, boardId: string, 
         WHERE board_id = $1 AND creator_user_id = $2 AND create_request_id = $3`, [boardId, userId, input.requestId]);
       if (existing.rows[0]) {
         if (existing.rows[0].create_request_hash !== requestHash) throw new TaskConflictError('creation request already used with different input');
-        await client.query('COMMIT'); return existing.rows[0];
+        if (!transaction) await client.query('COMMIT'); return existing.rows[0];
       }
     }
     const status = input.status ?? 'todo';
@@ -345,14 +349,14 @@ export async function createTask(db: Database, userId: string, boardId: string, 
       status === 'waiting' ? input.waitCheckAt ?? null : null, status === 'waiting' ? input.blockerTaskId ?? null : null,
       input.deadlineDate ?? null, input.deadlineTimezone ?? null, input.requestId ?? null, input.requestId ? requestHash : null]);
     const task = result.rows[0];
-    if (!task) { await client.query('ROLLBACK'); return null; }
+    if (!task) { if (!transaction) await client.query('ROLLBACK'); return null; }
     await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, after_data)
       VALUES ($1, $2, $3, $4, 'created', $5)`, [randomUUID(), boardId, task.id, userId, task]);
     if (input.notifyAssignee && task.assignee_user_id) await client.query(`INSERT INTO task_assignment_notifications
       (id, task_id, assignee_user_id) VALUES ($1, $2, $3)`, [randomUUID(), task.id, task.assignee_user_id]);
-    await client.query('COMMIT');
+    if (!transaction) await client.query('COMMIT');
     return task;
-  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  } catch (error) { if (!transaction) await client.query('ROLLBACK'); throw error; } finally { if (!transaction) client.release(); }
 }
 
 export async function claimTask(db: Database, userId: string, boardId: string, taskId: string) {
@@ -378,17 +382,17 @@ export async function claimTask(db: Database, userId: string, boardId: string, t
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 
-export async function updateTask(db: Database, userId: string, boardId: string, taskId: string, input: TaskInput) {
-  const client = await db.connect();
+export async function updateTask(db: Database, userId: string, boardId: string, taskId: string, input: TaskInput, transaction?: pg.PoolClient) {
+  const client = transaction ?? await db.connect();
   try {
-    await client.query('BEGIN');
+    if (!transaction) await client.query('BEGIN');
     // ponytail: serialize dependency mutations per board; narrow lock scope only if board write throughput becomes limiting.
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
     const current = await client.query<any>(`SELECT t.*, to_char(t.deadline_date, 'YYYY-MM-DD') AS deadline_date FROM tasks t JOIN boards b ON b.id = t.board_id
       JOIN memberships m ON m.board_id = b.id AND m.user_id = $3
       WHERE t.id = $1 AND t.board_id = $2 AND t.archived_at IS NULL AND b.status = 'active' FOR UPDATE`, [taskId, boardId, userId]);
     const task = current.rows[0];
-    if (!task) { await client.query('ROLLBACK'); return null; }
+    if (!task) { if (!transaction) await client.query('ROLLBACK'); return null; }
     const status = input.status ?? task.status;
     if (status === 'done' && task.status !== 'done') assertCompletionAllowed(userId, task.creator_user_id, task.assignee_user_id);
     if (task.status === 'done' && status !== 'done' && task.creator_user_id !== userId) {
@@ -396,11 +400,15 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
     }
     if (task.creator_user_id !== userId && task.assignee_user_id !== userId) {
       if (input.status !== undefined && input.status !== task.status) throw new TaskActionError('Менять статус может только создатель или исполнитель');
-      await client.query('ROLLBACK'); return null;
+      if (!transaction) await client.query('ROLLBACK'); return null;
+    }
+    if (input.status === 'done' && input.confirmIncompleteChecklist !== true) {
+      const incomplete = await client.query<{count: number}>('SELECT count(*)::int AS count FROM task_checklist_items WHERE task_id = $1 AND completed_at IS NULL', [taskId]);
+      if (incomplete.rows[0].count) throw new ChecklistConfirmationError(incomplete.rows[0].count);
     }
     const blockerTaskId = status === 'waiting' ? (input.blockerTaskId === undefined ? task.blocked_by_task_id : input.blockerTaskId) : null;
     const waitReason = status === 'waiting' ? (input.waitReason === undefined ? task.wait_reason : input.waitReason) : null;
-    if (status === 'waiting' && Number(Boolean(blockerTaskId)) + Number(Boolean(waitReason?.trim())) !== 1) { await client.query('ROLLBACK'); return null; }
+    if (status === 'waiting' && Number(Boolean(blockerTaskId)) + Number(Boolean(waitReason?.trim())) !== 1) { if (!transaction) await client.query('ROLLBACK'); return null; }
     if (blockerTaskId && (blockerTaskId !== task.blocked_by_task_id || task.status !== 'waiting')) {
       if (blockerTaskId === taskId) throw new TaskConflictError('task cannot block itself');
       await assertBlockerAllowed(client, boardId, blockerTaskId);
@@ -414,8 +422,8 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
     }
     const projectId = input.projectId === undefined ? task.project_id : input.projectId;
     const assigneeId = input.assigneeUserId === undefined ? task.assignee_user_id : input.assigneeUserId;
-    if (projectId && !(await client.query('SELECT 1 FROM projects WHERE id = $1 AND board_id = $2 AND archived_at IS NULL', [projectId, boardId])).rowCount) { await client.query('ROLLBACK'); return null; }
-    if (assigneeId && !(await client.query('SELECT 1 FROM memberships WHERE board_id = $1 AND user_id = $2', [boardId, assigneeId])).rowCount) { await client.query('ROLLBACK'); return null; }
+    if (projectId && !(await client.query('SELECT 1 FROM projects WHERE id = $1 AND board_id = $2 AND archived_at IS NULL', [projectId, boardId])).rowCount) { if (!transaction) await client.query('ROLLBACK'); return null; }
+    if (assigneeId && !(await client.query('SELECT 1 FROM memberships WHERE board_id = $1 AND user_id = $2', [boardId, assigneeId])).rowCount) { if (!transaction) await client.query('ROLLBACK'); return null; }
     const waiting = status === 'waiting';
     const result = await client.query(`UPDATE tasks SET project_id = $3, assignee_user_id = $4, title = $5,
       description = $6, status = $7, priority = $8, deadline = $9, wait_reason = $10,
@@ -455,9 +463,9 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
         [randomUUID(), dependent.id, dependent.assignee_user_id, taskId]);
       }
     }
-    await client.query('COMMIT');
+    if (!transaction) await client.query('COMMIT');
     return { ...result.rows[0], unblockedTaskIds };
-  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  } catch (error) { if (!transaction) await client.query('ROLLBACK'); throw error; } finally { if (!transaction) client.release(); }
 }
 
 export async function setTaskArchived(db: Database, userId: string, boardId: string, taskId: string, archived: boolean) {

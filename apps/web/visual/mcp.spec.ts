@@ -1,0 +1,177 @@
+import { expect, test } from '@playwright/test';
+import { randomBytes } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { buildApp } from '../../api/src/app';
+import { createDatabase, login } from '../../api/src/db';
+import type { Config } from '../../api/src/config';
+
+const url=process.env.TEST_DATABASE_URL;
+if (!url) throw new Error('TEST_DATABASE_URL is required');
+const evidence=fileURLToPath(new URL('../../../artifacts/visual-evidence/issue82/',import.meta.url));
+test.use({trace:'off',video:'off',screenshot:'off'});
+for (const width of [390,320]) test(`connections lifecycle, loss recovery and clipboard with real API/DB ${width}`,async ({page})=>{
+  const db=createDatabase(url);
+  const person=await login(db,{id:randomBytes(6).readUIntBE(0,6),first_name:'Тестовый пользователь'},3600,'isolated-visual-secret');
+  const config: Config={botToken:'test',databaseUrl:url,sessionSecret:'isolated-visual-secret',initDataMaxAgeSeconds:60,sessionMaxAgeSeconds:3600,host:'127.0.0.1',port:0,production:false,webhookSecret:'isolated-visual',publicUrl:'http://127.0.0.1:4173',botUsername:'test_bot'};
+  const app=buildApp(config,db);
+  let failure='';
+  let release: (()=>void)|undefined;
+  let gate: Promise<void>|undefined;
+  const creates: any[]=[];
+  const errors: string[]=[];
+  try {
+    await page.setViewportSize({width,height:844});
+    page.on('pageerror',error=>errors.push(error.message));
+    await page.route('https://telegram.org/js/telegram-web-app.js',route=>route.fulfill({contentType:'application/javascript',body:"window.Telegram={WebApp:{initData:'isolated-browser-test',ready(){},expand(){}}};"}));
+    await page.route('**/api/**',async route=>{
+      const req=route.request(); const path=new URL(req.url()).pathname+new URL(req.url()).search;
+      if (path==='/api/auth/telegram') return route.fulfill({json:{userId:person.userId}});
+      const creating=path==='/api/mcp-connections' && req.method()==='POST';
+      const revoking=path.startsWith('/api/mcp-connections/') && req.method()==='DELETE';
+      const payload=req.postData() ? req.postDataJSON() : undefined;
+      if (creating) { creates.push(payload); if (gate) await gate; }
+      if (path==='/api/mcp-connections' && req.method()==='GET' && failure==='list') { failure=''; return route.fulfill({status:503,json:{error:'synthetic list failure'}}); }
+      if (path.startsWith('/api/mcp-connections') && failure==='expired') return route.fulfill({status:401,json:{error:'Войдите снова через Telegram'}});
+      if (creating && failure==='create-before') { failure=''; return route.abort('failed'); }
+      const response=await app.inject({method:req.method() as 'GET'|'POST'|'DELETE',url:path,cookies:{session:person.token},headers:{host:'127.0.0.1:4173',...(req.headers().origin ? {origin:req.headers().origin} : {}),...(req.headers()['content-type'] ? {'content-type':req.headers()['content-type']} : {})},payload});
+      if ((creating && failure==='create-after') || (revoking && failure==='revoke-after')) { failure=''; return route.abort('failed'); }
+      await route.fulfill({status:response.statusCode,contentType:'application/json',body:response.body});
+    });
+    const enter=async()=>{
+      await page.goto('/');
+      await page.getByRole('button',{name:'Настройки',exact:true}).click();
+      await page.getByRole('button',{name:/Аккаунт.*Профиль/}).click();
+      await page.getByRole('button',{name:/Подключения.*Доступ/}).click();
+      await expect(page.getByRole('heading',{name:'Подключения',exact:true})).toBeVisible();
+    };
+    await mkdir(evidence,{recursive:true});
+    const shot=async(name:string)=>{
+      await page.evaluate(()=>document.fonts.ready);
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await page.screenshot({path:`${evidence}/${name}-${width}.png`,fullPage:true,mask:[page.locator('.mcp-key')],maskColor:'#d7dde6'});
+    };
+    const choose=async()=>{
+      await page.getByRole('button',{name:/Доски.*Выберите/}).click();
+      const dialog=page.getByRole('dialog',{name:'Доступные доски'});
+      await expect(dialog).toBeVisible();
+      await dialog.getByRole('button',{name:'Готово',exact:true}).focus();
+      await page.keyboard.press('Tab');
+      await expect(dialog.getByRole('button',{name:'Закрыть',exact:true})).toBeFocused();
+      await page.keyboard.press('Shift+Tab');
+      await expect(dialog.getByRole('button',{name:'Готово',exact:true})).toBeFocused();
+      await dialog.getByRole('checkbox').first().click();
+      await shot('boards');
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('button',{name:/Доски.*Выберите/})).toBeFocused();
+      await page.getByRole('button',{name:/Доски.*Выберите/}).click();
+      await expect(dialog.getByRole('checkbox').first()).toHaveAttribute('aria-checked','false');
+      await dialog.getByRole('checkbox').first().click();
+      await dialog.getByRole('button',{name:'Готово',exact:true}).click();
+    };
+    failure='list';
+    await enter();
+    await expect(page.getByRole('alert')).toContainText('Не удалось загрузить подключения');
+    await expect(page.getByText('Подключений пока нет')).toHaveCount(0);
+    await page.getByRole('button',{name:'Повторить',exact:true}).click();
+    await expect(page.getByText('Подключений пока нет')).toBeVisible();
+    await shot('empty');
+    await page.getByRole('button',{name:'Добавить подключение'}).click();
+    await expect(page.getByRole('button',{name:'Создать ключ',exact:true})).toBeDisabled();
+    await expect(page.getByRole('radio',{name:/Только чтение/})).toHaveAttribute('aria-checked','true');
+    await expect(page.getByRole('navigation',{name:'Основная навигация'})).toHaveCount(0);
+    await page.getByLabel('Название',{exact:true}).fill('Мой Hermes');
+    await choose();
+    await page.getByRole('radio',{name:/Чтение и изменение/}).click();
+    await shot('create');
+    await page.evaluate(()=>{Object.defineProperty(navigator,'onLine',{configurable:true,value:false});window.dispatchEvent(new Event('offline'));});
+    await expect(page.getByRole('button',{name:'Создать ключ',exact:true})).toBeDisabled();
+    await page.evaluate(()=>{Object.defineProperty(navigator,'onLine',{configurable:true,value:true});window.dispatchEvent(new Event('online'));});
+    if (width===320) {
+      await page.setViewportSize({width,height:440});
+      await page.getByRole('button',{name:'Создать ключ',exact:true}).scrollIntoViewIfNeeded();
+      await expect(page.getByRole('button',{name:'Создать ключ',exact:true})).toBeInViewport();
+      await shot('short-viewport');
+      await page.setViewportSize({width,height:844});
+    }
+    gate=new Promise<void>(resolve=>{release=resolve;});
+    await page.getByRole('button',{name:'Создать ключ',exact:true}).click();
+    await expect(page.getByRole('button',{name:'Создаём ключ…'})).toBeDisabled();
+    await page.getByRole('button',{name:'Создаём ключ…'}).dispatchEvent('click');
+    release!(); gate=undefined;
+    await expect(page.getByRole('heading',{name:'Ключ создан',exact:true})).toBeVisible();
+    expect(creates.length).toBe(1);
+    const secret=await page.locator('.mcp-key').innerText();
+    expect(/^ktk_mcp_[A-Za-z0-9_-]{43}$/.test(secret)).toBe(true);
+    expect((await db.query('SELECT key_hash FROM mcp_connections WHERE user_id=$1',[person.userId])).rows[0].key_hash).not.toBe(secret);
+    expect(await page.evaluate(key=>JSON.stringify({...localStorage,...sessionStorage}).includes(key),secret)).toBe(false);
+    await shot('secret');
+    if (width===320) {
+      const scaling=await page.addStyleTag({content:'html {font-size:200% !important;}'});
+      await shot('text-200-percent');
+      await page.getByRole('button',{name:'Копировать ключ',exact:true}).scrollIntoViewIfNeeded();
+      await expect(page.getByRole('button',{name:'Копировать ключ',exact:true})).toBeInViewport();
+      await scaling.evaluate(element=>element.parentNode?.removeChild(element));
+    }
+    await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new Error('clipboard denied');}}}));
+    await page.getByRole('button',{name:'Копировать ключ',exact:true}).click();
+    await expect(page.getByRole('alert')).toContainText('Выделите ключ');
+    expect(await page.locator('.mcp-key').innerText()).toBe(secret);
+    await shot('clipboard-error');
+    await page.getByRole('button',{name:'Готово',exact:true}).click();
+    await expect(page.getByRole('dialog',{name:'Закрыть без сохранения ключа?'})).toBeVisible();
+    await page.getByRole('button',{name:'Остаться',exact:true}).click();
+    await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>undefined}}));
+    await page.getByRole('button',{name:'Копировать ключ',exact:true}).click();
+    await expect(page.getByRole('status')).toContainText('Ключ скопирован');
+    await page.getByRole('button',{name:'Готово',exact:true}).click();
+    await expect(page.locator('.mcp-key')).toHaveCount(0);
+    await shot('list');
+    await page.getByRole('button',{name:/Мой Hermes.*Чтение/}).click();
+    await expect(page.getByText('Ключ скрыт. Повторный показ недоступен.')).toBeVisible();
+    await shot('details');
+    await page.getByRole('button',{name:'Отозвать доступ',exact:true}).click();
+    await shot('revoke');
+    failure='revoke-after';
+    await page.getByRole('dialog').getByRole('button',{name:'Отозвать доступ',exact:true}).click();
+    await expect(page.getByRole('dialog').getByRole('alert')).toContainText('Не удалось подтвердить отзыв');
+    await page.getByRole('button',{name:'Проверить ещё раз',exact:true}).click();
+    await expect(page.getByRole('status')).toContainText('Доступ отозван');
+    expect((await db.query('SELECT revoked_at FROM mcp_connections WHERE user_id=$1',[person.userId])).rows.every(item=>item.revoked_at)).toBe(true);
+    await page.getByRole('button',{name:'Создать новое подключение'}).click();
+    await page.getByLabel('Название',{exact:true}).fill('Ответ потерян');
+    await choose();
+    failure='create-after';
+    await page.getByRole('button',{name:'Создать ключ',exact:true}).click();
+    await expect(page.getByRole('button',{name:'Проверить результат'})).toBeVisible();
+    await expect(page.getByLabel('Название',{exact:true})).toBeDisabled();
+    await shot('unknown');
+    await page.getByRole('button',{name:'Проверить результат'}).click();
+    await expect(page.getByRole('heading',{name:'Ключ создан, но не был получен'})).toBeVisible();
+    expect(creates.at(-1).requestId).toBe(creates.at(-2).requestId);
+    expect((await db.query('SELECT id FROM mcp_connections WHERE user_id=$1',[person.userId])).rows.length).toBe(2);
+    await shot('lost');
+    await page.getByRole('button',{name:'Отозвать доступ',exact:true}).click();
+    await page.getByRole('dialog').getByRole('button',{name:'Отозвать доступ',exact:true}).click();
+    await page.getByRole('button',{name:'Создать новое подключение'}).click();
+    await page.getByLabel('Название',{exact:true}).fill('Не отправлено');
+    await choose();
+    failure='create-before';
+    await page.getByRole('button',{name:'Создать ключ',exact:true}).click();
+    await page.getByRole('button',{name:'Проверить результат'}).click();
+    await expect(page.getByRole('heading',{name:'Ключ создан',exact:true})).toBeVisible();
+    expect(creates.at(-1).requestId).toBe(creates.at(-2).requestId);
+    expect((await db.query('SELECT id FROM mcp_connections WHERE user_id=$1',[person.userId])).rows.length).toBe(3);
+    failure='expired';
+    await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
+    await expect(page.getByRole('heading',{name:'Войдите снова через Telegram'})).toBeVisible();
+    await expect(page.locator('.mcp-key')).toHaveCount(0);
+    expect(errors).toEqual([]);
+  } finally {
+    release?.();
+    await app.close();
+    await db.query('DELETE FROM boards WHERE owner_user_id=$1',[person.userId]);
+    await db.query('DELETE FROM users WHERE id=$1',[person.userId]);
+    await db.end();
+  }
+});
