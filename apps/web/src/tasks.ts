@@ -84,12 +84,14 @@ export function taskStatusRestriction(task: Task, userId: string, status: TaskSt
 
 export type StartupContext =
   | { surface: 'tasks' }
+  | { surface: 'entry'; path: 'personal' | 'pair' | 'group' | 'help' }
   | { surface: 'board-link'; token: string }
   | { surface: 'task'; boardId: string; taskId: string }
   | { surface: 'invalid-task' };
 
 export function resolveStartupContext(startParam?: string): StartupContext {
   if (!startParam) return { surface: 'tasks' };
+  if (startParam === 'personal' || startParam === 'pair' || startParam === 'group' || startParam === 'help') return { surface: 'entry', path: startParam };
   const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
   const taskLink = new RegExp(`^task_(${uuid})_(${uuid})$`, 'i').exec(startParam);
   if (startParam.startsWith('task_') && !taskLink) return { surface: 'invalid-task' };

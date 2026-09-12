@@ -530,4 +530,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .pair-screen .danger { background: #ae3933; color: white; }
 .pair-text-danger { background: transparent; color: #ae3933; font-size: .8125rem; }
 .pair-screen button:disabled, .pair-screen fieldset:disabled button { opacity: .5; }
+.entry-choices { display: grid; gap: 10px; }
+.entry-steps { display: grid; gap: 32px; margin: 8px 0 40px; padding-left: 28px; }
+.entry-steps li { padding-left: 8px; font-size: .9375rem; }
+.entry-steps li::marker { color: var(--primary); font: 500 .75rem 'IBM Plex Mono', monospace; }
+.entry-steps p { margin: 8px 0 0; color: var(--text-muted); font-size: .8125rem; }
 .readonly-fields { border: 0; padding: 0; margin: 0; min-width: 0; }

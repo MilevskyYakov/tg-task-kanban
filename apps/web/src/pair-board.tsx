@@ -6,7 +6,7 @@ import type { Board, Member } from './domain';
 const historyNotice = 'Приглашённый увидит все задачи, комментарии и прежнюю историю этой доски.';
 const retainedNotice = 'Статусы, сроки, авторство и вся история сохранятся.';
 
-function PairScreen({ title, context, onBack, children, actions, busy = false, error, notice }: {
+export function PairScreen({ title, context, onBack, children, actions, busy = false, error, notice }: {
   title: string; context?: string; onBack: () => void; children: ReactNode; actions: ReactNode; busy?: boolean; error?: string; notice?: string;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);

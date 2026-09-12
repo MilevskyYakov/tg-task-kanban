@@ -11,13 +11,15 @@ import { renderPublication, schedulesForBoard, updateSchedule, validTimezone as 
 import { validTimezone } from './recurrence.js';
 import { claimTask } from './db.js';
 import { BoardAccessError, changePairInvite, createPairBoard, previewPairInvite, redeemPairInvite, removePairMember, setPairArchived } from './pair-boards.js';
+import { sendBotEntry, sendGroupWelcome } from './bot-entry.js';
 
 type ChatMemberUpdate = {
+  date: number;
   chat: { id: number; title?: string; type: string };
   old_chat_member: { status: string; user: { is_bot: boolean } };
   new_chat_member: { status: string; user: { is_bot: boolean } };
 };
-type TelegramUpdate = { my_chat_member?: ChatMemberUpdate; message?: { chat: { id: number }; migrate_to_chat_id?: number; migrate_from_chat_id?: number } };
+type TelegramUpdate = { update_id: number; my_chat_member?: ChatMemberUpdate; message?: { message_id: number; chat: { id: number; type: string }; text?: string; migrate_to_chat_id?: number; migrate_from_chat_id?: number } };
 type TaskPatchInput = TaskInput & { confirmIncompleteChecklist?: boolean };
 const present = (status: string) => status === 'member' || status === 'administrator';
 
@@ -104,12 +106,21 @@ export function buildApp(config: Config, db: Database) {
     const user = await sessionUser(db, request.cookies.session, config.sessionSecret);
     if (!user) return reply.code(401).send({ error: 'authentication required' });
     const board = await boardForUser(db, user.id, request.params.id);
-    const name = request.body?.name?.trim();
+    const name = typeof request.body?.name === 'string' ? request.body.name.trim() : '';
     if (!board || board.type !== 'chat') return reply.code(404).send({ error: 'board not found' });
     if (!name || name.length > 120) return reply.code(400).send({ error: 'name must contain 1-120 characters' });
     if (!await isChatAdmin(config.botToken, board.telegram_chat_id, user.telegram_id)) return reply.code(403).send({ error: 'Telegram chat admin required' });
-    return activateChatBoard(db, user.id, request.params.id, name);
+    return await activateChatBoard(db, user.id, request.params.id, name) ?? reply.code(409).send({ error: 'Доска заморожена. Верните бота в группу.' });
   });
+  app.get<{Params: {id: string}}>('/api/boards/:id/setup', async (request, reply) => {
+    const user = await sessionUser(db, request.cookies.session, config.sessionSecret);
+    if (!user) return reply.code(401).send({ error: 'authentication required' });
+    const board = await boardForUser(db, user.id, request.params.id);
+    if (!board || board.type !== 'chat') return reply.code(404).send({ error: 'board not found' });
+    const canActivate = board.status === 'draft' && await isChatAdmin(config.botToken, board.telegram_chat_id, user.telegram_id);
+    return { board, canActivate };
+  });
+  app.get('/api/bot-entry', async () => ({ groupUrl: `https://t.me/${config.botUsername}?startgroup=tasks` }));
   app.post<{Params: {id: string}}>('/api/boards/:id/invites', async (request, reply) => {
     const user = await sessionUser(db, request.cookies.session, config.sessionSecret);
     if (!user) return reply.code(401).send({ error: 'authentication required' });
@@ -403,19 +414,36 @@ export function buildApp(config: Config, db: Database) {
   app.post<{Body: TelegramUpdate}>('/api/telegram/webhook', async (request, reply) => {
     if (request.headers['x-telegram-bot-api-secret-token'] !== config.webhookSecret) return reply.code(401).send({ error: 'invalid webhook secret' });
     const update = request.body;
+    if (!update || !Number.isSafeInteger(update.update_id)) return reply.code(400).send({ error: 'invalid update' });
+    const deliveryResult = (delivery: string) => {
+      if (delivery === 'failed' || delivery === 'sending') {
+        request.log.warn({ delivery }, 'Bot entry delivery requires retry');
+        return reply.code(503).send({ ok: false, delivery });
+      }
+      if (delivery === 'uncertain') request.log.error({ delivery }, 'Bot entry delivery unconfirmed; automatic resend blocked');
+      return { ok: delivery !== 'uncertain', delivery };
+    };
+    if (update.message && (!Number.isSafeInteger(update.message.chat?.id) ||
+      (update.message.migrate_to_chat_id !== undefined && !Number.isSafeInteger(update.message.migrate_to_chat_id)) ||
+      (update.message.migrate_from_chat_id !== undefined && !Number.isSafeInteger(update.message.migrate_from_chat_id)))) return reply.code(400).send({ error: 'invalid message' });
+    if (update.message?.chat.type === 'private' && typeof update.message.text === 'string') {
+      const command = /^\/(start|help)(?:@([A-Za-z0-9_]+))?(?:\s|$)/.exec(update.message.text);
+      if (command && (!command[2] || command[2].toLowerCase() === config.botUsername.toLowerCase())) {
+        if (!Number.isSafeInteger(update.message.message_id) || update.message.message_id <= 0) return reply.code(400).send({ error: 'invalid message id' });
+        return deliveryResult(await sendBotEntry(db, config, update.message.message_id, update.message.chat.id, command[1] === 'help'));
+      }
+    }
     if (update.message?.migrate_to_chat_id) await migrateChatBoard(db, update.message.chat.id, update.message.migrate_to_chat_id);
     if (update.message?.migrate_from_chat_id) await migrateChatBoard(db, update.message.migrate_from_chat_id, update.message.chat.id);
     const member = update.my_chat_member;
-    if (!member?.new_chat_member.user.is_bot || member.chat.type === 'private') return { ok: true };
+    if (!member) return { ok: true };
+    if (!Number.isSafeInteger(member.chat?.id) || !Number.isSafeInteger(member.date) || typeof member.old_chat_member?.status !== 'string' || typeof member.new_chat_member?.status !== 'string') return reply.code(400).send({ error: 'invalid member update' });
+    if (!member.new_chat_member.user?.is_bot || !['group', 'supergroup'].includes(member.chat.type)) return { ok: true };
     if (present(member.old_chat_member.status) && !present(member.new_chat_member.status)) {
-      await freezeChatBoard(db, member.chat.id);
+      await freezeChatBoard(db, member.chat.id, update.update_id, member.date);
     } else if (!present(member.old_chat_member.status) && present(member.new_chat_member.status)) {
-      const board = await connectChatBoard(db, member.chat.id, member.chat.title?.trim() || 'Доска чата');
-      if (board.token) await telegramCall(config.botToken, 'sendMessage', {
-        chat_id: member.chat.id,
-        text: 'Доска создана. Администратор, откройте её и завершите настройку.',
-        reply_markup: { inline_keyboard: [[{ text: 'Настроить доску', url: `https://t.me/${config.botUsername}?startapp=${encodeURIComponent(board.token)}` }]] }
-      });
+      await connectChatBoard(db, member.chat.id, typeof member.chat.title === 'string' ? member.chat.title.trim().slice(0, 120) || 'Доска чата' : 'Доска чата', update.update_id, member.date);
+      return deliveryResult(await sendGroupWelcome(db, config, member.chat.id));
     }
     return { ok: true };
   });
