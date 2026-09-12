@@ -14,6 +14,8 @@ import { readStorage, removeStorage, writeStorage } from './environment';
 import { isBacklogTask } from './tasks';
 import { BulkCreate, type BulkDraft } from './bulk-create';
 import { ClaimTask } from './claim-task';
+import { PairBoard, PairInvite } from './pair-board';
+import { boardTypeName } from './domain';
 
 type TaskView = 'list' | 'kanban';
 type FilterChoice = 'project' | 'assignee' | 'status' | 'priority' | 'deadline';
@@ -25,6 +27,9 @@ const storedTaskView = restoreTaskViewState(readStorage('tasks.viewState'));
 function App() {
   const [state, setState] = useState<'loading' | 'outside' | 'error' | 'ready'>('loading');
   const [boards, setBoards] = useState<Board[]>([]);
+  const [pairFlow, setPairFlow] = useState<{board?: Board}>();
+  const [pairInvite, setPairInvite] = useState('');
+  const [accessLost, setAccessLost] = useState(false);
   const [navigation, setNavigation] = useState<NavigationState>(initialNavigation);
   const [message, setMessage] = useState('');
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -123,7 +128,7 @@ function App() {
   const loadBoard = async (id: string, archive = showArchive) => {
     const version = ++boardLoadVersion.current;
     const [taskData, projectData, memberData, publicationData, recurrenceData] = await Promise.all([
-      api<{tasks: Task[]}>(`/api/boards/${id}/tasks${archive ? '?archived=true' : ''}`), api<{projects: Project[]}>(`/api/boards/${id}/projects${archive ? '?archived=true' : ''}`), api<{members: Member[]}>(`/api/boards/${id}/members`), api<{schedules: Schedule[]}>(`/api/boards/${id}/publications`).catch(() => ({ schedules: [] })), api<{recurrences: Recurrence[]}>(`/api/boards/${id}/recurrences`)
+      api<{tasks: Task[]}>(`/api/boards/${id}/tasks${archive ? '?archived=true' : ''}`), api<{projects: Project[]}>(`/api/boards/${id}/projects${archive ? '?archived=true' : ''}`), api<{members: Member[]}>(`/api/boards/${id}/members`), boards.find((item) => item.id === id)?.type === 'chat' ? api<{schedules: Schedule[]}>(`/api/boards/${id}/publications`).catch(() => ({ schedules: [] })) : Promise.resolve({ schedules: [] }), api<{recurrences: Recurrence[]}>(`/api/boards/${id}/recurrences`)
     ]);
     if (version !== boardLoadVersion.current || activeBoardId.current !== id) return false;
     setTasks(taskData.tasks); setProjects(projectData.projects); setMembers(memberData.members); setSchedules(publicationData.schedules); setRecurrences(recurrenceData.recurrences);
@@ -156,7 +161,10 @@ function App() {
           setProfileUsername(telegramUser.username ? `@${telegramUser.username}` : '');
         }
         const startup = resolveStartupContext(webApp.initDataUnsafe?.start_param);
-        if (startup.surface === 'board-link') { const board = await api<Board>('/api/board-links/redeem', json('POST', {token: startup.token})); setBoardOverrideId(board.id); }
+        if (startup.surface === 'board-link') {
+          if (startup.token.startsWith('pair_')) setPairInvite(startup.token);
+          else { const board = await api<Board>('/api/board-links/redeem', json('POST', {token: startup.token})); setBoardOverrideId(board.id); }
+        }
         await loadBoards();
         if (startup.surface === 'invalid-task') setTaskLinkError(404);
         if (startup.surface === 'task') {
@@ -173,6 +181,32 @@ function App() {
       })
       .catch((error: Error) => { setMessage(error.message); setState('error'); });
   }, []);
+  useEffect(() => {
+    if (state !== 'ready' || pairFlow) return;
+    const currentId = openTask?.board_id ?? (navigation.screen === 'create' ? createBoardId : board?.id);
+    if (!currentId || boards.find((item) => item.id === currentId)?.type !== 'pair') return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const current = await api<Board>(`/api/boards/${currentId}`);
+        if (cancelled) return;
+        setBoards((items) => items.map((item) => item.id === current.id ? current : item));
+        setTasks((items) => items.map((item) => item.board_id === current.id ? { ...item, board_status: current.status } : item));
+        setOpenTask((item) => item?.board_id === current.id ? { ...item, board_status: current.status } : item);
+      } catch (error) {
+        if (!cancelled && error instanceof ApiError && [403, 404].includes(error.status)) {
+          ++boardLoadVersion.current;
+          setBoards((items) => items.filter((item) => item.id !== currentId)); setTasks([]); setProjects([]); setMembers([]);
+          setOpenTask(undefined); setCollaboration(undefined); setDetailProjects([]); setDetailMembers([]); setDetailTasks([]);
+          setBulkOpen(false); setBulkDraft(undefined); setClaimingTask(undefined); setCreateTasks([]); setAccessLost(true);
+        }
+      }
+    };
+    const visible = () => { if (document.visibilityState === 'visible') void refresh(); };
+    const timer = setInterval(visible, 5000);
+    window.addEventListener('focus', visible); document.addEventListener('visibilitychange', visible);
+    return () => { cancelled = true; clearInterval(timer); window.removeEventListener('focus', visible); document.removeEventListener('visibilitychange', visible); };
+  }, [state, board?.id, openTask?.board_id, navigation.screen, createBoardId, pairFlow]);
   useEffect(() => {
     if (state !== 'ready') return;
 
@@ -533,11 +567,12 @@ function App() {
   const taskToolbar = <>{scopeTabs}{!backlog && (taskView === 'kanban' ? <>{searchControls}{viewControls}</> : <>{viewControls}{searchControls}</>)}</>;
   const boardSheet = showBoardSheet && <Sheet className="task-sheet board-sheet" title="Выберите доску" onClose={() => setShowBoardSheet(false)}>
     {boards.length > 5 && <input className="sheet-search" type="search" value={boardSearch} onChange={(event) => setBoardSearch(event.target.value)} placeholder="Найти доску" aria-label="Найти доску"/>}
-    {!boardSearch && recentBoards.length > 0 && <><h3 className="sheet-label">Недавние</h3><div className="sheet-options">{recentBoards.map((item) => <button key={`recent-${item.id}`} className={item.id === selectedTaskBoardId ? 'selected' : ''} onClick={() => chooseTaskBoard(item.id)}><span>{item.name}</span><small>{item.type === 'chat' ? 'Чат-доска' : 'Личная доска'}</small></button>)}</div></>}
+    {!boardSearch && recentBoards.length > 0 && <><h3 className="sheet-label">Недавние</h3><div className="sheet-options">{recentBoards.map((item) => <button key={`recent-${item.id}`} className={item.id === selectedTaskBoardId ? 'selected' : ''} onClick={() => chooseTaskBoard(item.id)}><span>{item.name}</span><small>{boardTypeName(item)}</small></button>)}</div></>}
     <div className="choice-list" role="radiogroup" aria-label="Доски">
       {!boardSearch && <ChoiceRow label="Все доски" detail="Назначенные вам задачи" selected={!selectedTaskBoardId} onClick={() => chooseTaskBoard('')}/>}
-      {matchingBoards.map((item) => <ChoiceRow key={item.id} label={item.name} detail={item.type === 'chat' ? 'Чат-доска' : 'Личная доска'} selected={item.id === selectedTaskBoardId} onClick={() => chooseTaskBoard(item.id)}/>)}
+      {matchingBoards.map((item) => <ChoiceRow key={item.id} label={item.name} detail={`${boardTypeName(item)}${item.status === 'archived' ? ' · в архиве' : ''}`} selected={item.id === selectedTaskBoardId} onClick={() => chooseTaskBoard(item.id)}/>)}
     </div>
+    <button className="secondary" onClick={() => { setShowBoardSheet(false); setPairFlow({}); }}>Создать доску на двоих</button>
     <button className="sheet-close secondary" onClick={() => setShowBoardSheet(false)}>Закрыть</button>
   </Sheet>;
   const filterSheet = showFilterSheet && !showAdvancedFilters && !filterChoice && <Sheet className="task-sheet filter-choice-sheet" title="Фильтры" onClose={() => setShowFilterSheet(false)}>
@@ -598,6 +633,17 @@ function App() {
     return <Sheet className="task-sheet create-choice-sheet" title={choice.title} onClose={() => setCreateChoice(undefined)}><div className="choice-list" role="radiogroup">{choice.options.map((option) => <ChoiceRow key={option.value} label={option.label} selected={(createChoice === 'status' ? statusChoice : choice.current) === option.value} onClick={() => createChoice === 'status' ? setStatusChoice(option.value as TaskStatus) : choose(option.value)}/>)}</div>{createChoice === 'status' && <><p>Для «Блокера» понадобится причина. «Готово» доступно с учётом ваших прав.</p><button type="button" className="filter-apply" onClick={() => choose(statusChoice)}>Применить</button></>}<button type="button" className="sheet-close secondary" onClick={() => setCreateChoice(undefined)}>Закрыть</button></Sheet>;
   })();
 
+  const pairChanged = (updated?: Board) => {
+    if (updated) setBoards((items) => [...items.filter((item) => item.id !== updated.id), updated]);
+    else if (pairFlow?.board) setBoards((items) => items.filter((item) => item.id !== pairFlow.board!.id));
+    setTasks([]); setOpenTask(undefined); setCollaboration(undefined); setTaskReload((value) => value + 1);
+  };
+  const openPair = (updated: Board) => {
+    pairChanged(updated); setPairFlow(undefined); setPairInvite(''); setBoardOverrideId(updated.id); setNavigation({ screen: 'tasks' }); setFilters({ ...defaultFilters, scope: 'all' });
+  };
+  if (accessLost) return <main><EnvironmentStatus/><h1>Доступ закрыт</h1><p>Вы больше не участвуете в этой доске. Задачи и история остались у владельца.</p><button onClick={() => { setAccessLost(false); setBoardOverrideId(undefined); setNavigation({ screen: 'tasks' }); }}>К моим задачам</button></main>;
+  if (state === 'ready' && pairInvite) return <PairInvite token={pairInvite} onJoined={openPair} onClose={() => setPairInvite('')}/>;
+  if (state === 'ready' && pairFlow) return <PairBoard initialBoard={pairFlow.board} onChanged={pairChanged} onOpen={openPair} onClose={() => { setPairFlow(undefined); setTaskReload((value) => value + 1); }}/ >;
   if (bulkOpen && bulkDraft) return <AppShell message="" navigation={navigation} navigate={navigate} hideNavigation><BulkCreate draft={bulkDraft} onDraft={setBulkDraft}
     onClose={() => { const nextFilters: TaskFilters = { ...defaultFilters, scope: 'all', project: bulkDraft.project }; if (board?.id !== bulkDraft.boardId) pendingFilters.current = { boardId: bulkDraft.boardId, filters: nextFilters }; setBulkOpen(false); setBoardOverrideId(bulkDraft.boardId); setFilters(nextFilters); setBacklog(true); setTaskReload((value) => value + 1); }}
     onCreated={(created, projectId) => { if (activeBoardId.current !== bulkDraft.boardId) return; setTasks((current) => { const ids = new Set(created.map((item) => item.id)); return [...created.map((item) => presentCreatedTask(item, bulkDraft.boardName, bulkDraft.projects.find((project) => project.id === projectId)?.name)), ...current.filter((item) => !ids.has(item.id))]; }); }}/></AppShell>;
@@ -609,6 +655,7 @@ function App() {
   if (openTask && collaboration) return <TaskDetails
     task={openTask} collaboration={collaboration} projects={detailProjects} members={detailMembers}
     userId={userId}
+    readOnly={boards.find((item) => item.id === openTask.board_id)?.status !== 'active'}
     onClaim={boards.find((item) => item.id === openTask.board_id)?.status === 'active' && isBacklogTask(openTask) ? () => setClaimingTask(openTask) : undefined}
     candidateTasks={detailTasks.filter((item) => item.id !== openTask.id && item.status !== 'done' && !item.archived_at)}
     boardName={boards.find((item) => item.id === openTask.board_id)?.name ?? openTask.board_name ?? 'Задача'}
@@ -645,7 +692,7 @@ function App() {
   const priorityOptions = [{ value: 'normal', label: 'Обычный' }, { value: 'urgent', label: 'Срочный' }];
   const boardOptions = [{ value: '', label: 'Все доски' }, ...boards.map((item) => ({ value: item.id, label: item.name }))];
 
-  const settingsBoardList = (screen: 'settings-workspace' | 'settings-automation') => <div className="settings-list">{boards.map((item) => <button className="settings-list-row" key={item.id} onClick={() => navigate({ screen, boardId: item.id })}><span><strong>{item.name}</strong><small>{item.type === 'chat' ? 'Чат-доска' : 'Личная доска'}{item.status === 'frozen' ? ' · заморожена' : ''}</small></span><Icon name="chevron"/></button>)}</div>;
+  const settingsBoardList = (screen: 'settings-workspace' | 'settings-automation') => <div className="settings-list">{boards.map((item) => <button className="settings-list-row" key={item.id} onClick={() => navigate({ screen, boardId: item.id })}><span><strong>{item.name}</strong><small>{boardTypeName(item)}{item.status === 'frozen' ? ' · заморожена' : item.status === 'archived' ? ' · в архиве' : ''}</small></span><Icon name="chevron"/></button>)}{screen === 'settings-workspace' && <button className="secondary" onClick={() => setPairFlow({})}>Создать доску на двоих</button>}</div>;
   const settingsRoot = <SettingsScreen subtitle="Управление пространством и приложением">
     <p className="settings-label">Разделы</p>
     <div className="settings-root">{settingsSections.map((section) => <button className="settings-card" data-tone={section.id} key={section.id} onClick={() => navigate({ screen: `settings-${section.id}` } as NavigationState)}>
@@ -657,15 +704,16 @@ function App() {
   </SettingsScreen>;
   const workspaceSettings = <SettingsScreen title={board?.name ?? 'Рабочее пространство'} subtitle={board ? 'Доска, проекты и участники' : 'Доски, проекты и участники'}>
     <button className="back settings-back" onClick={() => navigate({ screen: 'settings' })}><Icon name="back"/>Настройки</button>
-    {!board ? settingsBoardList('settings-workspace') : <div className="settings-groups">
-      <section className="settings-group"><h2>Доска</h2>{(board.status === 'draft' || board.role === 'owner' || board.role === 'admin') ? <form className="settings-form inline-form" onSubmit={(event) => void saveBoardName(event)}><label>Название<input name="name" defaultValue={board.name} maxLength={120} required/></label><button>{board.status === 'draft' ? 'Активировать' : 'Сохранить'}</button></form> : <p>{board.name}</p>}<small>{board.type === 'chat' ? 'Права администратора Telegram проверяются при изменении чат-доски.' : 'Личное рабочее пространство.'}</small></section>
+    {board?.type === 'pair' && <ActionRow label="Доступ" value={board.status === 'archived' ? 'Доска в архиве' : 'Доска на двоих'} onClick={() => setPairFlow({ board })}/>}
+    {!board ? settingsBoardList('settings-workspace') : <fieldset className="settings-groups readonly-fields" disabled={board.status === 'archived' || board.status === 'frozen'}>
+      <section className="settings-group"><h2>Доска</h2>{(board.status === 'draft' || board.role === 'owner' || board.role === 'admin') ? <form className="settings-form inline-form" onSubmit={(event) => void saveBoardName(event)}><label>Название<input name="name" defaultValue={board.name} maxLength={120} required/></label><button>{board.status === 'draft' ? 'Активировать' : 'Сохранить'}</button></form> : <p>{board.name}</p>}<small>{board.type === 'chat' ? 'Права администратора Telegram проверяются при изменении чат-доски.' : board.type === 'pair' ? 'Приглашениями и архивом управляет владелец.' : 'Личное рабочее пространство.'}</small></section>
       <section className="settings-group"><h2>Проекты</h2>{projects.filter((item) => !item.archived_at).map((item) => <form className="settings-form inline-form" key={item.id} onSubmit={(event) => void editProject(event, item)}><input aria-label={`Название проекта ${item.name}`} name="name" defaultValue={item.name} maxLength={120} required/><button>Сохранить</button><button className="secondary" type="button" onClick={() => void action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: true})), 'Проект архивирован')}>В архив</button></form>)}<form className="settings-form inline-form" onSubmit={(event) => void addProject(event)}><input aria-label="Название нового проекта" name="name" placeholder="Новый проект" maxLength={120} required/><button disabled={projectCreatePending}>{projectCreatePending ? 'Добавляем…' : 'Добавить'}</button></form></section>
       <section className="settings-group"><h2>Участники</h2><div className="member-list">{members.map((member) => <div key={member.id}><Avatar initials={initials(member.first_name)} label={member.first_name}/><span><strong>{member.first_name}</strong><small>{member.username ? `@${member.username}` : 'Telegram'}</small></span></div>)}</div></section>
-    </div>}
+    </fieldset>}
   </SettingsScreen>;
   const automationSettings = <SettingsScreen title={board?.name ?? 'Автоматизация'} subtitle={board ? 'Повторения, публикации и уведомления' : 'Выберите доску для настройки'}>
     <button className="back settings-back" onClick={() => navigate({ screen: 'settings' })}><Icon name="back"/>Настройки</button>
-    {!board ? settingsBoardList('settings-automation') : <div className="settings-groups">
+    {!board ? settingsBoardList('settings-automation') : <fieldset className="settings-groups readonly-fields" disabled={board.status !== 'active'}>
       <section className="settings-group"><h2>Повторения</h2><form className="settings-form" onSubmit={(event) => void addRecurrence(event)}>
         <label>Название задачи<input name="title" maxLength={200} required/></label><ChoiceAction label="Период" value={recurrenceFrequency} options={frequencyOptions} onChange={(value) => setRecurrenceFrequency(value as Recurrence['frequency'])}/>
         {(recurrenceFrequency === 'weekdays' || recurrenceFrequency === 'weekly') && <label>Дни недели (0–6)<input name="weekdays" defaultValue={recurrenceFrequency === 'weekdays' ? '1,2,3,4,5' : String(new Date().getDay())} pattern="[0-6](,[0-6])*" required/></label>}{recurrenceFrequency === 'monthly' && <label>День месяца<input name="dayOfMonth" type="number" min="1" max="31" defaultValue={new Date().getDate()} required/></label>}
@@ -673,7 +721,7 @@ function App() {
         <ChoiceAction label="Проект" name="projectId" value={recurrenceProjectId} options={projectOptions} onChange={setRecurrenceProjectId}/><ChoiceAction label="Исполнитель" name="assigneeUserId" value={recurrenceAssigneeId} options={assigneeOptions} onChange={setRecurrenceAssigneeId}/><ChoiceAction label="Приоритет" name="priority" value={recurrencePriority} options={priorityOptions} onChange={(value) => setRecurrencePriority(value as Task['priority'])}/><button>Добавить повтор</button>
       </form>{recurrences.filter((item) => !item.archived_at).map((item) => <div className="automation-row" key={item.id}><span><strong>{item.title}</strong><small>{item.frequency} · {item.local_time}</small></span><button className="secondary" onClick={() => void action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {paused: !item.paused_at})), item.paused_at ? 'Повтор включён' : 'Повтор приостановлен')}>{item.paused_at ? 'Включить' : 'Пауза'}</button></div>)}</section>
       {publicationSettings}<section className="settings-group"><h2>Уведомления</h2><p>Уведомление исполнителю выбирается при назначении задачи. Новых глобальных типов уведомлений пока нет.</p></section>
-    </div>}
+    </fieldset>}
   </SettingsScreen>;
   const accountSettings = <SettingsScreen title="Аккаунт" subtitle="Профиль и личные параметры"><button className="back settings-back" onClick={() => navigate({ screen: 'settings' })}><Icon name="back"/>Настройки</button><div className="settings-groups"><section className="settings-group account-profile"><Avatar initials={initials(profileName)} label={profileName}/><span><strong>{profileName}</strong>{profileUsername && <small>{profileUsername}</small>}</span></section><section className="settings-group"><h2>Личные параметры</h2><div className="settings-form"><ChoiceAction label="Группировка задач" value={grouping} options={[{ value: 'deadline', label: 'По срокам' }, { value: 'project', label: 'По проектам' }]} onChange={(value) => setGrouping(value as typeof grouping)}/><ChoiceAction label="Обычная доска" value={globalBoardId} options={boardOptions} onChange={chooseTaskBoard}/></div></section></div></SettingsScreen>;
 
@@ -685,7 +733,9 @@ function App() {
   if (navigation.screen === 'settings-workspace') return <AppShell message={message} navigation={navigation} navigate={navigate}>{workspaceSettings}</AppShell>;
   if (navigation.screen === 'settings-automation') return <AppShell message={message} navigation={navigation} navigate={navigate}>{automationSettings}</AppShell>;
   if (navigation.screen === 'settings-account') return <AppShell message={message} navigation={navigation} navigate={navigate}>{accountSettings}</AppShell>;
-  if (navigation.screen === 'tasks') return <AppShell message={message} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>{taskToolbar}{backlog && board ? backlogContent : <>{taskLoadState === 'loading' ? <Skeleton label="Загрузка задач"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : taskView === 'kanban' ? mainKanban : groupedTaskList}{taskLoadState === 'ready' && taskView === 'list' && !filteredTasks.length && <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>}</>}{boardOverrideId && <p className="context-note">Открыта доска задачи; ваш обычный выбор не изменён.</p>}{boardSheet}{filterSheet}{advancedFilterSheet}{filterChoiceSheet}{kanbanStatusSheet}</TasksScreen></AppShell>;
+  if (navigation.screen === 'tasks') return <AppShell message={message} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>
+    {board?.type === 'pair' && <><ActionRow label="Доступ" value={board.status === 'archived' ? 'Доска в архиве' : 'Доска на двоих'} onClick={() => setPairFlow({ board })}/>{board.status === 'archived' && <p className="notice">Доска в архиве. Задачи и история доступны только для чтения.</p>}</>}
+    {taskToolbar}{backlog && board ? backlogContent : <>{taskLoadState === 'loading' ? <Skeleton label="Загрузка задач"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : taskView === 'kanban' ? mainKanban : groupedTaskList}{taskLoadState === 'ready' && taskView === 'list' && !filteredTasks.length && (board?.type === 'pair' && board.status === 'active' && !tasks.length ? <section className="task-state"><h2>Начните с первой задачи.</h2><p>Добавьте задачу или вставьте список. Исполнителя можно выбрать позже.</p><button onClick={() => navigate({ screen: 'create' })}>Добавить задачу</button><button className="secondary" onClick={() => { setBulkDraft({ boardId: board.id, boardName: board.name, projects, project: '', text: '', started: false }); setBulkOpen(true); }}>Вставить список</button></section> : <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>)}</>}{boardOverrideId && <p className="context-note">Открыта доска по ссылке; ваш обычный выбор не изменён.</p>}{boardSheet}{filterSheet}{advancedFilterSheet}{filterChoiceSheet}{kanbanStatusSheet}</TasksScreen></AppShell>;
   if (navigation.screen === 'create') return <AppShell message={message} navigation={navigation} navigate={navigate} hideNavigation><CreateScreen boardName={boards.find((item) => item.id === createBoardId)?.name ?? 'Все доски'} onClose={() => navigate(createOrigin)} onSelectBoard={() => { if (!createLock.current && !createUncertain) setCreateChoice('board'); }}>
     <form onSubmit={(event) => { event.preventDefault(); void create(); }}><fieldset className="create-screen-form" disabled={createPending || createUncertain}>
       <label className="create-title"><span>Что нужно сделать?</span><TaskGlyph/><textarea autoFocus value={title} onChange={(event) => setTitle(event.target.value)} maxLength={200} rows={2} required placeholder="Название задачи"/></label>

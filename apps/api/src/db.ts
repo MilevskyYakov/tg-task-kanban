@@ -12,6 +12,18 @@ export class ProjectConflictError extends Error {}
 const tokenHash = (token: string, secret: string) => createHash('sha256').update(`${secret}:${token}`).digest('hex');
 const linkHash = (token: string) => createHash('sha256').update(token).digest('hex');
 
+// Membership changes use the same lock as task mutations and recurrence writes.
+export async function withBoardLock<T>(db: Database, boardId: string, run: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
+    const result = await run(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}
+
 export async function login(db: Database, telegram: TelegramUser, sessionSeconds: number, secret: string) {
   const client = await db.connect();
   try {
@@ -63,7 +75,7 @@ export async function boardForUser(db: Database, userId: string, boardId: string
 }
 
 export async function boardMembers(db: Database, userId: string, boardId: string) {
-  const result = await db.query(`SELECT u.id, u.first_name, u.username FROM memberships viewer
+  const result = await db.query(`SELECT u.id, u.first_name, u.username, member.role FROM memberships viewer
     JOIN memberships member ON member.board_id = viewer.board_id JOIN users u ON u.id = member.user_id
     WHERE viewer.board_id = $1 AND viewer.user_id = $2 ORDER BY u.first_name`, [boardId, userId]);
   return result.rows;
@@ -85,10 +97,13 @@ export async function saveTaskFilterState(db: Database, userId: string, boardId:
 }
 
 export async function renameBoard(db: Database, userId: string, boardId: string, name: string) {
-  const result = await db.query(`UPDATE boards b SET name = $3 FROM memberships m
-    WHERE b.id = $1 AND m.board_id = b.id AND m.user_id = $2 AND m.role IN ('owner', 'admin') RETURNING b.id, b.type, b.name`,
-    [boardId, userId, name]);
-  return result.rows[0] ?? null;
+  return withBoardLock(db, boardId, async (client) => {
+    const result = await client.query(`UPDATE boards b SET name = $3 FROM memberships m
+      WHERE b.id = $1 AND m.board_id = b.id AND m.user_id = $2 AND m.role IN ('owner', 'admin')
+        AND (b.type <> 'pair' OR (b.owner_user_id = $2 AND b.status = 'active')) RETURNING b.id, b.type, b.name`,
+      [boardId, userId, name]);
+    return result.rows[0] ?? null;
+  });
 }
 
 export async function connectChatBoard(db: Database, chatId: number, name: string) {
@@ -191,18 +206,21 @@ export async function projectsForBoard(db: Database, userId: string, boardId: st
 }
 
 export async function createProject(db: Database, userId: string, boardId: string, name: string) {
-  const result = await db.query(`INSERT INTO projects (id, board_id, name, created_by)
+  return withBoardLock(db, boardId, async (client) => {
+  const result = await client.query(`INSERT INTO projects (id, board_id, name, created_by)
     SELECT $3, b.id, $4, $2 FROM boards b JOIN memberships m ON m.board_id = b.id
     WHERE b.id = $1 AND b.status = 'active' AND m.user_id = $2
     ON CONFLICT (board_id, lower(btrim(name))) WHERE archived_at IS NULL
     DO UPDATE SET name = projects.name
     RETURNING id, name, archived_at`, [boardId, userId, randomUUID(), name]);
   return result.rows[0] ?? null;
+  });
 }
 
 export async function updateProject(db: Database, userId: string, boardId: string, projectId: string, input: {name?: string; archived?: boolean}) {
+  return withBoardLock(db, boardId, async (client) => {
   try {
-    const result = await db.query(`UPDATE projects p SET name = COALESCE($4, p.name),
+    const result = await client.query(`UPDATE projects p SET name = COALESCE($4, p.name),
         archived_at = CASE WHEN $5::boolean IS NULL THEN p.archived_at WHEN $5 THEN now() ELSE NULL END
       FROM boards b, memberships m WHERE p.id = $1 AND p.board_id = $2 AND b.id = p.board_id
         AND b.status = 'active' AND m.board_id = b.id AND m.user_id = $3
@@ -212,9 +230,11 @@ export async function updateProject(db: Database, userId: string, boardId: strin
     if ((error as {code?: string}).code === '23505') throw new ProjectConflictError('active project with this name already exists');
     throw error;
   }
+  });
 }
 
 const taskColumns = `t.id, t.board_id, t.project_id, p.name AS project_name, t.creator_user_id, t.assignee_user_id,
+  (SELECT status FROM boards WHERE id = t.board_id) AS board_status,
   assignee.first_name AS assignee_name,
   t.title, t.description, t.status, t.priority, t.deadline, t.wait_reason, t.wait_check_at,
   to_char(t.deadline_date, 'YYYY-MM-DD') AS deadline_date, t.deadline_timezone,
@@ -445,7 +465,7 @@ export async function setTaskArchived(db: Database, userId: string, boardId: str
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 
-async function canReadTask(db: Database, userId: string, boardId: string, taskId: string, activeOnly = false) {
+async function canReadTask(db: Database | pg.PoolClient, userId: string, boardId: string, taskId: string, activeOnly = false) {
   const result = await db.query(`SELECT t.creator_user_id, t.assignee_user_id FROM tasks t
     JOIN boards b ON b.id = t.board_id JOIN memberships m ON m.board_id = t.board_id
     WHERE t.id = $1 AND t.board_id = $2 AND m.user_id = $3 AND ($4::boolean = false OR (t.archived_at IS NULL AND b.status = 'active'))`,
@@ -469,18 +489,21 @@ export async function taskCollaboration(db: Database, userId: string, boardId: s
 }
 
 export async function addTaskComment(db: Database, userId: string, boardId: string, taskId: string, body: string) {
-  if (!await canReadTask(db, userId, boardId, taskId, true)) return null;
-  const result = await db.query(`INSERT INTO task_comments (id, board_id, task_id, author_user_id, body)
+  return withBoardLock(db, boardId, async (client) => {
+  if (!await canReadTask(client, userId, boardId, taskId, true)) return null;
+  const result = await client.query(`INSERT INTO task_comments (id, board_id, task_id, author_user_id, body)
     VALUES ($1, $2, $3, $4, $5) RETURNING id, body, created_at`, [randomUUID(), boardId, taskId, userId, body]);
   return result.rows[0];
+  });
 }
 
 export async function addChecklistItem(db: Database, userId: string, boardId: string, taskId: string, text: string) {
-  const task = await canReadTask(db, userId, boardId, taskId, true);
-  if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) return null;
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
+    const task = await canReadTask(client, userId, boardId, taskId, true);
+    if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) { await client.query('ROLLBACK'); return null; }
     const position = (await client.query<{position: number}>(`SELECT COALESCE(MAX(position), -1) + 1 AS position
       FROM task_checklist_items WHERE task_id = $1`, [taskId])).rows[0].position;
     const result = await client.query(`INSERT INTO task_checklist_items (id, board_id, task_id, created_by, text, position)
@@ -492,11 +515,12 @@ export async function addChecklistItem(db: Database, userId: string, boardId: st
 }
 
 export async function updateChecklistItem(db: Database, userId: string, boardId: string, taskId: string, itemId: string, input: {text?: string; completed?: boolean; position?: number}) {
-  const task = await canReadTask(db, userId, boardId, taskId, true);
-  if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) return null;
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
+    const task = await canReadTask(client, userId, boardId, taskId, true);
+    if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) { await client.query('ROLLBACK'); return null; }
     const current = await client.query('SELECT * FROM task_checklist_items WHERE id = $1 AND task_id = $2 AND board_id = $3 FOR UPDATE', [itemId, taskId, boardId]);
     const item = current.rows[0];
     if (!item) { await client.query('ROLLBACK'); return null; }
@@ -518,11 +542,12 @@ export async function updateChecklistItem(db: Database, userId: string, boardId:
 }
 
 export async function deleteChecklistItem(db: Database, userId: string, boardId: string, taskId: string, itemId: string) {
-  const task = await canReadTask(db, userId, boardId, taskId, true);
-  if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) return false;
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
+    const task = await canReadTask(client, userId, boardId, taskId, true);
+    if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) { await client.query('ROLLBACK'); return false; }
     const result = await client.query('DELETE FROM task_checklist_items WHERE id = $1 AND task_id = $2 AND board_id = $3 RETURNING *', [itemId, taskId, boardId]);
     if (!result.rows[0]) { await client.query('ROLLBACK'); return false; }
     await client.query('UPDATE task_checklist_items SET position = position - 1 WHERE task_id = $1 AND position > $2', [taskId, result.rows[0].position]);
@@ -534,13 +559,15 @@ export async function deleteChecklistItem(db: Database, userId: string, boardId:
 
 export type AttachmentInput = { kind: 'url' | 'telegram'; url?: string; telegramFileId?: string; telegramFileUniqueId?: string; fileName?: string; mimeType?: string; fileSize?: number };
 export async function addTaskAttachment(db: Database, userId: string, boardId: string, taskId: string, input: AttachmentInput) {
-  if (!await canReadTask(db, userId, boardId, taskId, true)) return null;
-  const result = await db.query(`INSERT INTO task_attachments (id, board_id, task_id, added_by, kind, url,
+  return withBoardLock(db, boardId, async (client) => {
+  if (!await canReadTask(client, userId, boardId, taskId, true)) return null;
+  const result = await client.query(`INSERT INTO task_attachments (id, board_id, task_id, added_by, kind, url,
       telegram_file_id, telegram_file_unique_id, file_name, mime_type, file_size)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id, kind, url, telegram_file_id, file_name, mime_type, file_size, created_at`,
     [randomUUID(), boardId, taskId, userId, input.kind, input.url ?? null, input.telegramFileId ?? null,
       input.telegramFileUniqueId ?? null, input.fileName ?? null, input.mimeType ?? null, input.fileSize ?? null]);
   return result.rows[0];
+  });
 }
 
 export async function incompleteChecklistCount(db: Database, userId: string, boardId: string, taskId: string) {
@@ -552,6 +579,9 @@ export async function incompleteChecklistCount(db: Database, userId: string, boa
 export async function claimAssignmentNotification(db: Database, notificationId: string) {
   const result = await db.query(`UPDATE task_assignment_notifications n SET status = 'sending' FROM tasks t, users u
     WHERE n.id = $1 AND n.status = 'pending' AND t.id = n.task_id AND u.id = n.assignee_user_id
+      AND EXISTS (SELECT 1 FROM memberships m JOIN boards b ON b.id = m.board_id
+        WHERE m.board_id = t.board_id AND m.user_id = n.assignee_user_id AND b.status = 'active')
+      AND t.assignee_user_id = n.assignee_user_id
     RETURNING n.id, n.kind, t.title, u.telegram_id`, [notificationId]);
   return result.rows[0] ?? null;
 }
@@ -582,7 +612,8 @@ export async function recurrencesForBoard(db: Database, userId: string, boardId:
 export async function createRecurrence(db: Database, userId: string, boardId: string, input: RecurrenceInput) {
   const first = nextOccurrence(input, new Date(new Date(input.startAt).getTime() - 1));
   if (!first) return null;
-  const result = await db.query(`INSERT INTO recurrence_templates (id, board_id, creator_user_id, project_id,
+  return withBoardLock(db, boardId, async (client) => {
+  const result = await client.query(`INSERT INTO recurrence_templates (id, board_id, creator_user_id, project_id,
       assignee_user_id, title, description, priority, frequency, weekdays, day_of_month, local_time,
       timezone, starts_at, ends_at, next_occurrence_at)
     SELECT $3, b.id, $2, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
@@ -595,6 +626,7 @@ export async function createRecurrence(db: Database, userId: string, boardId: st
       input.title!, input.description ?? null, input.priority ?? 'normal', input.frequency, input.weekdays ?? null,
       input.dayOfMonth ?? null, input.localTime, input.timezone, input.startAt, input.endAt ?? null, first.toISOString()]);
   return result.rows[0] ?? null;
+  });
 }
 
 export async function updateRecurrence(db: Database, userId: string, boardId: string, recurrenceId: string,
@@ -602,8 +634,10 @@ export async function updateRecurrence(db: Database, userId: string, boardId: st
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
     const current = await client.query<any>(`SELECT r.* FROM recurrence_templates r JOIN boards b ON b.id = r.board_id
-      WHERE r.id = $1 AND r.board_id = $2 AND b.status = 'active' FOR UPDATE`, [recurrenceId, boardId]);
+      JOIN memberships m ON m.board_id = b.id AND m.user_id = $3
+      WHERE r.id = $1 AND r.board_id = $2 AND b.status = 'active' FOR UPDATE`, [recurrenceId, boardId, userId]);
     const row = current.rows[0];
     if (!row || (row.creator_user_id !== userId && row.assignee_user_id !== userId)) { await client.query('ROLLBACK'); return null; }
     const projectId = input.projectId === undefined ? row.project_id : input.projectId;
@@ -642,13 +676,14 @@ export async function updateTaskAndFuture(db: Database, userId: string, boardId:
 }
 
 export async function runRecurrenceScheduler(db: Database, now = new Date()) {
-  const client = await db.connect();
   let created = 0;
-  try {
-    await client.query('BEGIN');
-    const due = await client.query<any>(`SELECT * FROM recurrence_templates
-      WHERE paused_at IS NULL AND archived_at IS NULL AND next_occurrence_at <= $1
-      ORDER BY next_occurrence_at FOR UPDATE SKIP LOCKED`, [now.toISOString()]);
+  const boards = await db.query<{board_id: string}>(`SELECT DISTINCT r.board_id FROM recurrence_templates r
+    JOIN boards b ON b.id = r.board_id WHERE r.paused_at IS NULL AND r.archived_at IS NULL
+      AND r.next_occurrence_at <= $1 AND b.status = 'active' ORDER BY r.board_id`, [now.toISOString()]);
+  for (const {board_id: boardId} of boards.rows) await withBoardLock(db, boardId, async (client) => {
+    const due = await client.query<any>(`SELECT r.* FROM recurrence_templates r JOIN boards b ON b.id = r.board_id
+      WHERE r.board_id = $2 AND b.status = 'active' AND r.paused_at IS NULL AND r.archived_at IS NULL AND r.next_occurrence_at <= $1
+      ORDER BY r.next_occurrence_at FOR UPDATE OF r, b`, [now.toISOString(), boardId]);
     for (const row of due.rows) {
       let occurrence = row.next_occurrence_at as Date | null;
       const rule: RecurrenceRule = { frequency: row.frequency, weekdays: row.weekdays, dayOfMonth: row.day_of_month,
@@ -666,7 +701,6 @@ export async function runRecurrenceScheduler(db: Database, now = new Date()) {
       await client.query('UPDATE recurrence_templates SET next_occurrence_at = $2, updated_at = now() WHERE id = $1',
         [row.id, occurrence?.toISOString() ?? null]);
     }
-    await client.query('COMMIT');
-    return created;
-  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  });
+  return created;
 }

@@ -5,6 +5,7 @@ export type Task = {
   id: string;
   board_id: string;
   board_name?: string;
+  board_status?: string;
   title: string;
   description?: string;
   project_id?: string;
@@ -71,6 +72,7 @@ export const statusDisplayName: Record<TaskStatus, string> = {
 export const priorityDisplayName: Record<TaskPriority, string> = { normal: 'Обычная', urgent: 'Срочная' };
 
 export function taskStatusRestriction(task: Task, userId: string, status: TaskStatus): string | null {
+  if (task.board_status && task.board_status !== 'active') return 'Доска доступна только для чтения';
   if (task.status === status) return null;
   if (status === 'done') {
     if (task.assignee_user_id) return task.assignee_user_id === userId ? null : 'Завершить задачу может только назначенный исполнитель';
