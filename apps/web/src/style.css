@@ -504,3 +504,30 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
+
+.pair-screen { gap: 18px; }
+.pair-screen > header { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid #edf0f4; padding-bottom: 8px; }
+.pair-screen > header button { background: transparent; color: var(--text); padding: 10px 0; }
+.pair-screen h1 { font: 500 1.5rem/1.3 Inter, sans-serif; margin: 0; }
+.pair-screen h2 { font: 600 1.875rem/1.4 Inter, sans-serif; margin: 12px 0 16px; }
+.pair-context { margin: 0; font-size: .8125rem; }
+.pair-content { display: flex; flex-direction: column; gap: 16px; }
+.pair-content > p { margin: 0; font-size: .875rem; }
+.pair-name { display: grid; gap: 12px; font-size: .8125rem; color: var(--text-muted); }
+.pair-name input { width: 100%; min-height: 48px; padding: 8px 0; border: 0; border-bottom: 2px solid var(--primary); border-radius: 0; background: white; color: var(--text); font-size: 1.5rem; }
+.pair-fact { display: flex; align-items: center; gap: 12px; padding: 28px 0; border-bottom: 1px solid #edf0f4; font-size: 1.125rem; }
+.pair-fact > svg { color: var(--primary); }
+.pair-fact span { display: grid; gap: 4px; }
+.pair-fact small { color: var(--text-muted); font-size: .8125rem; }
+.pair-notice { margin: 0; padding: 16px; border-radius: 8px; background: var(--primary-soft); color: #294f84; font-size: .8125rem; line-height: 1.5; }
+.pair-notice.neutral { background: var(--surface-soft); color: var(--text); }
+.pair-notice.success { background: var(--green-soft); color: #315d40; }
+.pair-notice.error { background: var(--coral-soft); color: #9f3535; }
+.pair-notice p { margin-bottom: 0; }
+.pair-actions { display: grid; gap: 10px; margin: auto 0 0; padding: 24px 0 0; border: 0; min-width: 0; }
+.pair-actions button { width: 100%; min-height: 50px; }
+.pair-screen .secondary { margin: 0; background: var(--primary-soft); color: var(--primary); border: 0; }
+.pair-screen .danger { background: #ae3933; color: white; }
+.pair-text-danger { background: transparent; color: #ae3933; font-size: .8125rem; }
+.pair-screen button:disabled, .pair-screen fieldset:disabled button { opacity: .5; }
+.readonly-fields { border: 0; padding: 0; margin: 0; min-width: 0; }

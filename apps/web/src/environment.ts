@@ -6,6 +6,7 @@ type TelegramWebApp = {
   colorScheme?: 'light' | 'dark';
   ready(): void;
   expand(): void;
+  openTelegramLink?(url: string): void;
   onEvent?(event: 'themeChanged', listener: () => void): void;
   offEvent?(event: 'themeChanged', listener: () => void): void;
 };

@@ -10,6 +10,7 @@ import { isChatAdmin, telegramCall } from './telegram.js';
 import { renderPublication, schedulesForBoard, updateSchedule, validTimezone as validPublicationTimezone, type PublicationKind, type PublicationSchedule } from './publications.js';
 import { validTimezone } from './recurrence.js';
 import { claimTask } from './db.js';
+import { BoardAccessError, changePairInvite, createPairBoard, previewPairInvite, redeemPairInvite, removePairMember, setPairArchived } from './pair-boards.js';
 
 type ChatMemberUpdate = {
   chat: { id: number; title?: string; type: string };
@@ -23,6 +24,16 @@ const present = (status: string) => status === 'member' || status === 'administr
 export function buildApp(config: Config, db: Database) {
   const app = Fastify({ logger: { redact: ['req.headers.authorization', 'req.headers.cookie', 'req.headers.x-telegram-bot-api-secret-token', 'body.initData'] } });
   app.register(cookie);
+  app.setErrorHandler((error, request, reply) => {
+    if (error instanceof BoardAccessError) return reply.code(error.status).send({ error: error.message });
+    request.log.error(error);
+    return reply.code((error as {statusCode?: number}).statusCode ?? 500).send({ error: 'Не удалось выполнить действие' });
+  });
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  app.addHook('preHandler', async (request, reply) => {
+    const params = request.params as {id?: string};
+    if (request.url.startsWith('/api/boards/') && params.id && !uuid.test(params.id)) return reply.code(400).send({ error: 'invalid board id' });
+  });
   const publicDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist');
   app.register(fastifyStatic, { root: publicDir });
   app.get('/health', async () => { await db.query('SELECT 1'); return { status: 'ok' }; });
@@ -53,11 +64,40 @@ export function buildApp(config: Config, db: Database) {
     const board = await boardForUser(db, id, request.params.id);
     return board ?? reply.code(404).send({ error: 'board not found' });
   });
-  app.post<{Body: {token?: string}}>('/api/board-links/redeem', async (request, reply) => {
+  app.post<{Body: {name?: unknown; requestId?: unknown}}>('/api/boards/pair', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const name = typeof request.body?.name === 'string' ? request.body.name.trim() : '';
+    const requestId = request.body?.requestId;
+    if (!name || name.length > 120 || typeof requestId !== 'string' || !uuid.test(requestId)) return reply.code(400).send({ error: 'Укажите название доски от 1 до 120 символов и корректный идентификатор запроса' });
+    return createPairBoard(db, id, name, requestId);
+  });
+  app.post<{Body: {token?: unknown}}>('/api/board-links/preview', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     const token = request.body?.token;
-    if (!token || token.length > 128) return reply.code(400).send({ error: 'invalid board link' });
-    const board = await redeemBoardLink(db, id, token);
+    if (typeof token !== 'string' || !/^pair_[A-Za-z0-9_-]{32}$/.test(token)) return reply.code(400).send({ error: 'Приглашение больше не действует' });
+    return await previewPairInvite(db, id, token) ?? reply.code(404).send({ error: 'Приглашение больше не действует' });
+  });
+  app.post<{Params: {id: string}, Body: {archived?: unknown}}>('/api/boards/:id/archive', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    if (typeof request.body?.archived !== 'boolean') return reply.code(400).send({ error: 'archived must be boolean' });
+    return setPairArchived(db, id, request.params.id, request.body.archived);
+  });
+  app.delete<{Params: {id: string}, Body: {participantId?: unknown}}>('/api/boards/:id/participant', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const participantId = request.body?.participantId;
+    if (typeof participantId !== 'string' || !/^[1-9][0-9]{0,18}$/.test(participantId) || participantId === id) return reply.code(400).send({ error: 'invalid participant id' });
+    return removePairMember(db, id, request.params.id, participantId);
+  });
+  app.post<{Params: {id: string}}>('/api/boards/:id/leave', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    return removePairMember(db, id, request.params.id, id);
+  });
+  app.post<{Body: {token?: string; acceptedHistory?: boolean}}>('/api/board-links/redeem', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const token = request.body?.token;
+    if (typeof token !== 'string' || !token || token.length > 128) return reply.code(400).send({ error: 'invalid board link' });
+    if (token.startsWith('pair_') && !/^pair_[A-Za-z0-9_-]{32}$/.test(token)) return reply.code(400).send({ error: 'invalid board link' });
+    const board = token.startsWith('pair_') ? await redeemPairInvite(db, id, token, request.body.acceptedHistory === true) : await redeemBoardLink(db, id, token);
     return board ?? reply.code(404).send({ error: 'board link is invalid or revoked' });
   });
   app.post<{Params: {id: string}, Body: {name?: string}}>('/api/boards/:id/activate', async (request, reply) => {
@@ -74,15 +114,16 @@ export function buildApp(config: Config, db: Database) {
     const user = await sessionUser(db, request.cookies.session, config.sessionSecret);
     if (!user) return reply.code(401).send({ error: 'authentication required' });
     const board = await boardForUser(db, user.id, request.params.id);
-    if (!board || board.type !== 'chat') return reply.code(404).send({ error: 'board not found' });
-    if (!await isChatAdmin(config.botToken, board.telegram_chat_id, user.telegram_id)) return reply.code(403).send({ error: 'Telegram chat admin required' });
-    const token = await createInvite(db, user.id, request.params.id);
+    if (!board || !['chat', 'pair'].includes(board.type)) return reply.code(404).send({ error: 'board not found' });
+    if (board.type === 'chat' && !await isChatAdmin(config.botToken, board.telegram_chat_id, user.telegram_id)) return reply.code(403).send({ error: 'Telegram chat admin required' });
+    const token = board.type === 'pair' ? await changePairInvite(db, user.id, board.id) : await createInvite(db, user.id, board.id);
     return token ? { url: `https://t.me/${config.botUsername}?startapp=${encodeURIComponent(token)}` } : reply.code(404).send({ error: 'board not found' });
   });
   app.delete<{Params: {id: string}}>('/api/boards/:id/invites', async (request, reply) => {
     const user = await sessionUser(db, request.cookies.session, config.sessionSecret);
     if (!user) return reply.code(401).send({ error: 'authentication required' });
     const board = await boardForUser(db, user.id, request.params.id);
+    if (board?.type === 'pair') { await changePairInvite(db, user.id, board.id, true); return { revoked: true }; }
     if (!board || board.type !== 'chat') return reply.code(404).send({ error: 'board not found' });
     if (!await isChatAdmin(config.botToken, board.telegram_chat_id, user.telegram_id)) return reply.code(403).send({ error: 'Telegram chat admin required' });
     return { revoked: await revokeInvites(db, user.id, request.params.id) };

@@ -64,6 +64,7 @@ export function taskPatch(draft: TaskDraft) {
 type Props = {
   task: Task;
   userId: string;
+  readOnly?: boolean;
   collaboration: Collaboration;
   projects: Project[];
   members: Member[];
@@ -80,7 +81,7 @@ type Props = {
   onUrlAttachment: (url: string) => Promise<void>;
 };
 
-export function TaskDetails({ task, userId, collaboration, projects, members, candidateTasks, boardName, onBack, onClaim, onSave, onArchive, onChecklistAdd, onChecklistUpdate, onChecklistDelete, onComment, onUrlAttachment }: Props) {
+export function TaskDetails({ task, userId, collaboration, projects, members, candidateTasks, boardName, onBack, onClaim, onSave, onArchive, onChecklistAdd, onChecklistUpdate, onChecklistDelete, onComment, onUrlAttachment, readOnly = false }: Props) {
   const [draft, setDraft] = useState(() => taskDraft(task));
   const [checklistText, setChecklistText] = useState('');
   const [comment, setComment] = useState('');
@@ -93,6 +94,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
   const [busy, setBusy] = useState(false);
   const set = <K extends keyof TaskDraft>(key: K, value: TaskDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
   const run = async (action: () => Promise<void>, clear?: () => void) => {
+    if (readOnly) return;
     setBusy(true); setError('');
     try { await action(); clear?.(); }
     catch (caught) { setError(caught instanceof Error ? caught.message : 'Ошибка'); }
@@ -135,9 +137,10 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
   return <main className="task-details">
     <EnvironmentStatus/>
     <h1 className="visually-hidden">Детали задачи</h1>
-    <header className="task-details-bar"><button className="detail-icon" aria-label="Назад к задачам" onClick={onBack}><Icon name="back"/></button><span><i/> {boardName}</span><div className="detail-menu-wrap"><button className="detail-icon" aria-label="Другие действия" aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)}><Icon name="more"/></button>{menuOpen && <div className="detail-menu">{task.recurrence_template_id && <p>Повторяющаяся задача</p>}<button type="button" aria-expanded={historyOpen} onClick={() => setHistoryOpen((value) => !value)}>История <Icon name="chevron"/></button>{historyOpen && <div className="detail-history">{collaboration.timeline.map((item) => <p key={item.id}>{item.actor_name} · {item.action}<small>{new Date(item.created_at).toLocaleString('ru-RU')}</small></p>)}</div>}<div className="detail-danger-zone"><button type="button" className="danger" disabled={busy} onClick={() => void run(onArchive)}>Архивировать задачу</button></div></div>}</div></header>
+    <header className="task-details-bar"><button className="detail-icon" aria-label="Назад к задачам" onClick={onBack}><Icon name="back"/></button><span><i/> {boardName}</span><div className="detail-menu-wrap"><button className="detail-icon" aria-label="Другие действия" aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)}><Icon name="more"/></button>{menuOpen && <div className="detail-menu">{task.recurrence_template_id && <p>Повторяющаяся задача</p>}<button type="button" aria-expanded={historyOpen} onClick={() => setHistoryOpen((value) => !value)}>История <Icon name="chevron"/></button>{historyOpen && <div className="detail-history">{collaboration.timeline.map((item) => <p key={item.id}>{item.actor_name} · {item.action}<small>{new Date(item.created_at).toLocaleString('ru-RU')}</small></p>)}</div>}<div className="detail-danger-zone"><button type="button" className="danger" disabled={busy || readOnly} onClick={() => void run(onArchive)}>Архивировать задачу</button></div></div>}</div></header>
 
-    <form onSubmit={save}>
+    {readOnly && <p className="notice">Доска доступна только для чтения.</p>}
+    <form onSubmit={save}><fieldset className="readonly-fields" disabled={readOnly}>
       <div className="detail-title"><textarea aria-label="Название задачи" maxLength={200} value={draft.title} onChange={(event) => set('title', event.target.value)}/><TaskGlyph/></div>
       <div className="detail-status"><button type="button" className="detail-status-action" disabled={!hasStatusAction} onClick={() => setChoice('status')}><span className="status-dot"/>{statusDisplayName[draft.status]}<Icon name="chevron"/></button>{collaboration.checklist.length > 0 && <span className="detail-progress"><i><i style={{ width: `${completed / collaboration.checklist.length * 100}%` }}/></i>{completed} из {collaboration.checklist.length} шагов</span>}{!hasStatusAction && <small className="task-action-reason">{taskStatusRestriction(task, userId, statuses.find((status) => status !== task.status)!)}</small>}</div>
 
@@ -159,13 +162,13 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
 
       {onClaim && <button className="detail-save" type="button" disabled={busy} onClick={onClaim}>Взять себе</button>}
       <button className="detail-save" disabled={busy}>Сохранить изменения</button>
-    </form>
+    </fieldset></form>
 
     <section className="detail-section detail-discussion" data-tone="discussion"><h2>Обсуждение</h2>{collaboration.comments.map((item) => <article key={item.id}><Avatar initials={item.author_name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toLocaleUpperCase('ru-RU')} label={item.author_name}/><div><small>{item.author_name} · {new Date(item.created_at).toLocaleString('ru-RU')}</small><p>{item.body}</p></div></article>)}{collaboration.attachments.map((item) => <p className="detail-attachment" key={item.id}>{item.url ? <a href={item.url} target="_blank" rel="noreferrer">{item.url}</a> : item.file_name ?? 'Файл из Telegram'}</p>)}
-      {showAttachment && <div className="detail-add"><input aria-label="Ссылка" type="url" value={attachmentUrl} onChange={(event) => setAttachmentUrl(event.target.value)} placeholder="https://…"/><button disabled={busy || !attachmentUrl.trim()} onClick={() => void run(() => onUrlAttachment(attachmentUrl.trim()), () => { setAttachmentUrl(''); setShowAttachment(false); })}>Добавить</button></div>}
+      {showAttachment && !readOnly && <div className="detail-add"><input aria-label="Ссылка" type="url" value={attachmentUrl} onChange={(event) => setAttachmentUrl(event.target.value)} placeholder="https://…"/><button disabled={busy || !attachmentUrl.trim()} onClick={() => void run(() => onUrlAttachment(attachmentUrl.trim()), () => { setAttachmentUrl(''); setShowAttachment(false); })}>Добавить</button></div>}
     </section>
     {error && <p className="detail-error" role="alert">{error}</p>}
-    <div className="comment-composer"><input aria-label="Комментарий" maxLength={4000} value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Написать комментарий…"/><button className="attach" aria-label="Добавить ссылку" onClick={() => setShowAttachment((value) => !value)}><Icon name="attach"/></button><button disabled={busy || !comment.trim()} aria-label="Отправить комментарий" onClick={() => void run(() => onComment(comment.trim()), () => setComment(''))}><Icon name="send"/></button></div>
-    {choiceSheet}
+    {!readOnly && <div className="comment-composer"><input aria-label="Комментарий" maxLength={4000} value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Написать комментарий…"/><button className="attach" aria-label="Добавить ссылку" onClick={() => setShowAttachment((value) => !value)}><Icon name="attach"/></button><button disabled={busy || !comment.trim()} aria-label="Отправить комментарий" onClick={() => void run(() => onComment(comment.trim()), () => setComment(''))}><Icon name="send"/></button></div>}
+    {!readOnly && choiceSheet}
   </main>;
 }
