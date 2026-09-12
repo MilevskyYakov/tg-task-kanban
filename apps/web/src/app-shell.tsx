@@ -108,7 +108,7 @@ export function ChoiceSheet({ title, children, onClose, className = '' }: { titl
 
 export const Sheet = ChoiceSheet;
 
-export function ActionRow({ label, value, icon, ...props }: { label: string; value: ReactNode; icon?: ReactNode } & ButtonHTMLAttributes<HTMLButtonElement>) {
+export function ActionRow({ label, value, icon, ...props }: { label: string; value: ReactNode; icon?: ReactNode } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'value'>) {
   return <button className="action-row" type="button" {...props}>{icon && <span className="action-row-icon">{icon}</span>}<span className="action-row-copy"><span>{label}</span><strong>{value}</strong></span><Icon name="chevron"/></button>;
 }
 

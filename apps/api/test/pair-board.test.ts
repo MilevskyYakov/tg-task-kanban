@@ -137,7 +137,7 @@ test('pair board: consent, capacity, access, preserved history, archive and ordi
     const beforeRemoval = (await db.query('SELECT * FROM tasks WHERE board_id = $1 ORDER BY id', [boardId])).rows;
     assert.equal((await call(owner, 'DELETE', `${path}/participant`, { participantId: member.userId })).statusCode, 200);
     const afterRemoval = (await db.query('SELECT * FROM tasks WHERE board_id = $1 ORDER BY id', [boardId])).rows;
-    assert.deepEqual(afterRemoval, beforeRemoval.map((task) => ({ ...task, assignee_user_id: task.assignee_user_id === member.userId ? null : task.assignee_user_id })));
+    assert.deepEqual(afterRemoval, beforeRemoval.map((task) => task.assignee_user_id === member.userId ? { ...task, assignee_user_id: null, revision: String(BigInt(task.revision) + 1n) } : task));
     assert.equal(await claimAssignmentNotification(db, notificationId!), null);
     assert.equal((await call(member, 'GET', path)).statusCode, 404);
     assert.equal((await call(member, 'GET', taskPath)).statusCode, 403);

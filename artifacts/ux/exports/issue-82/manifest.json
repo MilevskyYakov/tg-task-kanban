@@ -1,0 +1,120 @@
+{
+  "pngs": [
+    {
+      "id": "y5l2c",
+      "state": "entry390",
+      "width": 390,
+      "height": 844,
+      "bytes": 31183
+    },
+    {
+      "id": "peEmC",
+      "state": "empty390",
+      "width": 390,
+      "height": 844,
+      "bytes": 29463
+    },
+    {
+      "id": "Hia6u",
+      "state": "list390",
+      "width": 390,
+      "height": 844,
+      "bytes": 30567
+    },
+    {
+      "id": "E8ynd",
+      "state": "list320",
+      "width": 320,
+      "height": 844,
+      "bytes": 29056
+    },
+    {
+      "id": "pBw7W",
+      "state": "create390",
+      "width": 390,
+      "height": 844,
+      "bytes": 32625
+    },
+    {
+      "id": "YVnMI",
+      "state": "create320",
+      "width": 320,
+      "height": 844,
+      "bytes": 30918
+    },
+    {
+      "id": "N4UUm9",
+      "state": "boards320",
+      "width": 320,
+      "height": 844,
+      "bytes": 25694
+    },
+    {
+      "id": "lTeK8",
+      "state": "secret390",
+      "width": 390,
+      "height": 844,
+      "bytes": 39184
+    },
+    {
+      "id": "M1prTW",
+      "state": "secret320",
+      "width": 320,
+      "height": 844,
+      "bytes": 37565
+    },
+    {
+      "id": "u0lca",
+      "state": "details390",
+      "width": 390,
+      "height": 844,
+      "bytes": 29428
+    },
+    {
+      "id": "k9qBlw",
+      "state": "revoke320",
+      "width": 320,
+      "height": 844,
+      "bytes": 31750
+    },
+    {
+      "id": "uiQPN",
+      "state": "clipboard320",
+      "width": 320,
+      "height": 844,
+      "bytes": 33805
+    },
+    {
+      "id": "xxSxs",
+      "state": "timeout320",
+      "width": 320,
+      "height": 844,
+      "bytes": 27121
+    },
+    {
+      "id": "y7C6Nt",
+      "state": "lost320",
+      "width": 320,
+      "height": 844,
+      "bytes": 26642
+    },
+    {
+      "id": "NPF00",
+      "state": "keyboard320",
+      "width": 320,
+      "height": 844,
+      "bytes": 32624
+    }
+  ],
+  "pdf_page_objects": 15,
+  "pdf_page_tree_counts": [
+    8,
+    7,
+    15
+  ],
+  "pdf_bytes": 1779013,
+  "saved_pen_issue82_roots": 0,
+  "canvas_layout_problems": 0,
+  "approval": "pending",
+  "runtime_tests": "not_run_design_only"
+}

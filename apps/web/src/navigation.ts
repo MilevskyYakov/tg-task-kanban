@@ -5,7 +5,8 @@ export type NavigationState =
   | { screen: 'settings' }
   | { screen: 'settings-workspace'; boardId?: string }
   | { screen: 'settings-automation'; boardId?: string }
-  | { screen: 'settings-account' };
+  | { screen: 'settings-account' }
+  | { screen: 'settings-connections' };
 
 export const settingsSections = [
   { id: 'workspace', title: 'Рабочее пространство', description: 'Доски, проекты и участники' },
