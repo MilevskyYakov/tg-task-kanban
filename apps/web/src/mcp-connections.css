@@ -59,3 +59,7 @@
 .mcp-help-steps button { width: 100%; min-height: 52px; margin: 0; }
 .mcp-command { padding: 12px; border-radius: 8px; background: var(--surface-soft); white-space: pre-wrap; }
 .mcp-command code { font: inherit; }
+.mcp-client-picker { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+.mcp-client-picker button { min-height: 48px; margin: 0; padding: 10px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
+.mcp-client-picker button[aria-pressed="true"] { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); }
+.mcp-client-picker button:last-child { grid-column: 1 / -1; }
