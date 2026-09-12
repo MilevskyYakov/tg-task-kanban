@@ -23,6 +23,8 @@ const collaboration = {
 };
 
 async function mockDetails(page: Page, failSave = false) {
+  let savedTask: Record<string, any> = { ...task };
+  const requests: Record<string, any>[] = [];
   await page.addInitScript((boardId) => {
     localStorage.setItem('tasks.globalBoardId', boardId);
     localStorage.setItem('tasks.viewState', JSON.stringify({ view: 'list', grouping: 'deadline', filters: { scope: 'all', project: '', assignee: '', status: '', priority: '', deadline: '', unassigned: false, search: '' }, scrollY: 0, kanbanStatus: 'todo' }));
@@ -38,6 +40,12 @@ async function mockDetails(page: Page, failSave = false) {
       await route.fulfill({ status: 500, json: { error: 'Не удалось сохранить задачу' } });
       return;
     }
+    if (request.method() === 'PATCH' && path.endsWith(`/tasks/${task.id}`)) {
+      const input = request.postDataJSON();
+      requests.push(input);
+      savedTask = { ...savedTask, title: input.title, deadline: input.deadline, deadline_date: input.deadlineDate, deadline_timezone: input.deadlineTimezone };
+      await route.fulfill({ json: savedTask }); return;
+    }
     const payload = path === '/api/auth/telegram' ? { userId: 'user-2' }
       : path === '/api/boards' ? { boards: [board] }
       : path.endsWith('/collaboration') ? collaboration
@@ -46,9 +54,10 @@ async function mockDetails(page: Page, failSave = false) {
       : path.endsWith('/publications') ? { schedules: [] }
       : path.endsWith('/recurrences') ? { recurrences: [] }
       : path.endsWith('/task-filters') ? { filters: {} }
-      : { tasks: [task] };
+      : { tasks: [savedTask] };
     await route.fulfill({ json: payload });
   });
+  return requests;
 }
 
 async function openDetails(page: Page, width: number, failSave = false) {
@@ -100,4 +109,36 @@ test('details separates destructive action in menu', async ({ page }) => {
   await openDetails(page, 390);
   await page.getByRole('button', { name: 'Другие действия' }).click();
   await expect(page.locator('.detail-danger-zone').getByRole('button', { name: 'Архивировать задачу' })).toBeVisible();
+});
+
+test('details saves and reopens every deadline mode without changing an untouched timestamp', async ({ page }) => {
+  const requests = await mockDetails(page);
+  await page.setViewportSize({ width: 320, height: 844 });
+  const reopen = async () => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /Подготовить UX-спецификацию/ }).click();
+  };
+  await reopen();
+  await page.getByRole('button', { name: 'Сохранить изменения' }).click();
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0].deadline).toBe(task.deadline);
+  for (const [mode, name] of [['date', 'Только дата'], ['none', 'Без срока'], ['datetime', 'Дата и время']]) {
+    await page.getByRole('button', { name: /^Срок/ }).click();
+    await page.getByRole('radio', { name, exact: true }).click();
+    if (mode !== 'none') await page.getByLabel('Дата срока').fill('2026-09-18');
+    if (mode === 'datetime') await page.getByLabel('Время срока').fill('18:30');
+    await page.getByRole('button', { name: 'Применить' }).click();
+    const count = requests.length;
+    await page.getByRole('button', { name: 'Сохранить изменения' }).click();
+    await expect.poll(() => requests.length).toBe(count + 1);
+    const saved = requests.at(-1)!;
+    expect(saved.deadlineDate).toBe(mode === 'date' ? '2026-09-18' : null);
+    expect(Boolean(saved.deadline)).toBe(mode === 'datetime');
+    await reopen();
+    await page.getByRole('button', { name: /^Срок/ }).click();
+    await expect(page.getByRole('radio', { name, exact: true })).toBeChecked();
+    if (mode !== 'none') await expect(page.getByLabel('Дата срока')).toHaveValue('2026-09-18');
+    if (mode === 'datetime') await expect(page.getByLabel('Время срока')).toHaveValue('18:30');
+    await page.keyboard.press('Escape');
+  }
 });

@@ -2,7 +2,8 @@ import { useState, type FormEvent } from 'react';
 import { ApiError } from './api';
 import { ActionRow, Avatar, ChoiceRow, EnvironmentStatus, Icon, Sheet, TaskGlyph } from './app-shell';
 import type { Collaboration, Member, Project } from './domain';
-import { dateInputToIso, priorityDisplayName, statusDisplayName, taskStatusRestriction, type Task, type TaskPriority, type TaskStatus } from './tasks';
+import { dateInputToIso, deadlineDraft, deadlinePatch, priorityDisplayName, statusDisplayName, taskStatusRestriction, type DeadlineDraft, type Task, type TaskPriority, type TaskStatus } from './tasks';
+import { DeadlineField } from './deadline-field';
 
 const statuses = Object.keys(statusDisplayName) as TaskStatus[];
 type DetailChoice = 'status' | 'project' | 'assignee' | 'priority' | 'blocker';
@@ -13,7 +14,7 @@ export type TaskDraft = {
   status: TaskStatus;
   projectId: string;
   assigneeUserId: string;
-  deadline: string;
+  due: DeadlineDraft;
   priority: TaskPriority;
   blockerTaskId: string;
   waitReason: string;
@@ -29,7 +30,7 @@ export function taskDraft(task: Task): TaskDraft {
     status: task.status,
     projectId: task.project_id ?? '',
     assigneeUserId: task.assignee_user_id ?? '',
-    deadline: task.deadline?.slice(0, 10) ?? '',
+    due: deadlineDraft(task),
     priority: task.priority,
     blockerTaskId: task.blocked_by_task_id ?? '',
     waitReason: task.wait_reason ?? '',
@@ -41,8 +42,7 @@ export function taskDraft(task: Task): TaskDraft {
 
 export function taskPatch(draft: TaskDraft) {
   if (!draft.title.trim()) throw new Error('Название задачи обязательно');
-  const deadline = draft.deadline ? dateInputToIso(draft.deadline) : null;
-  if (draft.deadline && !deadline) throw new Error('Укажите корректный срок');
+  const deadline = deadlinePatch(draft.due);
   const waitCheckAt = draft.waitCheckAt ? dateInputToIso(draft.waitCheckAt) : null;
   if (draft.waitCheckAt && !waitCheckAt) throw new Error('Укажите корректную дату проверки');
   if (draft.status === 'waiting' && !draft.blockerTaskId && !draft.waitReason.trim()) throw new Error('Укажите задачу-блокер или внешнюю причину');
@@ -52,7 +52,7 @@ export function taskPatch(draft: TaskDraft) {
     status: draft.status,
     projectId: draft.projectId || null,
     assigneeUserId: draft.assigneeUserId || null,
-    deadline,
+    ...deadline,
     priority: draft.priority,
     blockerTaskId: draft.status === 'waiting' ? draft.blockerTaskId || null : null,
     waitReason: draft.status === 'waiting' && !draft.blockerTaskId ? draft.waitReason.trim() : null,
@@ -143,7 +143,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
       <section className="detail-section" data-tone="main"><h2>Главное</h2><div className="detail-fields">
         <ActionRow label="Проект" value={projects.find((item) => item.id === draft.projectId)?.name ?? 'Без проекта'} icon={<Icon name="project"/>} onClick={() => setChoice('project')}/>
         <ActionRow label="Исполнитель" value={members.find((item) => item.id === draft.assigneeUserId)?.first_name ?? 'Без ответственного'} icon={draft.assigneeUserId ? <Avatar initials={(members.find((item) => item.id === draft.assigneeUserId)?.first_name ?? '—').slice(0, 2).toLocaleUpperCase('ru-RU')} label={`Исполнитель: ${members.find((item) => item.id === draft.assigneeUserId)?.first_name ?? ''}`}/> : <Icon name="assignee"/>} onClick={() => setChoice('assignee')}/>
-        <label className="detail-date-row"><span className="action-row-icon"><Icon name="calendar"/></span><span className="action-row-copy"><span>Срок</span><input aria-label="Срок" type="date" value={draft.deadline} onChange={(event) => set('deadline', event.target.value)}/></span></label>
+        <DeadlineField value={draft.due} onChange={(value) => set('due', value)}/>
         <ActionRow label="Приоритет" value={priorityDisplayName[draft.priority]} icon={<Icon name="priority"/>} onClick={() => setChoice('priority')}/>
       </div>
       {draft.status === 'waiting' && <div className="blocker-fields"><ActionRow label="Задача-блокер" value={candidateTasks.find((item) => item.id === draft.blockerTaskId)?.title ?? 'Внешняя причина'} onClick={() => setChoice('blocker')}/>{!draft.blockerTaskId && <label>Внешняя причина<input maxLength={1000} value={draft.waitReason} onChange={(event) => set('waitReason', event.target.value)}/></label>}<label>Дата проверки<input type="date" value={draft.waitCheckAt} onChange={(event) => set('waitCheckAt', event.target.value)}/></label></div>}

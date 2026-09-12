@@ -8,6 +8,10 @@ import {
   activeFilterCount,
   dateInputToIso,
   dateTimeInputsToIso,
+  deadlineDraft,
+  deadlinePatch,
+  formatTaskDeadline,
+  isTaskOverdue,
   defaultFilters,
   defaultTaskViewState,
   filterTasks,
@@ -190,11 +194,35 @@ test('display mappings capture agreed product language', () => {
 });
 
 test('task details patch validates blockers and preserves editable fields', () => {
-  const draft = { ...taskDraft(tasks[0]), title: '  Обновлённая задача  ', description: '  Детали  ', deadline: '2026-08-20', status: 'waiting' as const, waitReason: '  Ждём клиента  ' };
+  const draft = { ...taskDraft(tasks[0]), title: '  Обновлённая задача  ', description: '  Детали  ', due: { mode: 'date' as const, date: '2026-08-20', time: '', timezone: 'Europe/Moscow' }, status: 'waiting' as const, waitReason: '  Ждём клиента  ' };
   assert.deepEqual(taskPatch(draft), {
     title: 'Обновлённая задача', description: 'Детали', status: 'waiting', projectId: 'p', assigneeUserId: 'u',
-    deadline: '2026-08-20T00:00:00.000Z', priority: 'urgent', blockerTaskId: null, waitReason: 'Ждём клиента', waitCheckAt: null, notifyAssignee: false
+    deadline: null, deadlineDate: '2026-08-20', deadlineTimezone: 'Europe/Moscow', priority: 'urgent', blockerTaskId: null, waitReason: 'Ждём клиента', waitCheckAt: null, notifyAssignee: false
   });
   assert.throws(() => taskPatch({ ...draft, waitReason: '' }), /задачу-блокер или внешнюю причину/);
-  assert.throws(() => taskPatch({ ...draft, deadline: '2026-02-30' }), /корректный срок/);
+  assert.throws(() => taskPatch({ ...draft, due: { ...draft.due, date: '2026-02-30' } }), /корректный срок/);
+});
+
+test('deadline modes round-trip without changing old timestamps, DST folds or date-only zones', () => {
+  const originalTZ = process.env.TZ;
+  try {
+    for (const zone of ['UTC', 'Europe/Moscow', 'America/New_York', 'Pacific/Honolulu']) {
+      process.env.TZ = zone;
+      for (const deadline of ['2026-08-14T00:00:00.000Z', '2026-08-14T18:30:47.123Z', '2026-11-01T06:30:00.000Z']) {
+        assert.equal(taskPatch(taskDraft({ ...tasks[0], deadline })).deadline, deadline);
+      }
+      const dateTask = { ...tasks[0], deadline: undefined, deadline_date: '2026-03-08', deadline_timezone: 'America/New_York' };
+      assert.deepEqual(deadlinePatch(deadlineDraft(dateTask)), { deadline: null, deadlineDate: '2026-03-08', deadlineTimezone: 'America/New_York' });
+      assert.equal(isTaskOverdue(dateTask, new Date('2026-03-09T03:59:59.999Z')), false);
+      assert.equal(isTaskOverdue(dateTask, new Date('2026-03-09T04:00:00.000Z')), true);
+      assert.equal(groupTasksByDeadline([dateTask], new Date('2026-03-09T03:59:59Z'), zone).today.length, 1);
+      assert.equal(filterTasks([dateTask], { ...defaultFilters, deadline: 'today' }, 'u', new Date('2026-03-09T03:59:59Z')).length, 1);
+      assert.equal(filterTasks([dateTask], { ...defaultFilters, deadline: 'none' }, 'u').length, 0);
+      assert.match(formatTaskDeadline(dateTask), /8 мар.*весь день/);
+    }
+    process.env.TZ = 'America/New_York';
+    assert.equal(dateTimeInputsToIso('2026-03-08', '02:30'), null, 'nonexistent local time is not silently shifted');
+    assert.equal(dateTimeInputsToIso('2026-08-14', ''), null, 'exact deadline requires time');
+    assert.deepEqual(deadlinePatch(deadlineDraft()), { deadline: null, deadlineDate: null, deadlineTimezone: null });
+  } finally { if (originalTZ === undefined) delete process.env.TZ; else process.env.TZ = originalTZ; }
 });
