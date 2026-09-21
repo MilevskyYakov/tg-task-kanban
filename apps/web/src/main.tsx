@@ -109,7 +109,6 @@ function App() {
   const projectCreateLock = useRef(false);
   const createLock = useRef(false);
   const createRequest = useRef<{ payload: string; id: string } | undefined>(undefined);
-  const pendingFilters = useRef<{ boardId: string; filters: TaskFilters } | undefined>(undefined);
   const taskScroll = useRef(storedTaskView.scrollY);
   const swipeStart = useRef<{x: number; y: number} | null>(null);
   const selectedTaskBoardId = resolveTaskBoard(globalBoardId, boardOverrideId, boards.map((item) => item.id));
@@ -279,10 +278,6 @@ function App() {
 
   useEffect(() => {
     if (!userId || !board) return;
-    if (pendingFilters.current?.boardId === board.id) {
-      setFilters(pendingFilters.current.filters); setFiltersLoadedFor(board.id); pendingFilters.current = undefined;
-      return;
-    }
     let cancelled = false;
     setFiltersLoadedFor('');
     void api<{filters: Partial<TaskFilters>}>(`/api/boards/${board.id}/task-filters`)
@@ -341,8 +336,6 @@ function App() {
       createLock.current = false;
       if (!another) {
         setBoardOverrideId(createBoardId); setShowArchive(false); setBacklog(isBacklogTask(task));
-        const nextFilters: TaskFilters = { ...defaultFilters, scope: 'all', project: task.project_id ?? '', status: task.status };
-        pendingFilters.current = { boardId: createBoardId, filters: nextFilters }; setFilters(nextFilters);
         setNavigation({ screen: 'tasks' });
       }
       setMessage(task.notificationWarning ?? (another ? 'Задача создана. Можно добавить следующую.' : 'Задача создана'));
@@ -662,7 +655,7 @@ function App() {
   if (state === 'ready' && pairInvite) return <PairInvite token={pairInvite} onJoined={openPair} onClose={() => setPairInvite('')}/>;
   if (state === 'ready' && pairFlow) return <PairBoard initialBoard={pairFlow.board} onChanged={pairChanged} onOpen={openPair} onClose={() => { setPairFlow(undefined); setTaskReload((value) => value + 1); }}/ >;
   if (bulkOpen && bulkDraft) return <AppShell message="" navigation={navigation} navigate={navigate} hideNavigation><BulkCreate draft={bulkDraft} onDraft={setBulkDraft}
-    onClose={() => { const nextFilters: TaskFilters = { ...defaultFilters, scope: 'all', project: bulkDraft.project }; if (board?.id !== bulkDraft.boardId) pendingFilters.current = { boardId: bulkDraft.boardId, filters: nextFilters }; setBulkOpen(false); setBoardOverrideId(bulkDraft.boardId); setFilters(nextFilters); setBacklog(true); setTaskReload((value) => value + 1); }}
+    onClose={() => { setBulkOpen(false); setBoardOverrideId(bulkDraft.boardId); setBacklog(true); setTaskReload((value) => value + 1); }}
     onCreated={(created, projectId) => { if (activeBoardId.current !== bulkDraft.boardId) return; setTasks((current) => { const ids = new Set(created.map((item) => item.id)); return [...created.map((item) => presentCreatedTask(item, bulkDraft.boardName, bulkDraft.projects.find((project) => project.id === projectId)?.name)), ...current.filter((item) => !ids.has(item.id))]; }); }}/></AppShell>;
   if (claimingTask) return <AppShell message="" navigation={navigation} navigate={navigate} hideNavigation><ClaimTask key={claimingTask.id} task={claimingTask} userId={userId} boardName={boards.find((item) => item.id === claimingTask.board_id)?.name ?? ''}
     onBack={() => { setBoardOverrideId(claimingTask.board_id); setNavigation({ screen: 'tasks' }); setClaimingTask(undefined); setOpenTask(undefined); setCollaboration(undefined); setBacklog(true); }}
