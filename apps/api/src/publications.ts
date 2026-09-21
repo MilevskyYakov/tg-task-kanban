@@ -117,9 +117,9 @@ export async function renderPublication(db: Database, boardId: string, kind: Pub
     const lines = projects.get(project) ?? []; projects.set(project, lines); lines.push(taskLine(task, now, botUsername, boardId));
   }
   for (const [person, projects] of people) {
-    const personHtml = [`<h2>${escapeHtml(person)}</h2>`];
+    const personHtml = [];
     for (const [project, lines] of projects) personHtml.push(`<h3>${escapeHtml(project)}</h3>`, listWithTail(lines, 6));
-    parts.push(`<blockquote>\n${personHtml.join('\n')}\n</blockquote>`);
+    parts.push(`<h2>${escapeHtml(person)}</h2>`, `<blockquote>\n${personHtml.join('\n')}\n</blockquote>`);
   }
   const backlogRows = await db.query<{id: string; title: string; total: string}>(`SELECT t.id, t.title, count(*) OVER() AS total FROM tasks t
     WHERE t.board_id = $1 AND t.archived_at IS NULL AND t.status = 'todo' AND t.assignee_user_id IS NULL ORDER BY t.created_at LIMIT 50`, [boardId]);
