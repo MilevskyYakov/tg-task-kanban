@@ -44,10 +44,8 @@ test('initial status, date-only deadlines and safe retries work through API and 
       assert.equal(history?.timeline[0].after_data.status, status);
     }
     assert.equal((await post({ title: 'Own done', status: 'done', assigneeUserId: owner.userId })).statusCode, 200);
-    const beforeDenied = await count();
-    assert.equal((await post({ title: 'Other done', status: 'done', assigneeUserId: other.userId })).statusCode, 403);
+    assert.equal((await post({ title: 'Other done', status: 'done', assigneeUserId: other.userId })).statusCode, 200, 'creator creates task already done with foreign assignee');
     assert.equal((await post({ title: 'Outsider' }, otherBoardId)).statusCode, 404);
-    assert.equal(await count(), beforeDenied);
 
     const datePayload = { title: 'All day', deadlineDate: '2026-03-08', deadlineTimezone: 'America/New_York', assigneeUserId: owner.userId, requestId: randomUUID() };
     const replies = await Promise.all(Array.from({ length: 5 }, () => post(datePayload)));
@@ -76,7 +74,7 @@ test('initial status, date-only deadlines and safe retries work through API and 
         assert.equal(overdue.rows[0].overdue, offset === 0, `${zone} ${now.toISOString()}`);
         const text = (await renderPublication(db, boardId, 'daily', ['todo'], 'test_bot', 'UTC', now)).join('\n');
         const line = text.split('\n').find((line) => line.includes(`task_${boardId}_${dateTask.id}`))!;
-        assert.equal(line.includes('ПРОСРОЧЕНО'), offset === 0);
+        assert.equal(line.includes('🔴'), offset === 0);
         assert.ok(line.includes(`${date} · весь день (${zone})`));
       }
     }

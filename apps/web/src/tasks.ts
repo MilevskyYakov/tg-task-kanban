@@ -71,16 +71,9 @@ export const statusDisplayName: Record<TaskStatus, string> = {
 };
 export const priorityDisplayName: Record<TaskPriority, string> = { normal: 'Обычная', urgent: 'Срочная' };
 
-export function taskStatusRestriction(task: Task, userId: string, status: TaskStatus): string | null {
-  if (task.board_status && task.board_status !== 'active') return 'Доска доступна только для чтения';
-  if (task.status === status) return null;
-  if (status === 'done') {
-    if (task.assignee_user_id) return task.assignee_user_id === userId ? null : 'Завершить задачу может только назначенный исполнитель';
-    return task.creator_user_id === userId ? null : 'Завершить задачу без исполнителя может только создатель';
-  }
-  if (task.status === 'done') return task.creator_user_id === userId ? null : 'Вернуть задачу в работу может только создатель';
-  return task.creator_user_id === userId || task.assignee_user_id === userId ? null : 'Менять статус может только создатель или исполнитель';
-}
+// Status changes are allowed for any member of an active board (issue #105); only a non-active board blocks them.
+export const taskStatusRestriction = (task: Pick<Task, 'board_status'>): string | null =>
+  task.board_status && task.board_status !== 'active' ? 'Доска доступна только для чтения' : null;
 
 export type StartupContext =
   | { surface: 'tasks' }

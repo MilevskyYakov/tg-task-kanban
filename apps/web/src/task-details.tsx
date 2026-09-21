@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { ApiError } from './api';
 import { ActionRow, Avatar, ChoiceRow, EnvironmentStatus, Icon, Sheet, TaskGlyph } from './app-shell';
 import type { Collaboration, Member, Project } from './domain';
-import { dateInputToIso, deadlineDraft, deadlinePatch, priorityDisplayName, statusDisplayName, taskStatusRestriction, type DeadlineDraft, type Task, type TaskPriority, type TaskStatus } from './tasks';
+import { dateInputToIso, deadlineDraft, deadlinePatch, priorityDisplayName, statusDisplayName, type DeadlineDraft, type Task, type TaskPriority, type TaskStatus } from './tasks';
 import { DeadlineField } from './deadline-field';
 
 const statuses = Object.keys(statusDisplayName) as TaskStatus[];
@@ -63,7 +63,6 @@ export function taskPatch(draft: TaskDraft) {
 
 type Props = {
   task: Task;
-  userId: string;
   readOnly?: boolean;
   collaboration: Collaboration;
   projects: Project[];
@@ -82,7 +81,7 @@ type Props = {
   onFileAttachment: (file: File) => Promise<void>;
 };
 
-export function TaskDetails({ task, userId, collaboration, projects, members, candidateTasks, boardName, onBack, onClaim, onSave, onArchive, onChecklistAdd, onChecklistUpdate, onChecklistDelete, onComment, onUrlAttachment, onFileAttachment, readOnly = false }: Props) {
+export function TaskDetails({ task, collaboration, projects, members, candidateTasks, boardName, onBack, onClaim, onSave, onArchive, onChecklistAdd, onChecklistUpdate, onChecklistDelete, onComment, onUrlAttachment, onFileAttachment, readOnly = false }: Props) {
   const [draft, setDraft] = useState(() => taskDraft(task));
   const [checklistText, setChecklistText] = useState('');
   const [comment, setComment] = useState('');
@@ -115,9 +114,8 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     });
   };
   const completed = collaboration.checklist.filter((item) => item.completed_at).length;
-  const hasStatusAction = statuses.some((status) => status !== task.status && !taskStatusRestriction(task, userId, status));
   const choiceDefinitions = {
-    status: { title: 'Статус', current: draft.status, options: statuses.map((value) => ({ value, label: statusDisplayName[value], restriction: taskStatusRestriction(task, userId, value) })) },
+    status: { title: 'Статус', current: draft.status, options: statuses.map((value) => ({ value, label: statusDisplayName[value] })) },
     project: { title: 'Проект', current: draft.projectId, options: [{ value: '', label: 'Без проекта' }, ...projects.filter((item) => !item.archived_at).map((item) => ({ value: item.id, label: item.name }))] },
     assignee: { title: 'Исполнитель', current: draft.assigneeUserId, options: [{ value: '', label: 'Без ответственного' }, ...members.map((item) => ({ value: item.id, label: item.first_name }))] },
     priority: { title: 'Приоритет', current: draft.priority, options: Object.entries(priorityDisplayName).map(([value, label]) => ({ value, label })) },
@@ -133,7 +131,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
       else set('blockerTaskId', value);
       setChoice(undefined);
     };
-    return <Sheet className="task-sheet detail-choice-sheet" title={definition.title} onClose={() => setChoice(undefined)}><div className="choice-list" role="radiogroup">{definition.options.map((option) => { const restriction = 'restriction' in option ? option.restriction : null; return <ChoiceRow key={option.value} label={option.label} detail={restriction ?? undefined} disabled={Boolean(restriction)} selected={definition.current === option.value} onClick={() => choose(option.value)}/>; })}</div><button className="sheet-close secondary" type="button" onClick={() => setChoice(undefined)}>Закрыть</button></Sheet>;
+    return <Sheet className="task-sheet detail-choice-sheet" title={definition.title} onClose={() => setChoice(undefined)}><div className="choice-list" role="radiogroup">{definition.options.map((option) => <ChoiceRow key={option.value} label={option.label} selected={definition.current === option.value} onClick={() => choose(option.value)}/>)}</div><button className="sheet-close secondary" type="button" onClick={() => setChoice(undefined)}>Закрыть</button></Sheet>;
   })();
 
   return <main className="task-details">
@@ -144,7 +142,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     {readOnly && <p className="notice">Доска доступна только для чтения.</p>}
     <form onSubmit={save}><fieldset className="readonly-fields" disabled={readOnly}>
       <div className="detail-title"><textarea aria-label="Название задачи" maxLength={200} value={draft.title} onChange={(event) => set('title', event.target.value)}/><TaskGlyph/></div>
-      <div className="detail-status"><button type="button" className="detail-status-action" disabled={!hasStatusAction} onClick={() => setChoice('status')}><span className="status-dot"/>{statusDisplayName[draft.status]}<Icon name="chevron"/></button>{collaboration.checklist.length > 0 && <span className="detail-progress"><i><i style={{ width: `${completed / collaboration.checklist.length * 100}%` }}/></i>{completed} из {collaboration.checklist.length} шагов</span>}{!hasStatusAction && <small className="task-action-reason">{taskStatusRestriction(task, userId, statuses.find((status) => status !== task.status)!)}</small>}</div>
+      <div className="detail-status"><button type="button" className="detail-status-action" onClick={() => setChoice('status')}><span className="status-dot"/>{statusDisplayName[draft.status]}<Icon name="chevron"/></button>{collaboration.checklist.length > 0 && <span className="detail-progress"><i><i style={{ width: `${completed / collaboration.checklist.length * 100}%` }}/></i>{completed} из {collaboration.checklist.length} шагов</span>}</div>
 
       <section className="detail-section" data-tone="main"><h2>Главное</h2><div className="detail-fields">
         <ActionRow label="Проект" value={projects.find((item) => item.id === draft.projectId)?.name ?? 'Без проекта'} icon={<Icon name="project"/>} onClick={() => setChoice('project')}/>

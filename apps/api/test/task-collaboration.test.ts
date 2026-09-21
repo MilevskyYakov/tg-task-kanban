@@ -32,14 +32,16 @@ test('task collaboration enforces access, immutable audit and notification idemp
   const allowed = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${task.id}`, headers: { cookie: `session=${tokens[2]}` } });
   const missing = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${randomUUID()}`, headers: { cookie: `session=${tokens[2]}` } });
   const forbidden = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${task.id}`, headers: { cookie: `session=${tokens[3]}` } });
-  const creatorClose = await app.inject({ method: 'PATCH', url: `/api/boards/${boardId}/tasks/${task.id}`, headers: { cookie: `session=${tokens[0]}` }, payload: { status: 'done' } });
+  const creatorView = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${task.id}`, headers: { cookie: `session=${tokens[0]}` } });
   const memberClose = await app.inject({ method: 'PATCH', url: `/api/boards/${boardId}/tasks/${task.id}`, headers: { cookie: `session=${tokens[2]}` }, payload: { status: 'done' } });
+  const creatorReopen = await app.inject({ method: 'PATCH', url: `/api/boards/${boardId}/tasks/${task.id}`, headers: { cookie: `session=${tokens[0]}` }, payload: { status: 'in_progress' } });
   assert.equal(allowed.statusCode, 200);
   assert.equal(allowed.json().title, 'Ship');
+  assert.equal(creatorView.statusCode, 200, 'creator reads the task');
   assert.deepEqual([missing.statusCode, missing.json()], [404, { error: 'task not found' }]);
   assert.deepEqual([forbidden.statusCode, forbidden.json()], [403, { error: 'task access forbidden' }], 'outsider receives no task data');
-  assert.deepEqual([creatorClose.statusCode, creatorClose.json()], [403, { error: 'Завершить задачу может только назначенный исполнитель' }]);
-  assert.deepEqual([memberClose.statusCode, memberClose.json()], [403, { error: 'Завершить задачу может только назначенный исполнитель' }]);
+  assert.deepEqual([memberClose.statusCode, memberClose.json().status], [200, 'done'], 'board member who is neither creator nor assignee closes the task');
+  assert.deepEqual([creatorReopen.statusCode, creatorReopen.json().status], [200, 'in_progress'], 'creator reopens the task');
 
   assert.ok(await addTaskComment(db, users[2], boardId, task.id, 'Ready to review'));
   assert.equal((await taskCollaboration(db, users[2], boardId, task.id))!.comments[0].body, 'Ready to review');
@@ -95,7 +97,7 @@ test('task collaboration enforces access, immutable audit and notification idemp
   assert.ok(await addTaskFileAttachment(db, users[1], boardId, task.id, { data: png, fileName: 'again.png', mimeType: 'image/png', fileSize: png.length }), 'persistence via db helper');
   await updateTask(db, users[1], boardId, task.id, { status: 'done' });
   const collaboration = await taskCollaboration(db, users[0], boardId, task.id);
-  assert.deepEqual(collaboration!.timeline.map((event: {action: string}) => event.action), ['created', 'checklist_added', 'checklist_added', 'checklist_updated', 'checklist_updated', 'checklist_updated', 'updated']);
+  assert.deepEqual(collaboration!.timeline.map((event: {action: string}) => event.action), ['created', 'updated', 'updated', 'checklist_added', 'checklist_added', 'checklist_updated', 'checklist_updated', 'checklist_updated', 'updated']);
   await assert.rejects(db.query('UPDATE task_audit_events SET action = $1 WHERE task_id = $2', ['forged', task.id]), /append-only/);
 
   const notificationId = await pendingNotificationForTask(db, task.id);

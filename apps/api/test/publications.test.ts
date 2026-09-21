@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createDatabase, createTask, redeemBoardLink, updateTask } from '../src/db.js';
-import { deliverPendingPublications, queueDuePublications, renderPublication, splitTelegram, updateSchedule } from '../src/publications.js';
+import { deliverPendingPublications, queueDuePublications, renderPublication, updateSchedule } from '../src/publications.js';
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url) throw new Error('TEST_DATABASE_URL is required');
@@ -35,18 +35,16 @@ test('publications honor timezone, deduplicate runs, group tasks and keep deep l
   assert.match(messages.join(''), /Иван/);
   assert.match(messages.join(''), /Команда &lt;A&gt;/);
   assert.match(messages.join(''), /Сверить &lt;план&gt;/);
-  assert.match(messages.join(''), /ПРОСРОЧЕНО/);
+  assert.match(messages.join(''), /🔴/);
   assert.match(messages.join(''), /Блокер/);
   assert.doesNotMatch(messages.join(''), /Жду/);
   assert.equal((await db.query('SELECT status FROM tasks WHERE id = $1', [task.id])).rows[0].status, 'waiting');
-  assert.ok(messages.every((message) => message.length <= 4096));
+  assert.ok(messages.every((message) => message.length <= 32_768));
   const taskLink = messages.join('').match(/startapp=(task_[^"]+)/)?.[1];
   assert.ok(taskLink);
   assert.equal((await redeemBoardLink(db, user.rows[0].id, taskLink))?.id, boardId);
   assert.equal(await redeemBoardLink(db, outsider.rows[0].id, taskLink), null, 'forwarded report does not grant board access');
   assert.equal((await db.query('SELECT count(*) FROM board_links WHERE board_id = $1', [boardId])).rows[0].count, linksBefore.rows[0].count, 'render creates no invitation tokens');
-
-  assert.deepEqual(splitTelegram(['one', 'two', 'three'], 8), ['one\n\ntwo', 'three']);
   await db.query("UPDATE boards SET status = 'frozen' WHERE id = $1", [boardId]);
   await db.query('DELETE FROM publication_runs WHERE board_id = $1', [boardId]);
   await queueDuePublications(db, now);
@@ -72,23 +70,24 @@ test('delivery resumes after last sent part and keeps an active lease', async ()
 
   const sent: string[] = [];
   const originalFetch = globalThis.fetch;
-  let failSecond = true;
+  let failFirst = true;
   globalThis.fetch = (async (_url, init) => {
-    const text = (JSON.parse(String(init?.body)) as {text: string}).text;
-    sent.push(text);
-    if (failSecond && sent.length === 2) return new Response(JSON.stringify({ ok: false, description: 'temporary' }), { status: 500 });
+    const body = JSON.parse(String(init?.body)) as {text?: string; rich_message?: {html?: string}};
+    sent.push(body.text ?? body.rich_message?.html ?? '');
+    if (failFirst && sent.length === 1) return new Response(JSON.stringify({ ok: false, description: 'temporary' }), { status: 500 });
     return new Response(JSON.stringify({ ok: true, result: true }));
   }) as typeof fetch;
   try {
     await deliverPendingPublications(db, 'token', 'test_bot', now);
     const failed = await db.query<{status: string; sent_parts: number; next_attempt_at: Date; last_error: string}>('SELECT status, sent_parts, next_attempt_at, last_error FROM publication_runs WHERE board_id = $1', [boardId]);
     assert.equal(failed.rows[0].status, 'pending');
-    if (failed.rows[0].sent_parts !== 1) assert.fail(`sent_parts=${failed.rows[0].sent_parts}; sent=${sent.length}; error=${failed.rows[0].last_error}`);
+    assert.equal(failed.rows[0].sent_parts, 0, `sent_parts=${failed.rows[0].sent_parts}; error=${failed.rows[0].last_error}`);
     assert.ok(failed.rows[0].next_attempt_at > now, 'claim sets future lease/retry time');
-    failSecond = false;
+    failFirst = false;
     await db.query('UPDATE publication_runs SET next_attempt_at = $2 WHERE board_id = $1', [boardId, new Date(now.getTime() + 61_000).toISOString()]);
     await deliverPendingPublications(db, 'token', 'test_bot', new Date(now.getTime() + 61_000));
-    assert.equal(sent.filter((text) => text === sent[0]).length, 1, 'retry does not resend completed part');
+    assert.equal(sent.length, 2, 'retry resends the single rich message once');
+    assert.match(sent[0], /<h1>ПЛАН ДНЯ/);
     assert.equal((await db.query('SELECT status FROM publication_runs WHERE board_id = $1', [boardId])).rows[0].status, 'sent');
   } finally { globalThis.fetch = originalFetch; }
 
