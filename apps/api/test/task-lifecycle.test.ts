@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { createDatabase, createProject, createTask, ProjectConflictError, saveTaskFilterState, setTaskArchived, TaskActionError, taskFilterState, tasksForAssignee, tasksForBoard, updateProject, updateTask } from '../src/db.js';
+import { createDatabase, createProject, createTask, ProjectConflictError, saveTaskFilterState, setTaskArchived, taskFilterState, tasksForAssignee, tasksForBoard, updateProject, updateTask } from '../src/db.js';
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url) throw new Error('TEST_DATABASE_URL is required');
@@ -25,7 +25,8 @@ test('task lifecycle enforces tenant, role and transition rules', async () => {
 
   const task = await createTask(db, users[0], boardId, { title: 'Ship', projectId: project.id, assigneeUserId: users[1], priority: 'urgent', deadline: '2000-01-01T00:00:00Z' });
   assert.ok(task);
-  await assert.rejects(() => createTask(db, users[0], boardId, { title: 'Bypass', assigneeUserId: users[1], status: 'done' }), TaskActionError, 'create cannot bypass close permission');
+  assert.ok(await createTask(db, users[2], boardId, { title: 'Instant done for anyone', assigneeUserId: users[1], status: 'done' }), 'any member creates task already done with foreign assignee');
+  await db.query("UPDATE tasks SET archived_at = now() WHERE title = 'Instant done for anyone' AND board_id = $1", [boardId]);
   assert.equal(await createTask(db, users[3], boardId, { title: 'Stolen' }), null);
   assert.equal((await tasksForBoard(db, users[2], boardId))[0].overdue, true, 'member reads active board tasks and overdue is computed');
   assert.equal((await tasksForBoard(db, users[3], boardId)).length, 0, 'outsider cannot read tasks');
@@ -35,25 +36,24 @@ test('task lifecycle enforces tenant, role and transition rules', async () => {
   assert.deepEqual(await taskFilterState(db, users[1], boardId), { status: 'todo' }, 'filter state persists per user and board');
   assert.equal(await saveTaskFilterState(db, users[3], boardId, { status: 'done' }), null, 'outsider cannot save filter state');
 
-  assert.equal(await updateTask(db, users[2], boardId, task.id, { title: 'Hijack' }), null, 'ordinary member cannot edit');
-  await assert.rejects(() => updateTask(db, users[0], boardId, task.id, { status: 'done' }),
-    (error: unknown) => error instanceof TaskActionError && error.message === 'Завершить задачу может только назначенный исполнитель');
+  assert.equal((await updateTask(db, users[2], boardId, task.id, { title: 'Renamed by member' }))?.title, 'Renamed by member', 'any member edits task fields');
+  const auditRename = (await db.query(`SELECT before_data, after_data FROM task_audit_events WHERE task_id = $1 AND action = 'updated' ORDER BY created_at, id LIMIT 1`, [task.id])).rows[0];
+  assert.equal(auditRename.before_data.title, 'Ship', 'audit keeps before-state');
+  assert.equal(auditRename.after_data.title, 'Renamed by member', 'audit keeps after-state');
+  assert.equal((await updateTask(db, users[2], boardId, task.id, { status: 'done' }))?.status, 'done', 'ordinary member closes task');
+  assert.equal((await updateTask(db, users[2], boardId, task.id, { status: 'in_progress' }))?.status, 'in_progress', 'ordinary member reopens from done');
   assert.equal(await updateTask(db, users[1], boardId, task.id, { status: 'waiting', waitReason: null }), null, 'waiting requires reason');
   const waiting = await updateTask(db, users[1], boardId, task.id, { status: 'waiting', waitReason: 'Client', waitCheckAt: '2000-01-02T00:00:00Z' });
   assert.equal(waiting.status, 'waiting');
   assert.equal((await tasksForBoard(db, users[0], boardId))[0].wait_check_due, true);
   assert.equal((await updateTask(db, users[1], boardId, task.id, { status: 'done' }))?.status, 'done', 'assignee closes task');
-  await assert.rejects(() => updateTask(db, users[1], boardId, task.id, { status: 'in_progress' }),
-    (error: unknown) => error instanceof TaskActionError && error.message === 'Вернуть задачу в работу может только создатель');
-  assert.equal((await updateTask(db, users[0], boardId, task.id, { status: 'in_progress' }))?.status, 'in_progress', 'creator reopens');
+  assert.equal((await updateTask(db, users[1], boardId, task.id, { status: 'in_progress' }))?.status, 'in_progress', 'assignee reopens task');
 
   const unassigned = await createTask(db, users[0], boardId, { title: 'Unassigned' });
   assert.ok(unassigned);
-  await assert.rejects(() => updateTask(db, users[2], boardId, unassigned.id, { status: 'done' }),
-    (error: unknown) => error instanceof TaskActionError && error.message === 'Завершить задачу без исполнителя может только создатель');
+  assert.equal((await updateTask(db, users[2], boardId, unassigned.id, { status: 'done' }))?.status, 'done', 'ordinary member closes unassigned task');
   assert.equal((await updateTask(db, users[0], boardId, unassigned.id, { status: 'done' }))?.status, 'done', 'creator closes unassigned task');
-  await db.query('DELETE FROM tasks WHERE id = $1', [unassigned.id]);
-
+  await db.query("UPDATE tasks SET archived_at = now() WHERE id = $1", [unassigned.id]);
   await db.query('DELETE FROM memberships WHERE board_id = $1 AND user_id = $2', [boardId, users[1]]);
   assert.equal((await tasksForBoard(db, users[0], boardId))[0].assignee_user_id, null, 'leaving board clears active assignment');
   assert.equal(await setTaskArchived(db, users[2], boardId, task.id, true), false);
@@ -61,7 +61,7 @@ test('task lifecycle enforces tenant, role and transition rules', async () => {
   assert.ok(await updateTask(db, users[0], boardId, task.id, { assigneeUserId: users[1] }));
   assert.equal(await setTaskArchived(db, users[0], boardId, task.id, true), true);
   assert.equal((await tasksForBoard(db, users[0], boardId)).length, 0, 'archived task leaves active view');
-  assert.equal((await tasksForBoard(db, users[0], boardId, true)).length, 1, 'history remains readable');
+  assert.equal((await tasksForBoard(db, users[0], boardId, true)).length, 3, 'history remains readable');
   await db.query('DELETE FROM memberships WHERE board_id = $1 AND user_id = $2', [boardId, users[1]]);
   assert.equal((await tasksForBoard(db, users[0], boardId, true))[0].assignee_user_id, null, 'leaving board also preserves archived task without stale assignment');
   assert.equal(await setTaskArchived(db, users[0], boardId, task.id, false), true, 'task can be reopened from archive');

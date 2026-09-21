@@ -83,16 +83,13 @@ test('optimistic update rolls UI back when API rejects change', async () => {
   assert.deepEqual(renders, ['done', 'todo']);
 });
 
-test('status restrictions match creator, assignee and member permissions', () => {
+test('status restriction is read-only board only; any member may change statuses', () => {
   const assigned = { ...tasks[0], creator_user_id: 'creator', assignee_user_id: 'assignee' };
-  const unassigned = { ...tasks[1], creator_user_id: 'creator' };
-  assert.equal(taskStatusRestriction(assigned, 'assignee', 'done'), null);
-  assert.equal(taskStatusRestriction(assigned, 'creator', 'done'), 'Завершить задачу может только назначенный исполнитель');
-  assert.equal(taskStatusRestriction(unassigned, 'creator', 'done'), null);
-  assert.equal(taskStatusRestriction(unassigned, 'member', 'done'), 'Завершить задачу без исполнителя может только создатель');
-  assert.equal(taskStatusRestriction({ ...assigned, status: 'done' }, 'assignee', 'in_progress'), 'Вернуть задачу в работу может только создатель');
-  assert.equal(taskStatusRestriction({ ...assigned, status: 'done' }, 'creator', 'in_progress'), null);
-  assert.equal(taskStatusRestriction(assigned, 'member', 'waiting'), 'Менять статус может только создатель или исполнитель');
+  assert.equal(taskStatusRestriction(assigned), null);
+  assert.equal(taskStatusRestriction({ ...tasks[1], creator_user_id: 'creator' }), null);
+  assert.equal(taskStatusRestriction({ ...assigned, board_status: 'archived' }), 'Доска доступна только для чтения');
+  assert.equal(taskStatusRestriction({ ...assigned, board_status: 'frozen' }), 'Доска доступна только для чтения');
+  assert.equal(taskStatusRestriction({ ...assigned, board_status: 'active' }), null);
 });
 
 test('date input rejects malformed and impossible calendar dates', () => {

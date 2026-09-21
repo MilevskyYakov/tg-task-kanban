@@ -26,7 +26,9 @@ test('atomic backlog claim, ordinary permissions and per-line retries stay isola
     const post = (payload: object) => call(owner, 'POST', `/api/boards/${boardId}/tasks`, payload);
     const project = await createProject(db, owner.userId, boardId, 'Batch project');
     const task = await createTask(db, owner.userId, boardId, { title: 'Claim race', projectId: project.id });
-    assert.equal((await call(member, 'PATCH', path(task.id), { assigneeUserId: member.userId })).statusCode, 403);
+    assert.equal((await call(member, 'PATCH', path(task.id), { assigneeUserId: member.userId })).statusCode, 200, 'member assigns task to self');
+    assert.equal((await db.query('SELECT assignee_user_id FROM tasks WHERE id = $1', [task.id])).rows[0].assignee_user_id, member.userId);
+    await db.query('UPDATE tasks SET assignee_user_id = NULL, updated_at = now() WHERE id = $1', [task.id]);
     const race = await Promise.all([member, competitor].map((person) => call(person, 'POST', `${path(task.id)}/claim`)));
     assert.deepEqual(race.map((reply) => reply.statusCode).sort(), [200, 409]);
     const winner = race.find((reply) => reply.statusCode === 200)!.json();
@@ -38,7 +40,7 @@ test('atomic backlog claim, ordinary permissions and per-line retries stay isola
     assert.equal(history.find((item) => item.action === 'claimed')!.before_data.assignee_user_id, null);
     assert.equal(history.find((item) => item.action === 'claimed')!.after_data.assignee_user_id, winner.assignee_user_id);
     for (const person of [member, competitor]) assert.equal((await call(person, 'POST', `${path(task.id)}/claim`)).statusCode, 409);
-    assert.equal((await call(owner, 'PATCH', path(task.id), { status: 'done' })).statusCode, 403);
+    assert.equal((await call(owner, 'PATCH', path(task.id), { status: 'done' })).statusCode, 200, 'any member closes claimed task');
     assert.equal((await call(owner, 'PATCH', path(task.id), { assigneeUserId: owner.userId })).statusCode, 200);
 
     for (const status of ['in_progress', 'waiting', 'done'] as const) {
