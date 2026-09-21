@@ -71,7 +71,7 @@ function taskLink(task: Pick<ReportTask, 'id' | 'title'>, botUsername: string, b
 }
 
 function taskLine(task: ReportTask, now: Date, botUsername: string, boardId: string) {
-  const labels = [publicationStatusDisplayName[task.status], task.priority === 'urgent' ? '🔥' : '', task.overdue ? 'ПРОСРОЧЕНО' : '', task.deadline_date ? `${task.deadline_date} · весь день (${task.deadline_timezone})` : '', task.wait_check_at && new Date(task.wait_check_at) <= now && task.status === 'waiting' ? 'ПРОВЕРИТЬ' : ''].filter(Boolean).join(' · ');
+  const labels = [publicationStatusDisplayName[task.status], task.priority === 'urgent' ? '🔥' : '', task.overdue ? '🔴' : '', task.deadline_date ? `${task.deadline_date} · весь день (${task.deadline_timezone})` : '', task.wait_check_at && new Date(task.wait_check_at) <= now && task.status === 'waiting' ? 'ПРОВЕРИТЬ' : ''].filter(Boolean).join(' · ');
   return `${taskLink(task, botUsername, boardId)}${labels ? ` — <b>${labels}</b>` : ''}`;
 }
 
@@ -102,7 +102,12 @@ export async function renderPublication(db: Database, boardId: string, kind: Pub
     ? `<p>${dateLine} · Активно: <b>${count((task: ReportTask) => task.status !== 'done')}</b> · Блокеров: <b>${count((task: ReportTask) => task.status === 'waiting')}</b> · Просрочено: <b>${count((task: ReportTask) => task.overdue)}</b></p>`
     : `<p>Выполнено: <b>${count((task: ReportTask) => task.status === 'done')}</b> · Просрочено: <b>${count((task: ReportTask) => task.overdue)}</b> · ${publicationStatusDisplayName.waiting}: <b>${count((task: ReportTask) => task.status === 'waiting')}</b> · Активно: <b>${count((task: ReportTask) => task.status !== 'done')}</b></p>`);
   const attention = tasks.filter((task: ReportTask) => task.overdue || task.status === 'waiting');
-  if (attention.length) parts.push(`<h2>Требует внимания</h2>`, listWithTail(attention.map((task: ReportTask) => taskLine(task, now, botUsername, boardId)), 6));
+  if (attention.length) {
+    const overdue = attention.filter((task: ReportTask) => task.overdue);
+    const blockers = attention.filter((task: ReportTask) => !task.overdue);
+    const attentionHtml = [overdue.length ? `<h3>🔴 Просрочено · ${overdue.length}</h3>` + listWithTail(overdue.map((task: ReportTask) => taskLine(task, now, botUsername, boardId)), 6) : '', blockers.length ? `<h3>🟡 Блокеры · ${blockers.length}</h3>` + listWithTail(blockers.map((task: ReportTask) => taskLine(task, now, botUsername, boardId)), 6) : ''].filter(Boolean).join('\n');
+    parts.push(`<blockquote><h2>Требует внимания · ${attention.length}</h2>\n${attentionHtml}\n</blockquote>`);
+  }
   const people = new Map<string, Map<string, string[]>>();
   for (const task of tasks) {
     if (task.status === 'todo' && !task.assignee_name) continue;
@@ -112,7 +117,7 @@ export async function renderPublication(db: Database, boardId: string, kind: Pub
     const lines = projects.get(project) ?? []; projects.set(project, lines); lines.push(taskLine(task, now, botUsername, boardId));
   }
   for (const [person, projects] of people) {
-    parts.push(`<h2>${escapeHtml(person)}</h2>`);
+    parts.push(`<hr/>`, `<h2>${escapeHtml(person)}</h2>`);
     for (const [project, lines] of projects) parts.push(`<h3>${escapeHtml(project)}</h3>`, listWithTail(lines, 6));
   }
   const backlogRows = await db.query<{id: string; title: string; total: string}>(`SELECT t.id, t.title, count(*) OVER() AS total FROM tasks t

@@ -35,7 +35,7 @@ test('publications honor timezone, deduplicate runs, group tasks and keep deep l
   assert.match(messages.join(''), /Иван/);
   assert.match(messages.join(''), /Команда &lt;A&gt;/);
   assert.match(messages.join(''), /Сверить &lt;план&gt;/);
-  assert.match(messages.join(''), /ПРОСРОЧЕНО/);
+  assert.match(messages.join(''), /🔴/);
   assert.match(messages.join(''), /Блокер/);
   assert.doesNotMatch(messages.join(''), /Жду/);
   assert.equal((await db.query('SELECT status FROM tasks WHERE id = $1', [task.id])).rows[0].status, 'waiting');
