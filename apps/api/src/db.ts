@@ -359,10 +359,10 @@ export async function createTask(db: Database, userId: string, boardId: string, 
   } catch (error) { if (!transaction) await client.query('ROLLBACK'); throw error; } finally { if (!transaction) client.release(); }
 }
 
-export async function claimTask(db: Database, userId: string, boardId: string, taskId: string) {
-  const client = await db.connect();
+export async function claimTask(db: Database, userId: string, boardId: string, taskId: string, transaction?: pg.PoolClient) {
+  const client = transaction ?? await db.connect();
   try {
-    await client.query('BEGIN');
+    if (!transaction) await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
     const access = await client.query(`SELECT 1 FROM boards b JOIN memberships m ON m.board_id = b.id
       WHERE b.id = $1 AND b.status = 'active' AND m.user_id = $2 FOR SHARE OF b, m`, [boardId, userId]);
@@ -371,15 +371,15 @@ export async function claimTask(db: Database, userId: string, boardId: string, t
     const task = current.rows[0];
     if (!task) { await client.query('ROLLBACK'); return null; }
     if (task.archived_at || task.status !== 'todo' || task.assignee_user_id) {
-      await client.query('COMMIT'); return { claimed: false };
+      if (!transaction) await client.query('COMMIT'); return { claimed: false };
     }
     const result = await client.query(`UPDATE tasks SET assignee_user_id = $3, updated_at = now()
       WHERE id = $1 AND board_id = $2 RETURNING *`, [taskId, boardId, userId]);
     await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, before_data, after_data)
       VALUES ($1, $2, $3, $4, 'claimed', $5, $6)`, [randomUUID(), boardId, taskId, userId, task, result.rows[0]]);
-    await client.query('COMMIT');
+    if (!transaction) await client.query('COMMIT');
     return { claimed: true };
-  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  } catch (error) { if (!transaction) await client.query('ROLLBACK'); throw error; } finally { if (!transaction) client.release(); }
 }
 
 export async function updateTask(db: Database, userId: string, boardId: string, taskId: string, input: TaskInput, transaction?: pg.PoolClient) {
@@ -468,10 +468,10 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
   } catch (error) { if (!transaction) await client.query('ROLLBACK'); throw error; } finally { if (!transaction) client.release(); }
 }
 
-export async function setTaskArchived(db: Database, userId: string, boardId: string, taskId: string, archived: boolean) {
-  const client = await db.connect();
+export async function setTaskArchived(db: Database, userId: string, boardId: string, taskId: string, archived: boolean, transaction?: pg.PoolClient) {
+  const client = transaction ?? await db.connect();
   try {
-    await client.query('BEGIN');
+    if (!transaction) await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
     const current = await client.query('SELECT * FROM tasks WHERE id = $1 AND board_id = $2 FOR UPDATE', [taskId, boardId]);
     const result = await client.query(`UPDATE tasks t SET archived_at = CASE WHEN $4 THEN now() ELSE NULL END, updated_at = now() FROM boards b
@@ -482,9 +482,9 @@ export async function setTaskArchived(db: Database, userId: string, boardId: str
     [taskId, boardId, userId, archived]);
     if (result.rowCount) await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, before_data)
       VALUES ($1, $2, $3, $4, $5, $6)`, [randomUUID(), boardId, taskId, userId, archived ? 'archived' : 'reopened', current.rows[0]]);
-    await client.query('COMMIT');
+    if (!transaction) await client.query('COMMIT');
     return result.rowCount === 1;
-  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  } catch (error) { if (!transaction) await client.query('ROLLBACK'); throw error; } finally { if (!transaction) client.release(); }
 }
 
 async function canReadTask(db: Database | pg.PoolClient, userId: string, boardId: string, taskId: string, activeOnly = false) {
