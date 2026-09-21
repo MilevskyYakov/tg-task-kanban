@@ -1,10 +1,11 @@
 import cookie from '@fastify/cookie';
+import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateInitData } from './auth.js';
-import { activateChatBoard, addChecklistItem, addTaskAttachment, addTaskComment, boardForUser, boardMembers, boardsForUser, claimAssignmentNotification, connectChatBoard, createInvite, createProject, createRecurrence, createTask, deleteChecklistItem, finishAssignmentNotification, freezeChatBoard, incompleteChecklistCount, login, migrateChatBoard, pendingNotificationForTask, ProjectConflictError, projectsForBoard, recurrencesForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskCollaboration, TaskActionError, TaskConflictError, taskFilterState, taskForBoard, tasksForAssignee, tasksForBoard, updateChecklistItem, updateProject, updateRecurrence, updateTask, updateTaskAndFuture, type AttachmentInput, type Database, type RecurrenceInput, type TaskInput } from './db.js';
+import { activateChatBoard, addChecklistItem, addTaskAttachment, addTaskComment, addTaskFileAttachment, boardForUser, boardMembers, boardsForUser, claimAssignmentNotification, connectChatBoard, createInvite, createProject, createRecurrence, createTask, deleteChecklistItem, finishAssignmentNotification, freezeChatBoard, incompleteChecklistCount, login, migrateChatBoard, pendingNotificationForTask, ProjectConflictError, projectsForBoard, recurrencesForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskAttachmentFile, taskCollaboration, TaskActionError, TaskConflictError, taskFilterState, taskForBoard, tasksForAssignee, tasksForBoard, updateChecklistItem, updateProject, updateRecurrence, updateTask, updateTaskAndFuture, type AttachmentInput, type Database, type RecurrenceInput, type TaskInput } from './db.js';
 import type { Config } from './config.js';
 import { isChatAdmin, telegramCall } from './telegram.js';
 import { renderPublication, schedulesForBoard, updateSchedule, validTimezone as validPublicationTimezone, type PublicationKind, type PublicationSchedule } from './publications.js';
@@ -30,6 +31,8 @@ const present = (status: string) => status === 'member' || status === 'administr
 export function buildApp(config: Config, db: Database) {
   const app = Fastify({ logger: { serializers: { req: (request) => ({ method: request.method, url: request.url?.split('?')[0].replace(/^\/mcp.*$/, '/mcp').replace(/^(\/api\/mcp-connections)\/.*$/, '$1/:id') }) }, redact: ['req.headers.authorization', 'req.headers.cookie', 'req.headers.x-telegram-bot-api-secret-token', 'body.initData'] } });
   app.register(cookie);
+  app.register(multipart);
+  const attachmentFileLimits = { maxFileSize: 15 * 1024 * 1024, allowedMimeTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] };
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof BoardAccessError) return reply.code(error.status).send({ error: error.message });
     if (error instanceof ChecklistConfirmationError) return reply.code(409).send({ error: error.message, incompleteChecklist: error.count });
@@ -358,6 +361,27 @@ export function buildApp(config: Config, db: Database) {
       if (!input.telegramFileId || !input.telegramFileUniqueId || input.telegramFileId.length > 1024 || input.telegramFileUniqueId.length > 256) return reply.code(400).send({ error: 'Telegram file metadata is required' });
     } else return reply.code(400).send({ error: 'attachment kind must be url or telegram' });
     return await addTaskAttachment(db, id, request.params.id, request.params.taskId, input) ?? reply.code(404).send({ error: 'task not found' });
+  });
+  app.post<{Params: {id: string; taskId: string}}>('/api/boards/:id/tasks/:taskId/attachments/file', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const file = await request.file({ limits: { fileSize: attachmentFileLimits.maxFileSize } }).catch(() => undefined);
+    if (!file) return reply.code(400).send({ error: 'multipart/form-data with a file is required' });
+    if (!attachmentFileLimits.allowedMimeTypes.includes(file.mimetype)) return reply.code(415).send({ error: 'Поддерживаются только изображения PNG, JPEG, WebP и GIF' });
+    let buffer: Buffer;
+    try { buffer = await file.toBuffer(); }
+    catch { return reply.code(413).send({ error: `Файл больше ${attachmentFileLimits.maxFileSize / (1024 * 1024)} МБ` }); }
+    const saved = await addTaskFileAttachment(db, id, request.params.id, request.params.taskId,
+      { data: buffer, fileName: (file.filename || 'image').slice(0, 200), mimeType: file.mimetype, fileSize: buffer.length });
+    return saved ?? reply.code(404).send({ error: 'task not found' });
+  });
+  app.get<{Params: {id: string; taskId: string; attachmentId: string}}>('/api/boards/:id/tasks/:taskId/attachments/:attachmentId/file', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const file = await taskAttachmentFile(db, id, request.params.id, request.params.taskId, request.params.attachmentId);
+    if (!file?.file_data) return reply.code(404).send({ error: 'attachment not found' });
+    return reply.code(200).header('content-type', file.mime_type ?? 'application/octet-stream')
+      .header('cache-control', 'private, max-age=31536000, immutable')
+      .header('content-disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.file_name ?? 'image')}`)
+      .send(file.file_data);
   });
 
   app.get<{Params: {id: string}}>('/api/boards/:id/recurrences', async (request, reply) => {

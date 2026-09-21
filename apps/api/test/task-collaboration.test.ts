@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { buildApp } from '../src/app.js';
 import type { Config } from '../src/config.js';
-import { addChecklistItem, addTaskAttachment, addTaskComment, claimAssignmentNotification, createDatabase, createTask, finishAssignmentNotification, incompleteChecklistCount, pendingNotificationForTask, taskCollaboration, tasksForAssignee, tasksForBoard, updateChecklistItem, updateTask } from '../src/db.js';
+import { addChecklistItem, addTaskAttachment, addTaskComment, addTaskFileAttachment, claimAssignmentNotification, createDatabase, createTask, finishAssignmentNotification, incompleteChecklistCount, pendingNotificationForTask, taskAttachmentFile, taskCollaboration, tasksForAssignee, tasksForBoard, updateChecklistItem, updateTask } from '../src/db.js';
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url) throw new Error('TEST_DATABASE_URL is required');
@@ -40,7 +40,6 @@ test('task collaboration enforces access, immutable audit and notification idemp
   assert.deepEqual([forbidden.statusCode, forbidden.json()], [403, { error: 'task access forbidden' }], 'outsider receives no task data');
   assert.deepEqual([creatorClose.statusCode, creatorClose.json()], [403, { error: 'Завершить задачу может только назначенный исполнитель' }]);
   assert.deepEqual([memberClose.statusCode, memberClose.json()], [403, { error: 'Завершить задачу может только назначенный исполнитель' }]);
-  await app.close();
 
   assert.ok(await addTaskComment(db, users[2], boardId, task.id, 'Ready to review'));
   assert.equal((await taskCollaboration(db, users[2], boardId, task.id))!.comments[0].body, 'Ready to review');
@@ -63,6 +62,37 @@ test('task collaboration enforces access, immutable audit and notification idemp
 
   assert.ok(await addTaskAttachment(db, users[2], boardId, task.id, { kind: 'telegram', telegramFileId: 'private-file-id', telegramFileUniqueId: 'stable-id', fileName: 'brief.pdf' }));
   assert.equal(await taskCollaboration(db, users[3], boardId, task.id), null, 'other board cannot read Telegram file id');
+
+  const png = Buffer.concat([Buffer.from('89504e47', 'hex'), randomBytes(32)]);
+  const boundary = '----testboundary';
+  const multipart = (name: string, filename: string, contentType: string, data: Buffer) => Buffer.concat([
+    Buffer.from(`--${boundary}\r\ncontent-disposition: form-data; name="${name}"; filename="${filename}"\r\ncontent-type: ${contentType}\r\n\r\n`),
+    data, Buffer.from(`\r\n--${boundary}--\r\n`)]);
+  const upload = async (options: { token?: string; data?: Buffer; filename?: string; mimeType?: string }) =>
+    app.inject({ method: 'POST', url: `/api/boards/${boardId}/tasks/${task.id}/attachments/file`,
+      headers: { cookie: `session=${options.token ?? tokens[2]}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: multipart('file', options.filename ?? 'shot.png', options.mimeType ?? 'image/png', options.data ?? png) });
+  const tooBig = await upload({ data: Buffer.alloc(16 * 1024 * 1024, 1), filename: 'big.png' });
+  assert.equal(tooBig.statusCode, 413, 'file larger than 15 MB is rejected');
+  assert.match(tooBig.json().error, /15 МБ/);
+  const notImage = await upload({ data: Buffer.from('hello'), filename: 'note.txt', mimeType: 'text/plain' });
+  assert.equal(notImage.statusCode, 415, 'non-image is rejected');
+  const noFile = await app.inject({ method: 'POST', url: `/api/boards/${boardId}/tasks/${task.id}/attachments/file`,
+    headers: { cookie: `session=${tokens[2]}`, 'content-type': 'application/json' }, payload: {} });
+  assert.equal(noFile.statusCode, 400, 'missing multipart payload is rejected');
+  const savedFile = await upload({});
+  assert.equal(savedFile.statusCode, 200);
+  assert.equal(savedFile.json().kind, 'file');
+  assert.equal(Number(savedFile.json().file_size), png.length);
+  const attachmentId = savedFile.json().id;
+  assert.equal(await taskAttachmentFile(db, users[3], boardId, task.id, attachmentId), null, 'other board member cannot read file');
+  const reader = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${task.id}/attachments/${attachmentId}/file`, headers: { cookie: `session=${tokens[0]}` } });
+  assert.equal(reader.statusCode, 200);
+  assert.equal(reader.headers['content-type'], 'image/png');
+  assert.deepEqual(reader.rawPayload, png);
+  const stolen = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${task.id}/attachments/${attachmentId}/file`, headers: { cookie: `session=${tokens[3]}` } });
+  assert.equal(stolen.statusCode, 404, 'outsider receives no file and no existence hint');
+  assert.ok(await addTaskFileAttachment(db, users[1], boardId, task.id, { data: png, fileName: 'again.png', mimeType: 'image/png', fileSize: png.length }), 'persistence via db helper');
   await updateTask(db, users[1], boardId, task.id, { status: 'done' });
   const collaboration = await taskCollaboration(db, users[0], boardId, task.id);
   assert.deepEqual(collaboration!.timeline.map((event: {action: string}) => event.action), ['created', 'checklist_added', 'checklist_added', 'checklist_updated', 'checklist_updated', 'checklist_updated', 'updated']);
@@ -78,5 +108,6 @@ test('task collaboration enforces access, immutable audit and notification idemp
 
   await db.query('DELETE FROM boards WHERE id = ANY($1)', [[boardId, otherBoardId]]);
   await db.query('DELETE FROM users WHERE id = ANY($1)', [users]);
+  await app.close();
   await db.end();
 });

@@ -688,6 +688,7 @@ function App() {
     onChecklistDelete={(itemId) => collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/checklist/${itemId}`, { method: 'DELETE' })}
     onComment={(body) => collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/comments`, json('POST', { body }))}
     onUrlAttachment={(url) => collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/attachments`, json('POST', { kind: 'url', url }))}
+    onFileAttachment={(file) => { const data = new FormData(); data.append('file', file); return collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/attachments/file`, { method: 'POST', body: data }); }}
   />;
   const saveSchedule = async (schedule: Schedule, previewOnly = false) => {
     if (!board) return;
