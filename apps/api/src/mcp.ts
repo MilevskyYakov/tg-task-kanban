@@ -5,7 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { ChecklistConfirmationError, createTask, sessionUserId, TaskActionError, TaskConflictError, updateTask, type Database, type TaskInput } from './db.js';
+import { ChecklistConfirmationError, claimTask, createTask, sessionUserId, setTaskArchived, TaskActionError, TaskConflictError, updateTask, type Database, type TaskInput } from './db.js';
 import type { Config } from './config.js';
 import { taskInput } from './task-input.js';
 
@@ -23,15 +23,17 @@ const blocker = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('task'), taskId: uuid }).strict(),
   z.object({ kind: z.literal('external'), reason: z.string().trim().min(1).max(1000), checkAt: z.string().optional() }).strict()
 ]);
-const changes = z.object({ assigneeUserId: userId.nullable().optional(), deadline: deadline.optional(), status: status.optional(), blocker: blocker.optional() }).strict().refine((value) => Object.keys(value).length > 0);
+const changes = z.object({ title: z.string().trim().min(1).max(200).optional(), description: z.string().refine((s) => [...s].length <= 8000).nullable().optional(), projectId: uuid.nullable().optional(), priority: z.enum(['normal', 'urgent']).optional(), assigneeUserId: userId.nullable().optional(), deadline: deadline.optional(), status: status.optional(), blocker: blocker.optional(), notifyAssignee: z.boolean().optional() }).strict().refine((value) => Object.keys(value).length > 0);
 const schemas = {
   list_boards: z.object(page).strict(),
   list_projects: z.object({ boardId: uuid, ...search }).strict(),
   list_members: z.object({ boardId: uuid, ...search }).strict(),
   list_tasks: z.object({ boardId: uuid, ...search, projectId: uuid.optional(), assignee: z.union([userId, z.enum(['self', 'unassigned'])]).optional(), statuses: z.array(status).min(1).max(4).optional(), backlog: z.boolean().optional(), archived: z.boolean().default(false) }).strict(),
   get_task: z.object({ boardId: uuid, taskId: uuid, descriptionOffset: z.number().int().min(0).max(2147483646).default(0), descriptionLimit: z.number().int().min(1).max(8000).default(8000), version: z.string().regex(/^[1-9]\d*$/).max(20).optional() }).strict(),
-  create_task: z.object({ boardId: uuid, requestId: uuid, title: z.string().trim().min(1).max(200), description: z.string().refine((s) => [...s].length <= 8000).nullable().optional(), projectId: uuid.nullable().optional(), assigneeUserId: userId.nullable().optional(), priority: z.enum(['normal', 'urgent']).default('normal'), deadline: deadline.default({kind: 'none'}), status: status.default('todo'), blocker: blocker.optional() }).strict(),
-  update_task: z.object({ boardId: uuid, taskId: uuid, requestId: uuid, expectedVersion: z.string().regex(/^[1-9]\d*$/).max(20), changes, confirmIncompleteChecklist: z.boolean().default(false) }).strict()
+  create_task: z.object({ boardId: uuid, requestId: uuid, title: z.string().trim().min(1).max(200), description: z.string().refine((s) => [...s].length <= 8000).nullable().optional(), projectId: uuid.nullable().optional(), assigneeUserId: userId.nullable().optional(), priority: z.enum(['normal', 'urgent']).default('normal'), deadline: deadline.default({kind: 'none'}), status: status.default('todo'), blocker: blocker.optional(), notifyAssignee: z.boolean().optional() }).strict(),
+  update_task: z.object({ boardId: uuid, taskId: uuid, requestId: uuid, expectedVersion: z.string().regex(/^[1-9]\d*$/).max(20), changes, confirmIncompleteChecklist: z.boolean().default(false) }).strict(),
+  claim_task: z.object({ boardId: uuid, taskId: uuid, requestId: uuid }).strict(),
+  archive_task: z.object({ boardId: uuid, taskId: uuid, requestId: uuid, archived: z.boolean() }).strict()
 };
 type ToolName = keyof typeof schemas;
 const descriptions: Record<ToolName, string> = {
@@ -39,8 +41,10 @@ const descriptions: Record<ToolName, string> = {
   list_projects: 'Активные проекты выбранной доски.', list_members: 'Участники выбранной доски; используйте точные ID для назначения.',
   list_tasks: 'Поиск задач одной доски. По умолчанию без завершённых и архивных. Продолжайте до nextCursor=null.',
   get_task: 'Прочитать задачу, версию и часть описания. Для следующих частей передайте полученную version.',
-  create_task: 'Создать задачу. requestId — UUID одного намерения; при потере ответа повторять тот же UUID и аргументы.',
-  update_task: 'Назначить задачу, изменить срок, статус или блокер. expectedVersion из чтения. Повторять тот же requestId; новый UUID только для нового намерения. CHECKLIST_CONFIRMATION_REQUIRED требует ответа пользователя, не выставляйте подтверждение автоматически.'
+  create_task: 'Создать задачу. requestId — UUID одного намерения; при потере ответа повторять тот же UUID и аргументы. Исполнителя назначайте явно; notifyAssignee=true отправляет исполнителю уведомление о назначении.',
+  update_task: 'Изменить задачу: название, описание, проект, приоритет, исполнитель, срок, статус или блокер. Отсутствующее поле не меняется; assigneeUserId=null снимает исполнителя — делайте это только по явной просьбе пользователя, не подменяйте отложенную задачу архивом или done. expectedVersion из чтения. Повторять тот же requestId; новый UUID только для нового намерения. CHECKLIST_CONFIRMATION_REQUIRED требует ответа пользователя, не выставляйте подтверждение автоматически.',
+  claim_task: 'Взять задачу из бэклога себе. Успех только если задача активна, без исполнителя и в статусе «К работе»; иначе 409 — задачу уже взяли или она вне бэклога.',
+  archive_task: 'Архивировать (archived=true) или восстановить (archived=false) задачу. Архив — не завершение: не используйте вместо done, чтобы скрыть отложенную задачу. Восстановление возвращает задачу на доску с сохранённой историей.'
 };
 const connectionInput = z.object({ requestId: uuid, name: z.string().trim().min(1).max(80), boardIds: z.array(uuid).min(1).max(100).transform((ids) => [...new Set(ids)].sort()), mode: z.enum(['read', 'write']) }).strict();
 class McpFailure extends Error {
@@ -133,7 +137,7 @@ async function runTool(db: Database, keyHash: string, name: ToolName, raw: unkno
   const args = parse(schemas[name] as z.ZodType<Record<string, any>>, raw);
   return transaction(db, async (client) => {
     const connection = await connectionForKey(client, keyHash, true);
-    const write = name === 'create_task' || name === 'update_task';
+    const write = name === 'create_task' || name === 'update_task' || name === 'claim_task' || name === 'archive_task';
     if (write && connection.mode !== 'write') throw new McpFailure('READ_ONLY', 'Подключение разрешает только просмотр', 403);
     if (write) await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${connection.id}:${args.requestId}`]);
     if (args.boardId) {
@@ -157,15 +161,26 @@ async function runTool(db: Database, keyHash: string, name: ToolName, raw: unkno
         if (name === 'create_task') {
           const {boardId, requestId, ...values} = args;
           task = await createTask(db, connection.user_id, boardId, {...toTaskInput(values, false), requestId: randomUUID()}, client);
-        } else {
+        } else if (name === 'update_task') {
           const current = (await client.query('SELECT status, revision::text, blocked_by_task_id, wait_reason, wait_check_at FROM tasks WHERE id=$1 AND board_id=$2 AND archived_at IS NULL FOR UPDATE', [args.taskId, args.boardId])).rows[0];
           if (!current) throw missing();
           if (current.revision !== args.expectedVersion) throw new McpFailure('VERSION_CONFLICT', 'Задача изменилась. Прочитайте её заново', 409);
           task = await updateTask(db, connection.user_id, args.boardId, args.taskId, {...toTaskInput(args.changes, true, current), confirmIncompleteChecklist: args.confirmIncompleteChecklist}, client);
           notify = task?.unblockedTaskIds ?? [];
+        } else if (name === 'claim_task') {
+          const exists = await client.query('SELECT 1 FROM tasks WHERE id=$1 AND board_id=$2', [args.taskId, args.boardId]);
+          if (!exists.rowCount) throw missing();
+          const claimed = await claimTask(db, connection.user_id, args.boardId, args.taskId, client);
+          if (claimed === null) throw missing();
+          if (!claimed.claimed) throw new McpFailure('TASK_NOT_CLAIMABLE', 'Задача уже назначена или больше не в бэклоге', 409);
+          task = (await client.query(`SELECT ${taskColumns} FROM tasks t WHERE t.id=$1 AND t.board_id=$2`, [args.taskId, args.boardId])).rows[0];
+        } else {
+          const changed = await setTaskArchived(db, connection.user_id, args.boardId, args.taskId, args.archived, client);
+          if (!changed) throw new McpFailure('ACTION_FORBIDDEN', 'Действие недоступно или выбранные данные изменились', 403);
+          task = (await client.query(`SELECT ${taskColumns} FROM tasks t WHERE t.id=$1 AND t.board_id=$2`, [args.taskId, args.boardId])).rows[0];
         }
         if (!task) throw new McpFailure('ACTION_FORBIDDEN', 'Действие недоступно или выбранные данные изменились', 403);
-        taskId = task.id; revision = String(task.revision);
+        taskId = task.id; revision = String(task.revision ?? task.version);
         await client.query('INSERT INTO mcp_write_receipts (connection_id, request_id, request_hash, board_id, task_id, version) VALUES ($1,$2,$3,$4,$5,$6)', [connection.id, args.requestId, fingerprint, args.boardId, taskId, revision]);
       }
       return { data: {task: await getTask(client, args.boardId, taskId), receipt: {requestId: args.requestId, version: revision}, replayed: Boolean(previous), warnings: previous?.warning ? [previous.warning] : []}, notify, connectionId: connection.id, requestId: args.requestId };
@@ -301,9 +316,10 @@ export function registerMcp(app: FastifyInstance, config: Config, db: Database, 
       server.server.registerCapabilities({tools:{}});
       server.server.setRequestHandler(ListToolsRequestSchema, async () => {
         const current = await transaction(db,client => connectionForKey(client,keyHash,true));
-        return {tools:Object.entries(schemas).filter(([name]) => current.mode === 'write' || !['create_task','update_task'].includes(name)).map(([name,schema]) => ({
+        const writes = ['create_task','update_task','claim_task','archive_task'];
+        return {tools:Object.entries(schemas).filter(([name]) => current.mode === 'write' || !writes.includes(name)).map(([name,schema]) => ({
           name,description:descriptions[name as ToolName],inputSchema:z.toJSONSchema(schema,{io:'input'}) as any,
-          annotations:{readOnlyHint:!['create_task','update_task'].includes(name),destructiveHint:['create_task','update_task'].includes(name),openWorldHint:false,idempotentHint:true}
+          annotations:{readOnlyHint:!writes.includes(name),destructiveHint:writes.includes(name) && name !== 'archive_task',openWorldHint:false,idempotentHint:true}
         }))};
       });
       server.server.setRequestHandler(CallToolRequestSchema, async (call) => {
