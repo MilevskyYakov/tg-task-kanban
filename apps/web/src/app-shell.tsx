@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type Key
 import { useTelegramEnvironment } from './environment';
 import { isSettingsNavigation, type NavigationState } from './navigation';
 
-export type IconName = 'tasks' | 'plus' | 'settings' | 'close' | 'chevron' | 'alert' | 'sun' | 'clock' | 'noDeadline' | 'project' | 'assignee' | 'calendar' | 'board' | 'sliders' | 'back' | 'more' | 'attach' | 'send' | 'priority' | 'workspace' | 'automation';
+export type IconName = 'tasks' | 'plus' | 'settings' | 'close' | 'chevron' | 'alert' | 'sun' | 'clock' | 'noDeadline' | 'project' | 'assignee' | 'calendar' | 'board' | 'sliders' | 'back' | 'more' | 'attach' | 'send' | 'priority' | 'workspace' | 'automation' | 'image';
 
 export function Icon({ name }: { name: IconName }) {
   const paths = {
@@ -26,7 +26,8 @@ export function Icon({ name }: { name: IconName }) {
     send: <><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></>,
     priority: <><path d="M5 21V4"/><path d="M5 5h11l-2 4 2 4H5"/></>,
     workspace: <><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M9 10h12"/></>,
-    automation: <><path d="M20 7h-5V2M4 17h5v5"/><path d="M18.4 18.4A9 9 0 0 1 4.6 15M5.6 5.6A9 9 0 0 1 19.4 9"/></>
+    automation: <><path d="M20 7h-5V2M4 17h5v5"/><path d="M18.4 18.4A9 9 0 0 1 4.6 15M5.6 5.6A9 9 0 0 1 19.4 9"/></>,
+    image: <><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-4.5-4.5L7 20"/></>
   };
   return <svg className="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
