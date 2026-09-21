@@ -510,42 +510,43 @@ export async function taskCollaboration(db: Database, userId: string, boardId: s
   return { comments: comments.rows, checklist: checklist.rows, attachments: attachments.rows, timeline: timeline.rows };
 }
 
-export async function addTaskComment(db: Database, userId: string, boardId: string, taskId: string, body: string) {
-  return withBoardLock(db, boardId, async (client) => {
-  if (!await canReadTask(client, userId, boardId, taskId, true)) return null;
-  const result = await client.query(`INSERT INTO task_comments (id, board_id, task_id, author_user_id, body)
-    VALUES ($1, $2, $3, $4, $5) RETURNING id, body, created_at`, [randomUUID(), boardId, taskId, userId, body]);
-  return result.rows[0];
-  });
+export async function addTaskComment(db: Database, userId: string, boardId: string, taskId: string, body: string, transaction?: pg.PoolClient) {
+  const run = async (client: pg.PoolClient) => {
+    if (!await canReadTask(client, userId, boardId, taskId, true)) return null;
+    const result = await client.query(`INSERT INTO task_comments (id, board_id, task_id, author_user_id, body)
+      VALUES ($1, $2, $3, $4, $5) RETURNING id, body, created_at`, [randomUUID(), boardId, taskId, userId, body]);
+    return result.rows[0];
+  };
+  return transaction ? run(transaction) : withBoardLock(db, boardId, run);
 }
 
-export async function addChecklistItem(db: Database, userId: string, boardId: string, taskId: string, text: string) {
-  const client = await db.connect();
+export async function addChecklistItem(db: Database, userId: string, boardId: string, taskId: string, text: string, transaction?: pg.PoolClient) {
+  const client = transaction ?? await db.connect();
   try {
-    await client.query('BEGIN');
+    if (!transaction) await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
     const task = await canReadTask(client, userId, boardId, taskId, true);
-    if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) { await client.query('ROLLBACK'); return null; }
+    if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) { if (!transaction) await client.query('ROLLBACK'); return null; }
     const position = (await client.query<{position: number}>(`SELECT COALESCE(MAX(position), -1) + 1 AS position
       FROM task_checklist_items WHERE task_id = $1`, [taskId])).rows[0].position;
     const result = await client.query(`INSERT INTO task_checklist_items (id, board_id, task_id, created_by, text, position)
       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`, [randomUUID(), boardId, taskId, userId, text, position]);
     await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, after_data)
       VALUES ($1, $2, $3, $4, 'checklist_added', $5)`, [randomUUID(), boardId, taskId, userId, result.rows[0]]);
-    await client.query('COMMIT'); return result.rows[0];
-  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+    if (!transaction) await client.query('COMMIT'); return result.rows[0];
+  } catch (error) { if (!transaction) await client.query('ROLLBACK'); throw error; } finally { if (!transaction) client.release(); }
 }
 
-export async function updateChecklistItem(db: Database, userId: string, boardId: string, taskId: string, itemId: string, input: {text?: string; completed?: boolean; position?: number}) {
-  const client = await db.connect();
+export async function updateChecklistItem(db: Database, userId: string, boardId: string, taskId: string, itemId: string, input: {text?: string; completed?: boolean; position?: number}, transaction?: pg.PoolClient) {
+  const client = transaction ?? await db.connect();
   try {
-    await client.query('BEGIN');
+    if (!transaction) await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
     const task = await canReadTask(client, userId, boardId, taskId, true);
-    if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) { await client.query('ROLLBACK'); return null; }
+    if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) { if (!transaction) await client.query('ROLLBACK'); return null; }
     const current = await client.query('SELECT * FROM task_checklist_items WHERE id = $1 AND task_id = $2 AND board_id = $3 FOR UPDATE', [itemId, taskId, boardId]);
     const item = current.rows[0];
-    if (!item) { await client.query('ROLLBACK'); return null; }
+    if (!item) { if (!transaction) await client.query('ROLLBACK'); return null; }
     let position = item.position;
     if (input.position !== undefined && input.position !== position) {
       const count = Number((await client.query<{count: string}>('SELECT count(*) FROM task_checklist_items WHERE task_id = $1', [taskId])).rows[0].count);
@@ -559,29 +560,29 @@ export async function updateChecklistItem(db: Database, userId: string, boardId:
       WHERE id = $1 AND task_id = $2 AND board_id = $3 RETURNING *`, [itemId, taskId, boardId, userId, input.text ?? null, position, input.completed ?? null]);
     await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, before_data, after_data)
       VALUES ($1, $2, $3, $4, 'checklist_updated', $5, $6)`, [randomUUID(), boardId, taskId, userId, item, result.rows[0]]);
-    await client.query('COMMIT'); return result.rows[0];
-  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+    if (!transaction) await client.query('COMMIT'); return result.rows[0];
+  } catch (error) { if (!transaction) await client.query('ROLLBACK'); throw error; } finally { if (!transaction) client.release(); }
 }
 
-export async function deleteChecklistItem(db: Database, userId: string, boardId: string, taskId: string, itemId: string) {
-  const client = await db.connect();
+export async function deleteChecklistItem(db: Database, userId: string, boardId: string, taskId: string, itemId: string, transaction?: pg.PoolClient) {
+  const client = transaction ?? await db.connect();
   try {
-    await client.query('BEGIN');
+    if (!transaction) await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
     const task = await canReadTask(client, userId, boardId, taskId, true);
-    if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) { await client.query('ROLLBACK'); return false; }
+    if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) { if (!transaction) await client.query('ROLLBACK'); return false; }
     const result = await client.query('DELETE FROM task_checklist_items WHERE id = $1 AND task_id = $2 AND board_id = $3 RETURNING *', [itemId, taskId, boardId]);
-    if (!result.rows[0]) { await client.query('ROLLBACK'); return false; }
+    if (!result.rows[0]) { if (!transaction) await client.query('ROLLBACK'); return false; }
     await client.query('UPDATE task_checklist_items SET position = position - 1 WHERE task_id = $1 AND position > $2', [taskId, result.rows[0].position]);
     await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, before_data)
       VALUES ($1, $2, $3, $4, 'checklist_deleted', $5)`, [randomUUID(), boardId, taskId, userId, result.rows[0]]);
-    await client.query('COMMIT'); return true;
-  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+    if (!transaction) await client.query('COMMIT'); return true;
+  } catch (error) { if (!transaction) await client.query('ROLLBACK'); throw error; } finally { if (!transaction) client.release(); }
 }
 
 export type AttachmentInput = { kind: 'url' | 'telegram'; url?: string; telegramFileId?: string; telegramFileUniqueId?: string; fileName?: string; mimeType?: string; fileSize?: number };
-export async function addTaskAttachment(db: Database, userId: string, boardId: string, taskId: string, input: AttachmentInput) {
-  return withBoardLock(db, boardId, async (client) => {
+export async function addTaskAttachment(db: Database, userId: string, boardId: string, taskId: string, input: AttachmentInput, transaction?: pg.PoolClient) {
+  const run = async (client: pg.PoolClient) => {
   if (!await canReadTask(client, userId, boardId, taskId, true)) return null;
   const result = await client.query(`INSERT INTO task_attachments (id, board_id, task_id, added_by, kind, url,
       telegram_file_id, telegram_file_unique_id, file_name, mime_type, file_size)
@@ -589,7 +590,8 @@ export async function addTaskAttachment(db: Database, userId: string, boardId: s
     [randomUUID(), boardId, taskId, userId, input.kind, input.url ?? null, input.telegramFileId ?? null,
       input.telegramFileUniqueId ?? null, input.fileName ?? null, input.mimeType ?? null, input.fileSize ?? null]);
   return result.rows[0];
-  });
+  };
+  return transaction ? run(transaction) : withBoardLock(db, boardId, run);
 }
 
 export async function incompleteChecklistCount(db: Database, userId: string, boardId: string, taskId: string) {
