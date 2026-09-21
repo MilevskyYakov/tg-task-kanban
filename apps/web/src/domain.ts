@@ -9,6 +9,6 @@ export type Recurrence = { id: string; title: string; frequency: 'daily' | 'week
 export type Collaboration = {
   comments: { id: string; body: string; author_name: string; created_at: string }[];
   checklist: { id: string; text: string; position: number; completed_at?: string }[];
-  attachments: { id: string; kind: 'url' | 'telegram'; url?: string; file_name?: string; created_at: string }[];
+  attachments: { id: string; kind: 'url' | 'telegram' | 'file'; url?: string; file_name?: string; mime_type?: string; created_at: string }[];
   timeline: { id: string; action: string; actor_name: string; created_at: string }[];
 };
