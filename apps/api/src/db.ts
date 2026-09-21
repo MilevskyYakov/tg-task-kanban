@@ -223,32 +223,34 @@ export async function projectsForBoard(db: Database, userId: string, boardId: st
   return result.rows;
 }
 
-export async function createProject(db: Database, userId: string, boardId: string, name: string) {
-  return withBoardLock(db, boardId, async (client) => {
-  const result = await client.query(`INSERT INTO projects (id, board_id, name, created_by)
-    SELECT $3, b.id, $4, $2 FROM boards b JOIN memberships m ON m.board_id = b.id
-    WHERE b.id = $1 AND b.status = 'active' AND m.user_id = $2
-    ON CONFLICT (board_id, lower(btrim(name))) WHERE archived_at IS NULL
-    DO UPDATE SET name = projects.name
-    RETURNING id, name, archived_at`, [boardId, userId, randomUUID(), name]);
-  return result.rows[0] ?? null;
-  });
+export async function createProject(db: Database, userId: string, boardId: string, name: string, transaction?: pg.PoolClient) {
+  const run = async (client: pg.PoolClient) => {
+    const result = await client.query(`INSERT INTO projects (id, board_id, name, created_by)
+      SELECT $3, b.id, $4, $2 FROM boards b JOIN memberships m ON m.board_id = b.id
+      WHERE b.id = $1 AND b.status = 'active' AND m.user_id = $2
+      ON CONFLICT (board_id, lower(btrim(name))) WHERE archived_at IS NULL
+      DO UPDATE SET name = projects.name
+      RETURNING id, name, archived_at`, [boardId, userId, randomUUID(), name]);
+    return result.rows[0] ?? null;
+  };
+  return transaction ? run(transaction) : withBoardLock(db, boardId, run);
 }
 
-export async function updateProject(db: Database, userId: string, boardId: string, projectId: string, input: {name?: string; archived?: boolean}) {
-  return withBoardLock(db, boardId, async (client) => {
-  try {
-    const result = await client.query(`UPDATE projects p SET name = COALESCE($4, p.name),
-        archived_at = CASE WHEN $5::boolean IS NULL THEN p.archived_at WHEN $5 THEN now() ELSE NULL END
-      FROM boards b, memberships m WHERE p.id = $1 AND p.board_id = $2 AND b.id = p.board_id
-        AND b.status = 'active' AND m.board_id = b.id AND m.user_id = $3
-      RETURNING p.id, p.name, p.archived_at`, [projectId, boardId, userId, input.name ?? null, input.archived ?? null]);
-    return result.rows[0] ?? null;
-  } catch (error) {
-    if ((error as {code?: string}).code === '23505') throw new ProjectConflictError('active project with this name already exists');
-    throw error;
-  }
-  });
+export async function updateProject(db: Database, userId: string, boardId: string, projectId: string, input: {name?: string; archived?: boolean}, transaction?: pg.PoolClient) {
+  const run = async (client: pg.PoolClient) => {
+    try {
+      const result = await client.query(`UPDATE projects p SET name = COALESCE($4, p.name),
+          archived_at = CASE WHEN $5::boolean IS NULL THEN p.archived_at WHEN $5 THEN now() ELSE NULL END
+        FROM boards b, memberships m WHERE p.id = $1 AND p.board_id = $2 AND b.id = p.board_id
+          AND b.status = 'active' AND m.board_id = b.id AND m.user_id = $3
+        RETURNING p.id, p.name, p.archived_at`, [projectId, boardId, userId, input.name ?? null, input.archived ?? null]);
+      return result.rows[0] ?? null;
+    } catch (error) {
+      if ((error as {code?: string}).code === '23505') throw new ProjectConflictError('active project with this name already exists');
+      throw error;
+    }
+  };
+  return transaction ? run(transaction) : withBoardLock(db, boardId, run);
 }
 
 const taskColumns = `t.id, t.board_id, t.project_id, p.name AS project_name, t.creator_user_id, t.assignee_user_id,
