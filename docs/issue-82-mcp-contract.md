@@ -2,6 +2,25 @@
 
 Канон задачи: [GitHub #82](https://github.com/MilevskyYakov/tg-task-kanban/issues/82). Этот файл — проектный артефакт к Issue, не отдельный backlog.
 
+## Расширение поверхности (#95, блоки #96–#99)
+
+Таблица инструментов ниже описывает первую версию #82 и сохранена как историческая. Актуальная поверхность после блоков #95 расширяется поверх неё (матрица покрытия — в [#95](https://github.com/MilevskyYakov/tg-task-kanban/issues/95)); контрактные инварианты (строгие schemas, requestId+receipt на мутациях, grants ∩ membership, annotations) не ослаблялись.
+
+Добавлено в main и PR #110 (`MilevskyYakov/mcp-4`, #99):
+
+| Инструмент | Вход | Выход и доступ |
+|---|---|---|
+| `update_task` (расширенный, #96) | `changes`: title/description/projectId/priority/assigneeUserId/deadline/status/blocker, `notifyAssignee` | Полное редактирование карточки; `assigneeUserId: null` снимает исполнителя явно |
+| `claim_task` (#96) | `{boardId, taskId, requestId}` | Взять задачу из бэклога; 409 `TASK_NOT_CLAIMABLE` если занята |
+| `archive_task` (#96) | `{boardId, taskId, requestId, archived}` | Архив/восстановление; архив — не завершение |
+| `create_project` (#97) | `{boardId, requestId, name}` | Дедуп по requestId и активному имени (case-insensitive) |
+| `update_project` (#97) | `{boardId, projectId, requestId, name?, archived?}` | Имя и/или архив; конфликт — `PROJECT_NAME_CONFLICT`; архив проекта задачи не трогает |
+| `list_recurrences` (#99) | `{boardId, query?, limit?, cursor?, showArchived?}` | Шаблоны серий: активные + на паузе по умолчанию, `showArchived: true` — архивные. DTO: поля правила, `nextOccurrenceAt`, `paused`, `archived`; без creator_user_id и служебных колонок |
+| `create_recurrence` (#99) | `{boardId, requestId, title, description?, projectId?, assigneeUserId?, priority?, frequency, weekdays?, dayOfMonth?, localTime, timezone, startAt, endAt?}` | `{recurrence, receipt, replayed, warnings}`. Экземпляры не создаёт — их создаёт шедулер; уведомления о создании экземпляров не отправляются. Валидация общим `recurrenceInput` (частоты daily/weekdays/weekly/monthly, `HH:MM`, timezone, weekly = ровно один weekday, monthly = dayOfMonth) |
+| `update_recurrence` (#99) | `{boardId, recurrenceId, requestId, paused?, archived?, title?, description?, projectId?, assigneeUserId?, priority?, frequency?, weekdays?, dayOfMonth?, localTime?, timezone?, startAt?, endAt?}` — хотя бы одно изменяемое поле, одна операция за вызов (как REST PATCH) | Пауза/возобновление (`nextOccurrenceAt` пересчитывается), архив, поля правила и содержания. Изменение серии не трогает существующие карточки-экземпляры; изменение карточки (`update_task`) не меняет серию |
+
+Идемпотентность нетасковых мутаций: receipts с полиморфным `subject_id` (миграция 013) переиспользуются; отдельной схемы для проектов и повторений нет. Повтор с тем же requestId и аргументами → `replayed: true`; другой payload с тем же requestId → `REQUEST_CONFLICT`. Перенос задач/серий между досками, физическое удаление и ручное создание экземпляров исключены владельцем.
+
 ## Статус и границы результата
 
 Продуктовая модель принята в /grill: отдельный ключ на подключение, без срока действия, выбранные доски, read-only/read-write, отзыв, первый клиент Hermes. После подготовки макетов владелец согласовал короткий сценарий «название, доски/права, адрес + ключ» и отдельно разрешил реализацию в текущей ветке без деплоя и подключения к реальным задачам.
