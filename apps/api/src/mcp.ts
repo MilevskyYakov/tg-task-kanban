@@ -5,9 +5,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { ChecklistConfirmationError, claimTask, createTask, createProject, ProjectConflictError, sessionUserId, setTaskArchived, TaskActionError, TaskConflictError, updateTask, updateProject, addChecklistItem, addTaskAttachment, addTaskComment, deleteChecklistItem, updateChecklistItem, taskCollaboration, type Database, type TaskInput } from './db.js';
+import { ChecklistConfirmationError, claimTask, createTask, createProject, ProjectConflictError, sessionUserId, setTaskArchived, TaskActionError, TaskConflictError, updateTask, updateProject, addChecklistItem, addTaskAttachment, addTaskComment, deleteChecklistItem, updateChecklistItem, taskCollaboration, type Database, type RecurrenceInput, type TaskInput } from './db.js';
 import type { Config } from './config.js';
 import { taskInput } from './task-input.js';
+import { recurrenceInput } from './recurrence-input.js';
+import { createRecurrence, recurrenceColumns, recurrencesForBoard, updateRecurrence } from './db.js';
 
 const uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 const userId = z.string().regex(/^[1-9]\d{0,18}$/).refine(value => /^\d+$/.test(value) && BigInt(value) <= 9223372036854775807n);
@@ -43,7 +45,10 @@ const schemas = {
   add_checklist_item: z.object({ boardId: uuid, taskId: uuid, requestId: uuid, text: z.string().trim().min(1).max(500) }).strict(),
   update_checklist_item: z.object({ boardId: uuid, taskId: uuid, itemId: uuid, requestId: uuid, patch: checklistPatch }).strict(),
   delete_checklist_item: z.object({ boardId: uuid, taskId: uuid, itemId: uuid, requestId: uuid }).strict(),
-  add_task_attachment: z.object({ boardId: uuid, taskId: uuid, requestId: uuid, url: httpUrl, title: z.string().trim().max(500).optional() }).strict()
+  add_task_attachment: z.object({ boardId: uuid, taskId: uuid, requestId: uuid, url: httpUrl, title: z.string().trim().max(500).optional() }).strict(),
+  list_recurrences: z.object({ boardId: uuid, ...search, showArchived: z.boolean().default(false) }).strict(),
+  create_recurrence: z.object({ boardId: uuid, requestId: uuid, title: z.string().trim().min(1).max(200), description: z.string().refine((s) => [...s].length <= 8000).nullable().optional(), projectId: uuid.nullable().optional(), assigneeUserId: userId.nullable().optional(), priority: z.enum(['normal', 'urgent']).default('normal'), frequency: z.enum(['daily', 'weekdays', 'weekly', 'monthly']), weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(), dayOfMonth: z.number().int().min(1).max(31).optional(), localTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), timezone: z.string().min(1).max(100), startAt: z.string().min(4), endAt: z.string().min(4).nullable().optional() }).strict(),
+  update_recurrence: z.object({ boardId: uuid, recurrenceId: uuid, requestId: uuid, paused: z.boolean().optional(), archived: z.boolean().optional(), title: z.string().trim().min(1).max(200).optional(), description: z.string().refine((s) => [...s].length <= 8000).nullable().optional(), projectId: uuid.nullable().optional(), assigneeUserId: userId.nullable().optional(), priority: z.enum(['normal', 'urgent']).optional(), frequency: z.enum(['daily', 'weekdays', 'weekly', 'monthly']).optional(), weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(), dayOfMonth: z.number().int().min(1).max(31).optional(), localTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(), timezone: z.string().min(1).max(100).optional(), startAt: z.string().min(4).optional(), endAt: z.string().min(4).nullable().optional() }).strict().refine((value) => ['paused','archived','title','description','projectId','assigneeUserId','priority','frequency','weekdays','dayOfMonth','localTime','timezone','startAt','endAt'].some((key) => value[key as keyof typeof value] !== undefined))
 };
 type ToolName = keyof typeof schemas;
 const descriptions: Record<ToolName, string> = {
@@ -62,7 +67,10 @@ const descriptions: Record<ToolName, string> = {
   add_checklist_item: 'Добавить пункт чек-листа (до 500 символов). Права: создатель или исполнитель карточки. requestId защищает от дублей при повторе.',
   update_checklist_item: 'Изменить пункт чек-листа: текст, отметка выполнения, перестановка (position с 0). Права: создатель или исполнитель карточки.',
   delete_checklist_item: 'Удалить пункт чек-листа. Действие необратимо: история сохраняет факт удаления, текст — нет. Права: создатель или исполнитель карточки.',
-  add_task_attachment: 'Добавить ссылку-вложение (HTTP/HTTPS URL). Telegram-файлы через MCP не поддерживаются.'
+  add_task_attachment: 'Добавить ссылку-вложение (HTTP/HTTPS URL). Telegram-файлы через MCP не поддерживаются.',
+  list_recurrences: 'Шаблоны повторяющихся задач доски. По умолчанию активные (включая на паузе); showArchived=true добавляет заархивированные. Повторение — правило-серия: задачи-экземпляры создаёт сервер по расписанию, не агент.',
+  create_recurrence: 'Создать серию повторяющихся задач (шаблон: частота, время, часовой пояс). Существующие карточки не создаёт и не меняет; экземпляры создаст планировщик по расписанию, уведомления о создании экземпляров не отправляются. requestId — UUID одного намерения; повтор с тем же requestId возвращает созданную серию без дубля. weekly требует ровно один weekday, monthly — dayOfMonth. Для изменения карточки-экземпляра используйте update_task — серия при этом не меняется.',
+  update_recurrence: 'Изменить серию: пауза (paused), архив (archived), поля правила (frequency/localTime/timezone/weekdays/dayOfMonth/startAt/endAt) или содержания (title/description/projectId/assigneeUserId/priority). Одна операция за вызов, хотя бы одно поле. Возобновление (paused=false) пересчитывает next_occurrence_at; archived=true останавливает серию навсегда. Изменение серии не меняет уже созданные карточки-экземпляры — меняйте их отдельно через update_task.'
 };
 const connectionInput = z.object({ requestId: uuid, name: z.string().trim().min(1).max(80), boardIds: z.array(uuid).min(1).max(100).transform((ids) => [...new Set(ids)].sort()), mode: z.enum(['read', 'write']) }).strict();
 class McpFailure extends Error {
@@ -126,6 +134,19 @@ async function projectForMcp(client: pg.PoolClient, boardId: string, projectId: 
   const project = (await client.query(`SELECT p.id, p.name, p.archived_at IS NOT NULL AS archived FROM projects p WHERE p.board_id=$1 AND p.id=$2`, [boardId, projectId])).rows[0];
   return project ? {id: project.id, name: project.name, archived: project.archived} : null;
 }
+function recurrenceDto(row: Record<string, any>) {
+  return { id: row.id, boardId: row.board_id, projectId: row.project_id, assigneeUserId: row.assignee_user_id,
+    title: row.title, description: row.description, priority: row.priority, frequency: row.frequency,
+    weekdays: row.weekdays, dayOfMonth: row.day_of_month, localTime: row.local_time, timezone: row.timezone,
+    startAt: row.starts_at, endAt: row.ends_at, nextOccurrenceAt: row.next_occurrence_at,
+    paused: row.paused_at != null, archived: row.archived_at != null,
+    createdAt: row.created_at, updatedAt: row.updated_at };
+}
+async function recurrenceForMcp(client: pg.PoolClient, boardId: string, recurrenceId: string) {
+  const row = (await client.query(`SELECT ${recurrenceColumns} FROM recurrence_templates r WHERE r.board_id=$1 AND r.id=$2`, [boardId, recurrenceId])).rows[0];
+  if (!row) throw missing();
+  return recurrenceDto(row);
+}
 function taskDto(row: Record<string, any>) {
   const { deadlineDate, deadlineTimezone, ...task } = row;
   return { ...task, deadline: deadlineDate ? {kind: 'date', date: deadlineDate, timezone: deadlineTimezone} : task.deadline ? {kind: 'datetime', at: new Date(task.deadline).toISOString()} : {kind: 'none'} };
@@ -159,7 +180,7 @@ async function runTool(db: Database, keyHash: string, name: ToolName, raw: unkno
   const args = parse(schemas[name] as z.ZodType<Record<string, any>>, raw);
   return transaction(db, async (client) => {
     const connection = await connectionForKey(client, keyHash, true);
-    const writes = ['create_task', 'update_task', 'claim_task', 'archive_task', 'create_project', 'update_project', 'add_task_comment', 'add_checklist_item', 'update_checklist_item', 'delete_checklist_item', 'add_task_attachment'];
+    const writes = ['create_task', 'update_task', 'claim_task', 'archive_task', 'create_project', 'update_project', 'add_task_comment', 'add_checklist_item', 'update_checklist_item', 'delete_checklist_item', 'add_task_attachment', 'create_recurrence', 'update_recurrence'];
     const write = writes.includes(name);
     if (write && connection.mode !== 'write') throw new McpFailure('READ_ONLY', 'Подключение разрешает только просмотр', 403);
     if (write) await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${connection.id}:${args.requestId}`]);
@@ -261,6 +282,23 @@ async function runTool(db: Database, keyHash: string, name: ToolName, raw: unkno
           const created = await addTaskAttachment(db, connection.user_id, a.boardId, a.taskId!, { kind: 'url', url: a.url, fileName: a.title }, client);
           if (!created) throw new McpFailure('ACTION_FORBIDDEN', 'Действие недоступно или выбранные данные изменились', 403);
           task = created;
+        } else if (name === 'create_recurrence' || name === 'update_recurrence') {
+          let recurrence;
+          if (name === 'create_recurrence') {
+            const {boardId, requestId, ...values} = args;
+            const input = recurrenceInput(values as RecurrenceInput);
+            if (typeof input === 'string') throw new McpFailure('INVALID_ARGUMENT', input);
+            recurrence = await createRecurrence(db, connection.user_id, boardId, input, client);
+          } else {
+            const exists = await client.query('SELECT 1 FROM recurrence_templates WHERE id=$1 AND board_id=$2', [args.recurrenceId, args.boardId]);
+            if (!exists.rowCount) throw missing();
+            const {boardId, recurrenceId, requestId, ...changes} = args;
+            const input = recurrenceInput(changes as RecurrenceInput, true);
+            if (typeof input === 'string') throw new McpFailure('INVALID_ARGUMENT', input);
+            recurrence = await updateRecurrence(db, connection.user_id, boardId, recurrenceId, {...input, paused: args.paused, archived: args.archived}, client);
+          }
+          if (!recurrence) throw missing();
+          task = { id: recurrence.id, revision: 1 }; taskId = recurrence.id;
         } else {
           const changed = await setTaskArchived(db, connection.user_id, args.boardId, args.taskId, args.archived, client);
           if (!changed) throw new McpFailure('ACTION_FORBIDDEN', 'Действие недоступно или выбранные данные изменились', 403);
@@ -281,7 +319,11 @@ async function runTool(db: Database, keyHash: string, name: ToolName, raw: unkno
       if (name === 'create_project' || name === 'update_project') {
         return { data: {project: await projectForMcp(client, args.boardId, taskId), receipt: {requestId: args.requestId, version: revision}, replayed: Boolean(previous), warnings: previous?.warning ? [previous.warning] : []}, notify, connectionId: connection.id, requestId: args.requestId };
       }
-      return { data: {task: await getTask(client, args.boardId, taskId), receipt: {requestId: args.requestId, version: revision}, replayed: Boolean(previous), warnings: previous?.warning ? [previous.warning] : []}, notify, connectionId: connection.id, requestId: args.requestId };
+      if (name === 'create_recurrence' || name === 'update_recurrence') {
+        return { data: {recurrence: await recurrenceForMcp(client, args.boardId, taskId), receipt: {requestId: args.requestId, version: revision}, replayed: Boolean(previous), warnings: previous?.warning ? [previous.warning] : []}, notify, connectionId: connection.id, requestId: args.requestId };
+      }
+      const task = await getTask(client, args.boardId, taskId);
+      return { data: {task, receipt: {requestId: args.requestId, version: revision}, replayed: Boolean(previous), warnings: previous?.warning ? [previous.warning] : []}, notify, connectionId: connection.id, requestId: args.requestId };
     }
     const cursor = cursorFor(args, connection.id + name);
     const uuidCursor = name !== 'list_members';
@@ -293,6 +335,10 @@ async function runTool(db: Database, keyHash: string, name: ToolName, raw: unkno
         JOIN memberships m ON m.board_id=b.id AND m.user_id=g.user_id WHERE g.connection_id=$1 AND ($2::uuid IS NULL OR b.id>$2) ORDER BY b.id LIMIT $3`, [connection.id, cursor.after, args.limit+1])).rows;
     } else if (name === 'list_projects') {
       rows = (await client.query(`SELECT id, name FROM projects WHERE board_id=$1 AND (archived_at IS NOT NULL)=$2 AND name ILIKE $3 AND ($4::uuid IS NULL OR id>$4) ORDER BY id LIMIT $5`, [args.boardId, Boolean(args.archived), term, cursor.after, args.limit+1])).rows;
+    } else if (name === 'list_recurrences') {
+      rows = (await client.query(`SELECT ${recurrenceColumns} FROM recurrence_templates r WHERE r.board_id=$1
+        AND (r.archived_at IS NOT NULL)=$2 AND r.title ILIKE $3 AND ($4::uuid IS NULL OR r.id>$4) ORDER BY r.id LIMIT $5`,
+        [args.boardId, Boolean(args.showArchived), term, cursor.after, args.limit+1])).rows.map(recurrenceDto);
     } else if (name === 'list_members') {
       rows = (await client.query(`SELECT u.id, u.first_name AS "firstName", u.username FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.board_id=$1 AND (u.first_name ILIKE $2 OR u.username ILIKE $2) AND ($3::bigint IS NULL OR u.id>$3) ORDER BY u.id LIMIT $4`, [args.boardId, term, cursor.after, args.limit+1])).rows;
     } else {
@@ -408,13 +454,14 @@ export function registerMcp(app: FastifyInstance, config: Config, db: Database, 
       const keyHash = hash(key);
       let connection;
       try { connection = await connectionForKey(db,keyHash); } catch (error) { limit('bad:'+request.ip,30); throw error; }
-      limit('use:'+connection.id,120);
+      limit('use:'+connection.id,240);
       if (request.method !== 'POST') return reply.code(405).header('Allow','POST').send({error:'Поддерживается только POST'});
+      limit('call:'+connection.id,240);
       const server = new McpServer({name:'task-kanban',version:'1.0.0'});
       server.server.registerCapabilities({tools:{}});
       server.server.setRequestHandler(ListToolsRequestSchema, async () => {
         const current = await transaction(db,client => connectionForKey(client,keyHash,true));
-        const writes = ['create_task','update_task','claim_task','archive_task','create_project','update_project','add_task_comment','add_checklist_item','update_checklist_item','delete_checklist_item','add_task_attachment'];
+        const writes = ['create_task','update_task','claim_task','archive_task','create_project','update_project','add_task_comment','add_checklist_item','update_checklist_item','delete_checklist_item','add_task_attachment','create_recurrence','update_recurrence'];
         return {tools:Object.entries(schemas).filter(([name]) => current.mode === 'write' || !writes.includes(name)).map(([name,schema]) => ({
           name,description:descriptions[name as ToolName],inputSchema:z.toJSONSchema(schema,{io:'input'}) as any,
           annotations:{readOnlyHint:!writes.includes(name),destructiveHint:writes.includes(name) && !['archive_task','update_project','delete_checklist_item'].includes(name),openWorldHint:false,idempotentHint:true}

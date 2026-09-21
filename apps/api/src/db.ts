@@ -624,7 +624,7 @@ export async function pendingNotificationForTask(db: Database, taskId: string, k
   return result.rows[0]?.id ?? null;
 }
 
-const recurrenceColumns = `r.id, r.board_id, r.creator_user_id, r.project_id, r.assignee_user_id,
+export const recurrenceColumns = `r.id, r.board_id, r.creator_user_id, r.project_id, r.assignee_user_id,
   r.title, r.description, r.priority, r.frequency, r.weekdays, r.day_of_month,
   to_char(r.local_time, 'HH24:MI') AS local_time, r.timezone, r.starts_at, r.ends_at,
   r.next_occurrence_at, r.paused_at, r.archived_at, r.created_at, r.updated_at`;
@@ -636,10 +636,10 @@ export async function recurrencesForBoard(db: Database, userId: string, boardId:
   return result.rows;
 }
 
-export async function createRecurrence(db: Database, userId: string, boardId: string, input: RecurrenceInput) {
+export async function createRecurrence(db: Database, userId: string, boardId: string, input: RecurrenceInput, transaction?: pg.PoolClient) {
   const first = nextOccurrence(input, new Date(new Date(input.startAt).getTime() - 1));
   if (!first) return null;
-  return withBoardLock(db, boardId, async (client) => {
+  const run = async (client: pg.PoolClient) => {
   const result = await client.query(`INSERT INTO recurrence_templates (id, board_id, creator_user_id, project_id,
       assignee_user_id, title, description, priority, frequency, weekdays, day_of_month, local_time,
       timezone, starts_at, ends_at, next_occurrence_at)
@@ -653,24 +653,23 @@ export async function createRecurrence(db: Database, userId: string, boardId: st
       input.title!, input.description ?? null, input.priority ?? 'normal', input.frequency, input.weekdays ?? null,
       input.dayOfMonth ?? null, input.localTime, input.timezone, input.startAt, input.endAt ?? null, first.toISOString()]);
   return result.rows[0] ?? null;
-  });
+  };
+  return transaction ? run(transaction) : withBoardLock(db, boardId, run);
 }
 
 export async function updateRecurrence(db: Database, userId: string, boardId: string, recurrenceId: string,
-  input: { paused?: boolean; archived?: boolean } & Partial<RecurrenceInput>) {
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
+  input: { paused?: boolean; archived?: boolean; endAt?: string | null } & Partial<RecurrenceInput>, transaction?: pg.PoolClient) {
+  const run = async (client: pg.PoolClient) => {
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
     const current = await client.query<any>(`SELECT r.* FROM recurrence_templates r JOIN boards b ON b.id = r.board_id
       JOIN memberships m ON m.board_id = b.id AND m.user_id = $3
       WHERE r.id = $1 AND r.board_id = $2 AND b.status = 'active' FOR UPDATE`, [recurrenceId, boardId, userId]);
     const row = current.rows[0];
-    if (!row || (row.creator_user_id !== userId && row.assignee_user_id !== userId)) { await client.query('ROLLBACK'); return null; }
+    if (!row || (row.creator_user_id !== userId && row.assignee_user_id !== userId)) return null;
     const projectId = input.projectId === undefined ? row.project_id : input.projectId;
     const assigneeId = input.assigneeUserId === undefined ? row.assignee_user_id : input.assigneeUserId;
-    if (projectId && !(await client.query('SELECT 1 FROM projects WHERE id = $1 AND board_id = $2 AND archived_at IS NULL', [projectId, boardId])).rowCount) { await client.query('ROLLBACK'); return null; }
-    if (assigneeId && !(await client.query('SELECT 1 FROM memberships WHERE board_id = $1 AND user_id = $2', [boardId, assigneeId])).rowCount) { await client.query('ROLLBACK'); return null; }
+    if (projectId && !(await client.query('SELECT 1 FROM projects WHERE id = $1 AND board_id = $2 AND archived_at IS NULL', [projectId, boardId])).rowCount) return null;
+    if (assigneeId && !(await client.query('SELECT 1 FROM memberships WHERE board_id = $1 AND user_id = $2', [boardId, assigneeId])).rowCount) return null;
     const rule: RecurrenceRule = {
       frequency: input.frequency ?? row.frequency, weekdays: input.weekdays ?? row.weekdays,
       dayOfMonth: input.dayOfMonth ?? row.day_of_month, localTime: input.localTime ?? row.local_time.slice(0, 5),
@@ -690,8 +689,15 @@ export async function updateRecurrence(db: Database, userId: string, boardId: st
         input.description === undefined ? row.description : input.description, input.priority ?? row.priority,
         rule.frequency, rule.weekdays ?? null, rule.dayOfMonth ?? null, rule.localTime, rule.timezone,
         rule.startAt, rule.endAt ?? null, next?.toISOString() ?? null, input.paused ?? null, input.archived ?? null]);
-    await client.query('COMMIT');
     return result.rows[0];
+  };
+  if (transaction) return run(transaction);
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const row = await run(client);
+    await client.query('COMMIT');
+    return row;
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 
