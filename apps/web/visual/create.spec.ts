@@ -193,6 +193,24 @@ for (const width of [390, 320]) {
   });
 }
 
+test('create does not change task filters after submit', async ({ page }) => {
+  const { requests } = await mockCreate(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await page.evaluate(() => document.fonts.ready);
+  await page.getByRole('button', { name: 'Создать задачу' }).click();
+  await page.getByRole('textbox', { name: 'Что нужно сделать?' }).fill('Задача в проекте');
+  await page.getByRole('button', { name: /Проект.*Без проекта/ }).click();
+  await page.getByRole('radio', { name: 'Task Kanban' }).click();
+  await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Задача создана');
+  expect(requests[0]).toMatchObject({ projectId: 'project-1', status: 'todo' });
+  await expect(page.getByRole('button', { name: /Задача в проекте/ })).toBeVisible();
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('tasks.viewState') ?? '{}'));
+  expect(stored.filters).toMatchObject({ scope: 'mine', project: '', status: '' });
+  await expect(page.locator('.filter-count')).toHaveCount(0);
+});
+
 test('pending create locks input and reuses request id after a failed response', async ({ page }) => {
   await mockCreate(page);
   const payloads: Record<string, any>[] = [];
