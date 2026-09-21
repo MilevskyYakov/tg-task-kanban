@@ -66,51 +66,64 @@ async function reportTasks(db: Database, boardId: string, kind: PublicationKind,
   return result.rows;
 }
 
+function taskLink(task: Pick<ReportTask, 'id' | 'title'>, botUsername: string, boardId: string) {
+  return `<a href="https://t.me/${botUsername}?startapp=task_${boardId}_${task.id}">${escapeHtml(task.title)}</a>`;
+}
+
 function taskLine(task: ReportTask, now: Date, botUsername: string, boardId: string) {
-  const labels = [task.priority === 'urgent' ? '🔥' : '', task.overdue ? 'ПРОСРОЧЕНО' : '', task.deadline_date ? `${task.deadline_date} · весь день (${task.deadline_timezone})` : '', task.wait_check_at && new Date(task.wait_check_at) <= now && task.status === 'waiting' ? 'ПРОВЕРИТЬ' : ''].filter(Boolean).join(' · ');
-  const start = `task_${boardId}_${task.id}`;
-  return `• <a href="https://t.me/${botUsername}?startapp=${start}">${escapeHtml(task.title)}</a>${labels ? ` — <b>${labels}</b>` : ''}`;
+  const labels = [publicationStatusDisplayName[task.status], task.priority === 'urgent' ? '🔥' : '', task.overdue ? 'ПРОСРОЧЕНО' : '', task.deadline_date ? `${task.deadline_date} · весь день (${task.deadline_timezone})` : '', task.wait_check_at && new Date(task.wait_check_at) <= now && task.status === 'waiting' ? 'ПРОВЕРИТЬ' : ''].filter(Boolean).join(' · ');
+  return `${taskLink(task, botUsername, boardId)}${labels ? ` — <b>${labels}</b>` : ''}`;
+}
+
+const ul = (lines: string[]) => `<ul>${lines.map((line) => `<li>${line}</li>`).join('')}</ul>`;
+
+function ruPlural(n: number, one: string, few: string, many: string) {
+  const mod10 = n % 10, mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  return mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? few : many;
+}
+
+function listWithTail(lines: string[], keep: number) {
+  if (lines.length <= keep + 2) return ul(lines);
+  const rest = lines.length - keep;
+  return `${ul(lines.slice(0, keep))}<details><summary>Ещё ${rest} ${ruPlural(rest, 'задача', 'задачи', 'задач')}</summary>${ul(lines.slice(keep))}</details>`;
 }
 
 export async function renderPublication(db: Database, boardId: string, kind: PublicationKind, statuses: string[], botUsername: string, timezone: string, now = new Date()) {
   const board = await db.query<{name: string}>("SELECT name FROM boards WHERE id = $1 AND type = 'chat'", [boardId]);
   if (!board.rows[0]) return [];
   const tasks = await reportTasks(db, boardId, kind, statuses, timezone, now);
-  const title = kind === 'daily' ? `План дня · ${escapeHtml(board.rows[0].name)}` : `Неделя · ${escapeHtml(board.rows[0].name)}`;
-  if (!tasks.length) return [`<b>${title}</b>\n\nАктивных задач нет.`];
-  const groups = new Map<string, Map<string, Map<string, ReportTask[]>>>();
+  const title = `${kind === 'daily' ? 'ПЛАН ДНЯ' : 'НЕДЕЛЯ'} · ${escapeHtml(board.rows[0].name)}`;
+  const dateLine = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', timeZone: timezone }).format(now);
+  const parts = [`<h1>${title}</h1>`];
+  if (!tasks.length) return [`${parts.join('\n')}\n<p>Активных задач нет.</p>\n<footer>Задачник · ${dateLine}</footer>`];
+  const count = (predicate: (task: ReportTask) => boolean) => tasks.filter(predicate).length;
+  parts.push(kind === 'daily'
+    ? `<p>${dateLine} · Активно: <b>${count((task: ReportTask) => task.status !== 'done')}</b> · Блокеров: <b>${count((task: ReportTask) => task.status === 'waiting')}</b> · Просрочено: <b>${count((task: ReportTask) => task.overdue)}</b></p>`
+    : `<p>Выполнено: <b>${count((task: ReportTask) => task.status === 'done')}</b> · Просрочено: <b>${count((task: ReportTask) => task.overdue)}</b> · ${publicationStatusDisplayName.waiting}: <b>${count((task: ReportTask) => task.status === 'waiting')}</b> · Активно: <b>${count((task: ReportTask) => task.status !== 'done')}</b></p>`);
+  const attention = tasks.filter((task: ReportTask) => task.overdue || task.status === 'waiting');
+  if (attention.length) parts.push(`<h2>Требует внимания</h2>`, listWithTail(attention.map((task: ReportTask) => taskLine(task, now, botUsername, boardId)), 6));
+  const people = new Map<string, Map<string, string[]>>();
   for (const task of tasks) {
+    if (task.status === 'todo' && !task.assignee_name) continue;
     const person = task.assignee_name ?? 'Без ответственного';
     const project = task.project_name ?? 'Без проекта';
-    const statusesMap = groups.get(person) ?? new Map(); groups.set(person, statusesMap);
-    const taskMap = statusesMap.get(project) ?? new Map(); statusesMap.set(project, taskMap);
-    const list = taskMap.get(task.status) ?? []; taskMap.set(task.status, list); list.push(task);
+    const projects = people.get(person) ?? new Map(); people.set(person, projects);
+    const lines = projects.get(project) ?? []; projects.set(project, lines); lines.push(taskLine(task, now, botUsername, boardId));
   }
-  const sections = [`<b>${title}</b>`];
-  if (kind === 'weekly') {
-    const count = (predicate: (task: ReportTask) => boolean) => tasks.filter(predicate).length;
-    sections.push(`Выполнено: <b>${count((task) => task.status === 'done')}</b> · Просрочено: <b>${count((task) => task.overdue)}</b> · ${publicationStatusDisplayName.waiting}: <b>${count((task) => task.status === 'waiting')}</b> · Активно: <b>${count((task) => task.status !== 'done')}</b>`);
+  for (const [person, projects] of people) {
+    parts.push(`<h2>${escapeHtml(person)}</h2>`);
+    for (const [project, lines] of projects) parts.push(`<h3>${escapeHtml(project)}</h3>`, listWithTail(lines, 6));
   }
-  for (const [person, projects] of groups) for (const [project, statusesMap] of projects) for (const [status, list] of statusesMap) {
-    sections.push(`<b>${escapeHtml(person)}</b> · ${escapeHtml(project)} · ${publicationStatusDisplayName[status as TaskStatus]}\n${list.map((task) => taskLine(task, now, botUsername, boardId)).join('\n')}`);
+  const backlogRows = await db.query<{id: string; title: string; total: string}>(`SELECT t.id, t.title, count(*) OVER() AS total FROM tasks t
+    WHERE t.board_id = $1 AND t.archived_at IS NULL AND t.status = 'todo' AND t.assignee_user_id IS NULL ORDER BY t.created_at LIMIT 50`, [boardId]);
+  if (backlogRows.rows.length) {
+    const lines = backlogRows.rows.map((task: {id: string; title: string; total: string}) => taskLink(task, botUsername, boardId));
+    parts.push(`<h2>Бэклог · ${backlogRows.rows[0].total}</h2>`, '<p>Любую можно взять себе.</p>', listWithTail(lines, 3));
   }
-  return splitTelegram(sections);
-}
-
-export function splitTelegram(sections: string[], limit = 4096) {
-  const chunks: string[] = [];
-  let chunk = '';
-  for (const [sectionIndex, section] of sections.entries()) {
-    const lines = section.split('\n');
-    for (const line of lines) {
-      if (line.length > limit) throw new Error('publication line exceeds Telegram limit');
-      const next = chunk ? `${chunk}\n${line}` : line;
-      if (next.length > limit) { chunks.push(chunk); chunk = line; } else chunk = next;
-    }
-    if (chunk && sectionIndex < sections.length - 1 && chunk.length + 1 < limit) chunk += '\n';
-  }
-  if (chunk.trim()) chunks.push(chunk.trimEnd());
-  return chunks;
+  const html = `${parts.join('\n')}\n<footer>Задачник · ${dateLine}</footer>`;
+  if (html.length > 32_768) throw new Error('publication exceeds Telegram rich message limit');
+  return [html];
 }
 
 export async function queueDuePublications(db: Database, now = new Date()) {
@@ -137,7 +150,10 @@ export async function deliverPendingPublications(db: Database, botToken: string,
   try {
     const messages = await renderPublication(db, run.rows[0].board_id, run.rows[0].kind, run.rows[0].included_statuses, botUsername, run.rows[0].timezone, now);
     for (let part = run.rows[0].sent_parts; part < messages.length; part++) {
-      await telegramCall(botToken, 'sendMessage', { chat_id: run.rows[0].telegram_chat_id, text: messages[part], parse_mode: 'HTML', disable_web_page_preview: true });
+      const payload = part === 0
+        ? { chat_id: run.rows[0].telegram_chat_id, rich_message: { html: messages[part] }, disable_web_page_preview: true }
+        : { chat_id: run.rows[0].telegram_chat_id, text: messages[part], parse_mode: 'HTML', disable_web_page_preview: true };
+      await telegramCall(botToken, part === 0 ? 'sendRichMessage' : 'sendMessage', payload);
       await db.query('UPDATE publication_runs SET sent_parts = $2 WHERE id = $1', [run.rows[0].id, part + 1]);
     }
     await db.query("UPDATE publication_runs SET status = 'sent', sent_at = now(), last_error = NULL WHERE id = $1", [run.rows[0].id]);
