@@ -8,6 +8,8 @@
 
 Добавлено в main и PR #110 (`MilevskyYakov/mcp-4`, #99):
 
+> **Выпущено в production 2026-09-22, SHA `2a1d55d`, проверено production smoke из Hermes — [`issue-100-production-smoke.md`](issue-100-production-smoke.md).** Поверхность: 20 tools (14 write / 6 read).
+
 | Инструмент | Вход | Выход и доступ |
 |---|---|---|
 | `update_task` (расширенный, #96) | `changes`: title/description/projectId/priority/assigneeUserId/deadline/status/blocker, `notifyAssignee` | Полное редактирование карточки; `assigneeUserId: null` снимает исполнителя явно |
