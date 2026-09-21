@@ -594,6 +594,24 @@ export async function addTaskAttachment(db: Database, userId: string, boardId: s
   });
 }
 
+export async function addTaskFileAttachment(db: Database, userId: string, boardId: string, taskId: string,
+    file: { data: Buffer; fileName: string; mimeType: string; fileSize: number }) {
+  return withBoardLock(db, boardId, async (client) => {
+  if (!await canReadTask(client, userId, boardId, taskId, true)) return null;
+  const result = await client.query(`INSERT INTO task_attachments (id, board_id, task_id, added_by, kind, file_name, mime_type, file_size, file_data)
+    VALUES ($1,$2,$3,$4,'file',$5,$6,$7,$8) RETURNING id, kind, file_name, mime_type, file_size, created_at`,
+    [randomUUID(), boardId, taskId, userId, file.fileName, file.mimeType, file.fileSize, file.data]);
+  return result.rows[0];
+  });
+}
+
+export async function taskAttachmentFile(db: Database, userId: string, boardId: string, taskId: string, attachmentId: string) {
+  if (!await canReadTask(db, userId, boardId, taskId)) return null;
+  const result = await db.query(`SELECT mime_type, file_name, file_data FROM task_attachments
+    WHERE id = $1 AND task_id = $2 AND board_id = $3 AND kind = 'file'`, [attachmentId, taskId, boardId]);
+  return result.rows[0] ?? null;
+}
+
 export async function incompleteChecklistCount(db: Database, userId: string, boardId: string, taskId: string) {
   if (!await canReadTask(db, userId, boardId, taskId, true)) return null;
   const result = await db.query<{count: string}>('SELECT count(*) FROM task_checklist_items WHERE task_id = $1 AND board_id = $2 AND completed_at IS NULL', [taskId, boardId]);
