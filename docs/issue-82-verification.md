@@ -44,13 +44,16 @@
 - session/Bearer separation, CSRF, недопустимый Host, неверный protocol header, invalid JSON, 413 и 429 с Retry-After;
 - одинаковые concurrent create intentions: одна задача и один created audit; другой payload с прежним requestId отвергается;
 - сохранённый update receipt после последующего UI update, optimistic version conflict;
-- date-only deadline, строгие ID, права завершения, цикл блокеров, Unicode description chunks и их version guard;
+- date-only deadline, строгие ID, цикл блокеров, Unicode description chunks и их version guard;
+- права завершения (см. примечание #105 ниже — сняты);
 - keyset pagination с одинаковыми microsecond timestamps, изменение фильтров с прежним cursor;
 - fault injection при INSERT receipt: task/audit откатываются вместе, после снятия fault повтор создаёт одну задачу;
 - checklist mutation под удерживаемым board lock одновременно с MCP completion: незавершённый новый пункт требует подтверждения;
 - настоящий MCP write ожидает board lock, удерживая connection lock; revoke ожидает его commit. После подтверждённого revoke ключ получает 401;
 - membership removal запрещает task и receipt; rejoin не оживляет grant;
 - ошибка Telegram delivery (явно подменённый внешний HTTP): задача сохранена, warning возвращается и при replay; notification intent и попытка не дублируются.
+
+> Примечание #105: «права завершения» (кто может закрыть/переоткрыть/сменить статус) сняты — теперь любой участник активной доски может проводить задачу по статусам, включая создание сразу в «Готово». Остались гейт членства на активной доске, аудит-события и подтверждение незавершённого чек-листа.
 
 Скан финальных test/browser/build logs на полный формат plaintext MCP-ключа: 0 совпадений. После cleanup в тестовой БД осталось 0 MCP-подключений.
 

@@ -158,13 +158,13 @@ test('MCP real HTTP/SDK and isolated DB: permissions, retries, grants and revoca
     assert.equal(rest.statusCode,409); assert.equal(rest.json().incompleteChecklist,1);
     assert.equal((await call(writer,'update_task',{...completion,requestId:randomUUID(),confirmIncompleteChecklist:true})).task.status,'done');
     const otherTask = await createTask(db,other.userId,shared,{title:'Other owner',assigneeUserId:other.userId});
-    const forbidden = await call(writer,'update_task',{boardId:shared,taskId:otherTask.id,requestId:randomUUID(),expectedVersion:String(otherTask.revision),changes:{status:'done'}});
-    assert.equal(forbidden.error.code,'ACTION_FORBIDDEN');
+    const memberClose = await call(writer,'update_task',{boardId:shared,taskId:otherTask.id,requestId:randomUUID(),expectedVersion:String(otherTask.revision),changes:{status:'done'}});
+    assert.equal(memberClose.ok,true,'writer connection closes a task it did not create');
     const audit=(await db.query('SELECT mcp_connection_id,actor_user_id FROM task_audit_events WHERE task_id=$1 AND mcp_request_id=$2',[taskId,draft.requestId])).rows;
     assert.equal(audit.length,1); assert.equal(audit[0].mcp_connection_id,write.connection.id); assert.equal(audit[0].actor_user_id,owner.userId);
     assert.equal((await call(reader,'list_tasks',{boardId:personal})).error.code,'NOT_FOUND');
     assert.equal((await call(writer,'create_task',{boardId:shared,requestId:randomUUID(),title:'Bad assignee',assigneeUserId:'9999999999999999999'})).error.code,'INVALID_ARGUMENT');
-    assert.equal((await call(writer,'create_task',{boardId:shared,requestId:randomUUID(),title:'Cannot finish for another',assigneeUserId:other.userId,status:'done'})).error.code,'ACTION_FORBIDDEN');
+    assert.equal((await call(writer,'create_task',{boardId:shared,requestId:randomUUID(),title:'Done for another member',assigneeUserId:other.userId,status:'done'})).task.status,'done','create_task closes with foreign assignee');
     assert.equal((await call(writer,'create_task',{boardId:shared,requestId:randomUUID(),title:'Creator can finish unassigned',status:'done'})).task.status,'done');
     const notifyTask=await call(writer,'create_task',{boardId:shared,requestId:randomUUID(),title:'Notify me',assigneeUserId:owner.userId,notifyAssignee:true});
     assert.equal((await db.query('SELECT id FROM task_assignment_notifications WHERE task_id=$1',[notifyTask.task.id])).rowCount,1,'create_task notifyAssignee inserts notification');

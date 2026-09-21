@@ -79,7 +79,7 @@ test('pair board: consent, capacity, access, preserved history, archive and ordi
     assert.equal(telegramCalls.length, 1);
     const taskId = createTaskResponse.json().id;
     const taskPath = `${path}/tasks/${taskId}`;
-    assert.equal((await call(owner, 'PATCH', taskPath, { status: 'done' })).statusCode, 403);
+    assert.equal((await call(owner, 'PATCH', taskPath, { status: 'done' })).statusCode, 200, 'owner closes task assigned to member');
     assert.equal((await call(member, 'POST', `${taskPath}/comments`, { body: 'History stays' })).statusCode, 200);
     const item = (await call(member, 'POST', `${taskPath}/checklist`, { text: 'Shared item' })).json();
     assert.equal((await call(member, 'PATCH', `${taskPath}/checklist/${item.id}`, { completed: true })).statusCode, 200);

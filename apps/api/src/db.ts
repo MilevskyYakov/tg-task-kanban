@@ -297,14 +297,6 @@ export async function tasksForAssignee(db: Database, userId: string) {
   return result.rows;
 }
 
-function assertCompletionAllowed(userId: string, creatorId: string, assigneeId: string | null) {
-  if (assigneeId !== userId && (assigneeId !== null || creatorId !== userId)) {
-    throw new TaskActionError(assigneeId
-      ? 'Завершить задачу может только назначенный исполнитель'
-      : 'Завершить задачу без исполнителя может только создатель');
-  }
-}
-
 async function assertBlockerAllowed(client: pg.PoolClient, boardId: string, blockerId: string) {
   const blocker = await client.query(`SELECT 1 FROM tasks WHERE id = $1 AND board_id = $2
     AND archived_at IS NULL AND status <> 'done'`, [blockerId, boardId]);
@@ -330,7 +322,6 @@ export async function createTask(db: Database, userId: string, boardId: string, 
       }
     }
     const status = input.status ?? 'todo';
-    if (status === 'done') assertCompletionAllowed(userId, userId, input.assigneeUserId ?? null);
     if (status === 'waiting' && Number(Boolean(input.blockerTaskId)) + Number(Boolean(input.waitReason?.trim())) !== 1) {
       throw new TaskConflictError('choose one blocker task or external reason');
     }
@@ -396,14 +387,6 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
     const task = current.rows[0];
     if (!task) { if (!transaction) await client.query('ROLLBACK'); return null; }
     const status = input.status ?? task.status;
-    if (status === 'done' && task.status !== 'done') assertCompletionAllowed(userId, task.creator_user_id, task.assignee_user_id);
-    if (task.status === 'done' && status !== 'done' && task.creator_user_id !== userId) {
-      throw new TaskActionError('Вернуть задачу в работу может только создатель');
-    }
-    if (task.creator_user_id !== userId && task.assignee_user_id !== userId) {
-      if (input.status !== undefined && input.status !== task.status) throw new TaskActionError('Менять статус может только создатель или исполнитель');
-      if (!transaction) await client.query('ROLLBACK'); return null;
-    }
     if (input.status === 'done' && input.confirmIncompleteChecklist !== true) {
       const incomplete = await client.query<{count: number}>('SELECT count(*)::int AS count FROM task_checklist_items WHERE task_id = $1 AND completed_at IS NULL', [taskId]);
       if (incomplete.rows[0].count) throw new ChecklistConfirmationError(incomplete.rows[0].count);

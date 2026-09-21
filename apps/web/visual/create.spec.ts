@@ -159,7 +159,7 @@ for (const width of [390, 320]) {
     await page.screenshot({ path: `${evidence}/issue77-details-date-${width}.png` });
   });
 
-  test(`initial blocker and completion refusal ${width}`, async ({ page }) => {
+  test(`initial blocker and instant completion ${width}`, async ({ page }) => {
     const { requests, savedTasks } = await mockCreate(page);
     savedTasks.push({ id: 'blocker-1', board_id: board.id, creator_user_id: 'user-1', title: 'Согласовать бюджет', status: 'todo', priority: 'normal', overdue: false, wait_check_due: false });
     await page.setViewportSize({ width, height: 844 });
@@ -186,10 +186,10 @@ for (const width of [390, 320]) {
     await page.getByRole('button', { name: /Статус.*К выполнению/ }).click();
     await page.getByRole('radio', { name: 'Готово' }).click();
     await page.getByRole('button', { name: 'Применить' }).click();
-    await expect(page.getByRole('alert')).toContainText('только назначенный исполнитель');
-    await expect(page.getByRole('button', { name: 'Создать задачу', exact: true })).toBeDisabled();
-    await page.screenshot({ path: `${evidence}/issue77-done-denied-${width}.png` });
-    expect(requests).toHaveLength(1);
+    await expect(page.getByRole('status')).toContainText('Задача создана');
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toMatchObject({ status: 'done', assigneeUserId: 'user-2' });
+    await page.screenshot({ path: `${evidence}/issue105-done-allowed-${width}.png` });
   });
 }
 
