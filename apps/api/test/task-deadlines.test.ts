@@ -76,7 +76,7 @@ test('initial status, date-only deadlines and safe retries work through API and 
         assert.equal(overdue.rows[0].overdue, offset === 0, `${zone} ${now.toISOString()}`);
         const text = (await renderPublication(db, boardId, 'daily', ['todo'], 'test_bot', 'UTC', now)).join('\n');
         const line = text.split('\n').find((line) => line.includes(`task_${boardId}_${dateTask.id}`))!;
-        assert.equal(line.includes('ПРОСРОЧЕНО'), offset === 0);
+        assert.equal(line.includes('🔴'), offset === 0);
         assert.ok(line.includes(`${date} · весь день (${zone})`));
       }
     }
