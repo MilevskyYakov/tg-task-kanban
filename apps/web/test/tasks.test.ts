@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { resolveChoiceIndex, resolveFocusIndex } from '../src/app-shell.js';
+import { ApiError } from '../src/api.js';
+import { runClaim } from '../src/claim-task.js';
 import { resolveThemeScheme } from '../src/environment.js';
 import { countLabel, initialNavigation, isSettingsNavigation, settingsSections } from '../src/navigation.js';
 import { taskDraft, taskPatch } from '../src/task-details.js';
@@ -204,6 +206,31 @@ test('kanban swipe changes one column only for horizontal gestures', () => {
 test('display mappings capture agreed product language', () => {
   assert.deepEqual(statusDisplayName, { todo: 'Новая', in_progress: 'В работе', waiting: 'Блокер', done: 'Готово' });
   assert.deepEqual(priorityDisplayName, { normal: 'Обычная', urgent: 'Срочная' });
+});
+
+test('runClaim reloads list on success and keeps the row on claim errors', async () => {
+  const mine = { ...tasks[0], id: 'claim', status: 'todo' as const, assignee_user_id: 'u' };
+  const claimed = await runClaim(() => Promise.resolve(mine), async () => { throw new Error('refresh must not be called on success'); }, 'u');
+  assert.deepEqual({ claimed: claimed.claimed, message: claimed.message, task: claimed.task }, { claimed: true, message: 'Задача теперь ваша. Статус не изменён.', task: mine });
+
+  const assignedToOther = { ...tasks[0], id: 'conflict', status: 'todo' as const, assignee_user_id: 'other', assignee_name: 'Анна' };
+  const conflict = await runClaim(() => Promise.reject(new ApiError('Задача уже назначена', 409)), (status) => { assert.equal(status, 409); return Promise.resolve(assignedToOther); }, 'u');
+  assert.equal(conflict.claimed, false);
+  assert.equal(conflict.message, 'Задача уже назначена: Анна. Данные обновлены.');
+  assert.equal(conflict.task, assignedToOther);
+
+  const alreadyMine = await runClaim(() => Promise.reject(new ApiError('conflict', 409)), () => Promise.resolve({ ...mine, assignee_user_id: 'u' }), 'u');
+  assert.equal(alreadyMine.message, 'Задача уже ваша. Данные обновлены.');
+
+  const gone = await runClaim(() => Promise.reject(new ApiError('404', 404)), () => Promise.reject(new ApiError('404', 404)), 'u');
+  assert.deepEqual({ claimed: gone.claimed, message: gone.message, task: gone.task }, { claimed: false, message: 'Задача больше недоступна для взятия. Данные обновлены.', task: null });
+
+  const staleRefresh = await runClaim(() => Promise.reject(new ApiError('409', 409)), () => Promise.reject(new Error('нет сети')), 'u');
+  assert.deepEqual({ claimed: staleRefresh.claimed, message: staleRefresh.message, task: staleRefresh.task }, { claimed: false, message: 'Не удалось обновить задачу. Повторите проверку.', task: undefined });
+
+  const network = await runClaim(() => Promise.reject(new TypeError('fetch failed')), () => Promise.resolve(null), 'u');
+  assert.equal(network.message, 'Нет подтверждения сервера. Повторите запрос: чужое назначение не будет перезаписано.');
+  assert.equal(network.task, undefined);
 });
 
 test('task details patch validates blockers and preserves editable fields', () => {

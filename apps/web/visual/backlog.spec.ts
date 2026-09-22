@@ -113,31 +113,29 @@ for (const width of [390, 320]) {
       await page.getByRole('button', { name: 'Открыть бэклог' }).click();
       await expect(page.locator('.backlog-row')).toHaveCount(4);
 
-      // Both users open the same unassigned task before either claims it.
-      await page.locator('.backlog-row').filter({ hasText: candidate.title }).last().getByRole('button', { name: 'Взять себе' }).click();
-      await shot('claim');
+      // Both users see the same unassigned task; instant claim from the row.
+      await shot('backlog-rows');
       await second.getByRole('button', { name: 'Бэклог 1', exact: true }).click();
-      await second.getByRole('button', { name: 'Взять себе', exact: true }).click();
-      await second.getByRole('button', { name: 'Взять себе', exact: true }).click();
+      await second.locator('.backlog-row').filter({ hasText: candidate.title }).last().getByRole('button', { name: 'Взять себе' }).click();
       await expect(second.getByRole('status')).toContainText('Задача теперь ваша');
-      await page.getByRole('button', { name: 'Взять себе', exact: true }).click();
+      await expect(second.locator('.main-task-row').filter({ hasText: candidate.title })).toBeVisible();
+      expect((await db.query('SELECT status, assignee_user_id FROM tasks WHERE id = $1', [candidate.id])).rows[0]).toEqual({ status: 'todo', assignee_user_id: member.userId });
+      // Competing claim from the first user loses; the row leaves the backlog after the refresh.
+      await page.locator('.backlog-row').filter({ hasText: candidate.title }).last().getByRole('button', { name: 'Взять себе' }).click();
       await expect(page.getByRole('status')).toContainText('Задача уже назначена: Анна');
       await shot('claim-conflict');
-      await expect(page.getByRole('button', { name: 'Уже недоступна' })).toBeDisabled();
-      await second.getByRole('button', { name: 'Открыть мои задачи' }).click();
-      await expect(second.locator('.main-task-row')).toContainText(candidate.title);
-      expect((await db.query('SELECT status, assignee_user_id FROM tasks WHERE id = $1', [candidate.id])).rows[0]).toEqual({ status: 'todo', assignee_user_id: member.userId });
-      await page.getByRole('button', { name: 'К бэклогу', exact: true }).last().click();
       await expect(page.locator('.backlog-row')).toHaveCount(3);
-      await page.getByRole('button', { name: 'Взять себе', exact: true }).first().click();
+      // Lost response keeps the row claimable; the retry succeeds and lands in Мои.
       failure = 'claim-response';
-      await page.getByRole('button', { name: 'Взять себе', exact: true }).click();
+      await page.locator('.backlog-row').filter({ hasText: 'Проверить страницу' }).getByRole('button', { name: 'Взять себе' }).click();
       await expect(page.getByRole('status')).toContainText('Нет подтверждения сервера');
-      await page.getByRole('button', { name: 'Взять себе', exact: true }).click();
-      await expect(page.getByRole('status')).toContainText('Задача уже ваша');
+      await expect(page.locator('.backlog-row')).toHaveCount(2);
+      failure = 'none';
+      await page.locator('.backlog-row').filter({ hasText: 'Подготовить тексты' }).getByRole('button', { name: 'Взять себе' }).click();
+      await expect(page.getByRole('status')).toContainText('Задача теперь ваша');
       await shot('claim-success');
-      await page.getByRole('button', { name: 'Открыть мои задачи' }).click();
-      await expect(page.locator('.main-task-row')).toHaveCount(1);
+      await expect(page.locator('.main-task-row').filter({ hasText: 'Подготовить тексты' })).toBeVisible();
+      expect((await db.query('SELECT count(*)::int AS c FROM tasks WHERE board_id = $1 AND status = $2 AND assignee_user_id IS NOT NULL', [boardId, 'todo'])).rows[0].c).toBe(3);
 
       await page.getByRole('button', { name: 'Все', exact: true }).click();
       await page.getByRole('button', { name: 'Фильтры', exact: true }).click();
@@ -154,7 +152,7 @@ for (const width of [390, 320]) {
       await page.getByRole('button', { name: /Показать .* задач/ }).click();
       await expect(page.locator('.main-task-row').filter({ hasText: 'Статус done' })).toBeVisible();
 
-      await page.getByRole('button', { name: 'Бэклог 2', exact: true }).click();
+      await page.getByRole('button', { name: 'Бэклог 1', exact: true }).click();
       await page.getByRole('button', { name: /Проект.*Все проекты/ }).click();
       await page.getByRole('radio', { name: 'Запуск сайта' }).click();
       await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();
