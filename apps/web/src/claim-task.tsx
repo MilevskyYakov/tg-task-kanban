@@ -3,6 +3,26 @@ import { api, ApiError } from './api';
 import { Icon } from './app-shell';
 import { formatTaskDeadline, isBacklogTask, statusDisplayName, type Task } from './tasks';
 
+export type ClaimResult = { claimed: boolean; message: string; task?: Task | null };
+
+export async function runClaim(claim: () => Promise<Task>, refresh: (status: number) => Promise<Task | null>, userId: string): Promise<ClaimResult> {
+  try {
+    const saved = await claim();
+    return { claimed: true, message: 'Задача теперь ваша. Статус не изменён.', task: saved };
+  } catch (error) {
+    if (error instanceof ApiError && [403, 404, 409].includes(error.status)) {
+      try {
+        const latest = await refresh(error.status);
+        return { claimed: false, task: latest, message: latest?.assignee_user_id === userId ? 'Задача уже ваша. Данные обновлены.' : latest?.assignee_name ? `Задача уже назначена: ${latest.assignee_name}. Данные обновлены.` : 'Задача больше недоступна для взятия. Данные обновлены.' };
+      } catch (refreshError) {
+        if (refreshError instanceof ApiError && [403, 404].includes(refreshError.status)) return { claimed: false, task: null, message: 'Задача больше недоступна для взятия. Данные обновлены.' };
+        return { claimed: false, message: 'Не удалось обновить задачу. Повторите проверку.' };
+      }
+    }
+    return { claimed: false, message: 'Нет подтверждения сервера. Повторите запрос: чужое назначение не будет перезаписано.' };
+  }
+}
+
 export function ClaimTask({ task, userId, boardName, onBack, onMine, onChanged }: { task: Task; userId: string; boardName: string; onBack: () => void; onMine: () => void; onChanged: (task: Task | null) => void }) {
   const [current, setCurrent] = useState<Task | null>(task);
   const [message, setMessage] = useState('');
@@ -13,20 +33,9 @@ export function ClaimTask({ task, userId, boardName, onBack, onMine, onChanged }
     if (lock.current) return;
     lock.current = true; setBusy(true); setMessage('');
     try {
-      const saved = await api<Task>(`/api/boards/${task.board_id}/tasks/${task.id}/claim`, { method: 'POST' });
-      setCurrent(saved); onChanged(saved); setMessage('Задача теперь ваша. Статус не изменён.');
-    } catch (error) {
-      if (error instanceof ApiError && [403, 404, 409].includes(error.status)) {
-        try {
-          const latest = error.status === 409 ? await api<Task>(`/api/boards/${task.board_id}/tasks/${task.id}`) : null;
-          setCurrent(latest); onChanged(latest);
-          setMessage(latest?.assignee_user_id === userId ? 'Задача уже ваша. Данные обновлены.' : latest?.assignee_name ? `Задача уже назначена: ${latest.assignee_name}. Данные обновлены.` : 'Задача больше недоступна для взятия. Данные обновлены.');
-        } catch (refreshError) {
-          if (refreshError instanceof ApiError && [403, 404].includes(refreshError.status)) {
-            setCurrent(null); onChanged(null); setMessage('Задача больше недоступна для взятия. Данные обновлены.');
-          } else setMessage('Не удалось обновить задачу. Повторите проверку.');
-        }
-      } else setMessage('Нет подтверждения сервера. Повторите запрос: чужое назначение не будет перезаписано.');
+      const result = await runClaim(() => api<Task>(`/api/boards/${task.board_id}/tasks/${task.id}/claim`, { method: 'POST' }), (status) => status === 409 ? api<Task>(`/api/boards/${task.board_id}/tasks/${task.id}`) : Promise.resolve(null), userId);
+      setMessage(result.message);
+      if (result.task !== undefined) { setCurrent(result.task); onChanged(result.task); }
     } finally { lock.current = false; setBusy(false); }
   };
   return <section className="claim-screen create-screen">

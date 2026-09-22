@@ -13,7 +13,7 @@ import { FoundationFixture } from './visual-fixture';
 import { readStorage, removeStorage, writeStorage } from './environment';
 import { isBacklogTask } from './tasks';
 import { BulkCreate, type BulkDraft } from './bulk-create';
-import { ClaimTask } from './claim-task';
+import { ClaimTask, runClaim } from './claim-task';
 import { PairBoard, PairInvite } from './pair-board';
 import { boardTypeName } from './domain';
 import { EntryGuide, GroupSetup, type EntryPath } from './bot-entry';
@@ -101,6 +101,8 @@ function App() {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkDraft, setBulkDraft] = useState<BulkDraft>();
   const [claimingTask, setClaimingTask] = useState<Task>();
+  const [claimingRow, setClaimingRow] = useState<string>();
+  const backlogClaimLock = useRef(false);
   const [createUncertain, setCreateUncertain] = useState(false);
   const [createReset, setCreateReset] = useState(0);
   const [projectCreatePending, setProjectCreatePending] = useState(false);
@@ -390,6 +392,17 @@ function App() {
     }
     catch (error) { setOpenTask(undefined); setMessage(error instanceof Error ? error.message : 'Ошибка'); }
   };
+  const claimFromBacklog = async (task: Task) => {
+    if (backlogClaimLock.current || board?.status !== 'active') return;
+    backlogClaimLock.current = true;
+    setClaimingRow(task.id); setMessage('');
+    try {
+      const result = await runClaim(() => api<Task>(`/api/boards/${task.board_id}/tasks/${task.id}/claim`, { method: 'POST' }), (status) => status === 409 ? api<Task>(`/api/boards/${task.board_id}/tasks/${task.id}`) : Promise.resolve(null), userId);
+      setMessage(result.message);
+      if (result.claimed) { setBacklog(false); setTaskView('list'); setFilters({ ...defaultFilters, scope: 'mine' }); setTaskReload((value) => value + 1); }
+      else if (board) await loadBoard(board.id);
+    } finally { backlogClaimLock.current = false; setClaimingRow(undefined); }
+  };
   const collaborationAction = async (path: string, options: RequestInit) => {
     if (!openTask) return;
     await api(path, options);
@@ -558,7 +571,7 @@ function App() {
     <h2 className="backlog-heading">На разбор</h2><p className="bulk-context">Без исполнителя · К выполнению</p>
     {taskLoadState === 'loading' ? <Skeleton label="Загрузка общей очереди"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Нет связи. Очередь не обновилась.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : <>
       {!backlogTasks.length && <div className="task-state"><h3>Всё разобрано</h3><p>Здесь появятся новые задачи без исполнителя. Добавьте одну или вставьте готовый список.</p></div>}
-      {backlogTasks.map((task) => <article className="backlog-row" key={task.id}><button className="task-summary" onClick={() => void openCollaboration(task)}><strong>{task.title}</strong><small>{task.deadline || task.deadline_date ? formatTaskDeadline(task) : 'Без срока'}</small></button><button className="secondary" disabled={board?.status !== 'active'} onClick={() => setClaimingTask(task)}>Взять себе</button></article>)}
+      {backlogTasks.map((task) => <article className="backlog-row" key={task.id}><button className="task-summary" onClick={() => void openCollaboration(task)}><strong>{task.title}</strong><div className="task-meta"><span>{task.project_name ?? task.board_name ?? 'Без проекта'}</span>{(task.deadline || task.deadline_date) && <span className={task.overdue ? 'deadline-overdue' : ''}>{formatTaskDeadline(task)}{task.overdue ? ' · Дедлайн прошёл' : ''}</span>}{task.priority === 'urgent' && <Badge tone="urgent">Срочно</Badge>}</div></button><button className="secondary" disabled={board?.status !== 'active' || claimingRow === task.id} onClick={() => void claimFromBacklog(task)}>{claimingRow === task.id ? 'Назначаем…' : 'Взять себе'}</button></article>)}
     </>}
     <p className="bulk-context">Другие статусы — во вкладке «Все».</p>
   </>;
