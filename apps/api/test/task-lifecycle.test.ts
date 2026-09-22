@@ -49,6 +49,14 @@ test('task lifecycle enforces tenant, role and transition rules', async () => {
   assert.equal((await updateTask(db, users[1], boardId, task.id, { status: 'done' }))?.status, 'done', 'assignee closes task');
   assert.equal((await updateTask(db, users[1], boardId, task.id, { status: 'in_progress' }))?.status, 'in_progress', 'assignee reopens task');
 
+  const linked = await createTask(db, users[0], boardId, { title: 'Linked', issueUrl: 'https://github.com/MilevskyYakov/tg-task-kanban/issues/115' });
+  assert.equal(linked?.issue_url, 'https://github.com/MilevskyYakov/tg-task-kanban/issues/115', 'issue url stored on create');
+  assert.equal((await updateTask(db, users[0], boardId, linked.id, { issueUrl: null }))?.issue_url, null, 'issueUrl null clears link');
+  assert.equal((await updateTask(db, users[0], boardId, linked.id, { issueUrl: 'https://github.com/o/r/issues/9' }))?.issue_url, 'https://github.com/o/r/issues/9');
+  await assert.rejects(() => createTask(db, users[0], boardId, { title: 'Bad', issueUrl: 'https://github.com/o/r/pulls/1' } as never),
+    error => String((error as {message?: string}).message).includes('issue_url'), 'DB CHECK rejects non-issue URL');
+  await db.query('DELETE FROM tasks WHERE id = $1', [linked.id]);
+
   const unassigned = await createTask(db, users[0], boardId, { title: 'Unassigned' });
   assert.ok(unassigned);
   assert.equal((await updateTask(db, users[2], boardId, unassigned.id, { status: 'done' }))?.status, 'done', 'ordinary member closes unassigned task');

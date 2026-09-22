@@ -115,6 +115,14 @@ test('MCP real HTTP/SDK and isolated DB: permissions, retries, grants and revoca
     assert.equal(renamed.project.name,'Проект MCP 2'); assert.equal(renamed.project.archived,false);
     const taskOnProject=await call(writer,'create_task',{boardId:shared,requestId:randomUUID(),title:'Проектная задача',projectId:mcpProject.project.id});
     assert.equal(taskOnProject.task.projectId,mcpProject.project.id,'project from Hermes assignables to task');
+    const linked=await call(writer,'create_task',{boardId:shared,requestId:randomUUID(),title:'Связана с issue',issueUrl:'MilevskyYakov/tg-task-kanban#115'});
+    assert.equal(linked.ok,true,JSON.stringify(linked));
+    assert.equal(linked.task.issueUrl,'https://github.com/MilevskyYakov/tg-task-kanban/issues/115','short issue form canonicalizes over MCP');
+    assert.equal((await call(writer,'create_task',{boardId:shared,requestId:randomUUID(),title:'PR link',issueUrl:'https://github.com/o/r/pulls/1'})).error.code,'INVALID_ARGUMENT');
+    const relinked=await call(writer,'update_task',{boardId:shared,taskId:linked.task.id,requestId:randomUUID(),expectedVersion:linked.task.version,changes:{issueUrl:null}});
+    assert.equal(relinked.task.issueUrl,null,'issueUrl null clears link');
+    const setAgain=await call(writer,'update_task',{boardId:shared,taskId:linked.task.id,requestId:randomUUID(),expectedVersion:relinked.task.version,changes:{issueUrl:'o/r#9'}});
+    assert.equal(setAgain.task.issueUrl,'https://github.com/o/r/issues/9');
     const archiveProject=await call(writer,'update_project',{boardId:shared,projectId:mcpProject.project.id,requestId:randomUUID(),archived:true});
     assert.equal(archiveProject.project.archived,true);
     assert.equal((await call(writer,'get_task',{boardId:shared,taskId:taskOnProject.task.id})).projectId,mcpProject.project.id,'archiving project keeps its tasks');

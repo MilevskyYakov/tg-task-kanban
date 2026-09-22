@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { ApiError } from './api';
 import { ActionRow, Avatar, ChoiceRow, EnvironmentStatus, Icon, Sheet, TaskGlyph } from './app-shell';
-import type { Collaboration, Member, Project } from './domain';
+import { issueUrlShort, type Collaboration, type Member, type Project } from './domain';
 import { dateInputToIso, deadlineDraft, deadlinePatch, priorityDisplayName, statusDisplayName, type DeadlineDraft, type Task, type TaskPriority, type TaskStatus } from './tasks';
 import { DeadlineField } from './deadline-field';
 
@@ -17,6 +17,7 @@ export type TaskDraft = {
   due: DeadlineDraft;
   priority: TaskPriority;
   blockerTaskId: string;
+  issueUrl: string;
   waitReason: string;
   waitCheckAt: string;
   future: boolean;
@@ -33,6 +34,7 @@ export function taskDraft(task: Task): TaskDraft {
     due: deadlineDraft(task),
     priority: task.priority,
     blockerTaskId: task.blocked_by_task_id ?? '',
+    issueUrl: task.issue_url ?? '',
     waitReason: task.wait_reason ?? '',
     waitCheckAt: '',
     future: false,
@@ -46,6 +48,8 @@ export function taskPatch(draft: TaskDraft) {
   const waitCheckAt = draft.waitCheckAt ? dateInputToIso(draft.waitCheckAt) : null;
   if (draft.waitCheckAt && !waitCheckAt) throw new Error('Укажите корректную дату проверки');
   if (draft.status === 'waiting' && !draft.blockerTaskId && !draft.waitReason.trim()) throw new Error('Укажите задачу-блокер или внешнюю причину');
+  const issueUrl = draft.issueUrl.trim() || null;
+  if (issueUrl && !/^(https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[1-9][0-9]*|[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#[1-9][0-9]*)$/.test(issueUrl)) throw new Error('Ссылка на issue: https://github.com/owner/repo/issues/N или owner/repo#N');
   return {
     title: draft.title.trim(),
     description: draft.description.trim() || null,
@@ -57,6 +61,7 @@ export function taskPatch(draft: TaskDraft) {
     blockerTaskId: draft.status === 'waiting' ? draft.blockerTaskId || null : null,
     waitReason: draft.status === 'waiting' && !draft.blockerTaskId ? draft.waitReason.trim() : null,
     waitCheckAt: draft.status === 'waiting' ? waitCheckAt : null,
+    issueUrl,
     notifyAssignee: draft.notifyAssignee
   };
 }
@@ -149,6 +154,8 @@ export function TaskDetails({ task, collaboration, projects, members, candidateT
         <ActionRow label="Исполнитель" value={members.find((item) => item.id === draft.assigneeUserId)?.first_name ?? 'Без ответственного'} icon={draft.assigneeUserId ? <Avatar initials={(members.find((item) => item.id === draft.assigneeUserId)?.first_name ?? '—').slice(0, 2).toLocaleUpperCase('ru-RU')} label={`Исполнитель: ${members.find((item) => item.id === draft.assigneeUserId)?.first_name ?? ''}`}/> : <Icon name="assignee"/>} onClick={() => setChoice('assignee')}/>
         <DeadlineField value={draft.due} onChange={(value) => set('due', value)}/>
         <ActionRow label="Приоритет" value={priorityDisplayName[draft.priority]} icon={<Icon name="priority"/>} onClick={() => setChoice('priority')}/>
+        {task.issue_url && <ActionRow label="GitHub issue" value={issueUrlShort(task.issue_url)} icon={<Icon name="attach"/>} onClick={() => { void navigator.clipboard?.writeText(task.issue_url!); }}/>}
+        <label className="detail-issue-input">Ссылка на GitHub issue<input maxLength={500} inputMode="url" placeholder="owner/repo#123 или https://github.com/owner/repo/issues/123" value={draft.issueUrl} onChange={(event) => set('issueUrl', event.target.value)}/>{task.issue_url && <button type="button" className="detail-remove" aria-label="Открыть issue" onClick={() => window.open(task.issue_url, '_blank', 'noopener')}>↗</button>}</label>
       </div>
       {draft.status === 'waiting' && <div className="blocker-fields"><ActionRow label="Задача-блокер" value={candidateTasks.find((item) => item.id === draft.blockerTaskId)?.title ?? 'Внешняя причина'} onClick={() => setChoice('blocker')}/>{!draft.blockerTaskId && <label>Внешняя причина<input maxLength={1000} value={draft.waitReason} onChange={(event) => set('waitReason', event.target.value)}/></label>}<label>Дата проверки<input type="date" value={draft.waitCheckAt} onChange={(event) => set('waitCheckAt', event.target.value)}/></label></div>}
       {task.recurrence_template_id && <label className="checkbox"><input type="checkbox" checked={draft.future} onChange={(event) => set('future', event.target.checked)}/> Изменить этот и будущие повторы</label>}
