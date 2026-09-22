@@ -12,3 +12,5 @@ export type Collaboration = {
   attachments: { id: string; kind: 'url' | 'telegram' | 'file'; url?: string; file_name?: string; mime_type?: string; created_at: string }[];
   timeline: { id: string; action: string; actor_name: string; created_at: string }[];
 };
+
+export const issueUrlShort = (url: string): string => /^https:\/\/github\.com\/([^/]+\/[^/]+)\/issues\/([1-9][0-9]*)$/.exec(url)?.slice(1).join('#') ?? url;

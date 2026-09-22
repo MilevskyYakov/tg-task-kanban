@@ -420,6 +420,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .detail-date-row::after { content: ''; width: 8px; height: 8px; border-right: 2px solid #9aa6b7; border-bottom: 2px solid #9aa6b7; transform: rotate(-45deg); }
 .detail-date-row input { display: block; width: 100%; min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--text); font-weight: 600; }
 .detail-date-row input::-webkit-calendar-picker-indicator { width: 0; margin: 0; padding: 0; opacity: 0; }
+.detail-issue-input { display: grid; grid-template-columns: minmax(0, 1fr) 44px; align-items: center; gap: 6px; border-bottom: 1px solid var(--border); padding: 8px 0; color: var(--text-muted); font-size: .75rem; }
+.detail-issue-input input { min-height: 40px; border: 0; background: transparent; color: var(--text); font-weight: 600; }
+.detail-issue-input .detail-remove { width: 36px; height: 36px; }
 .blocker-fields { display: grid; gap: 8px; margin-top: 12px; padding: 12px; border-radius: var(--radius-sm); background: #eef3f7; }
 .blocker-fields label { display: grid; gap: 5px; color: var(--text-muted); font-size: .75rem; }
 .blocker-fields input { width: 100%; min-height: 44px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-raised); padding: 9px; }

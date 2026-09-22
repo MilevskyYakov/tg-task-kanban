@@ -209,6 +209,7 @@ export type TaskInput = {
   waitReason?: string | null;
   waitCheckAt?: string | null;
   blockerTaskId?: string | null;
+  issueUrl?: string | null;
   notifyAssignee?: boolean;
   confirmIncompleteChecklist?: boolean;
 };
@@ -256,7 +257,7 @@ export async function updateProject(db: Database, userId: string, boardId: strin
 const taskColumns = `t.id, t.board_id, t.project_id, p.name AS project_name, t.creator_user_id, t.assignee_user_id,
   (SELECT status FROM boards WHERE id = t.board_id) AS board_status,
   assignee.first_name AS assignee_name,
-  t.title, t.description, t.status, t.priority, t.deadline, t.wait_reason, t.wait_check_at,
+  t.title, t.description, t.status, t.priority, t.deadline, t.wait_reason, t.wait_check_at, t.issue_url,
   to_char(t.deadline_date, 'YYYY-MM-DD') AS deadline_date, t.deadline_timezone,
   t.blocked_by_task_id, blocker.title AS blocker_title,
   t.recurrence_template_id, t.occurrence_at, t.archived_at, t.created_at, t.updated_at,
@@ -328,9 +329,9 @@ export async function createTask(db: Database, userId: string, boardId: string, 
     if (status === 'waiting' && input.blockerTaskId) await assertBlockerAllowed(client, boardId, input.blockerTaskId);
     const result = await client.query(`INSERT INTO tasks (id, board_id, project_id, creator_user_id, assignee_user_id,
       title, description, status, priority, deadline, wait_reason, wait_check_at, blocked_by_task_id,
-      completed_at, deadline_date, deadline_timezone, create_request_id, create_request_hash)
+      completed_at, deadline_date, deadline_timezone, create_request_id, create_request_hash, issue_url)
     SELECT $3, b.id, $4, $2, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-      CASE WHEN $8 = 'done' THEN now() ELSE NULL END, $14, $15, $16, $17
+      CASE WHEN $8 = 'done' THEN now() ELSE NULL END, $14, $15, $16, $17, $18
     FROM boards b JOIN memberships creator ON creator.board_id = b.id
     LEFT JOIN projects p ON p.id = $4 AND p.board_id = b.id AND p.archived_at IS NULL
     LEFT JOIN memberships assignee ON assignee.board_id = b.id AND assignee.user_id = $5
@@ -340,7 +341,8 @@ export async function createTask(db: Database, userId: string, boardId: string, 
       input.title!, input.description ?? null, input.status ?? 'todo', input.priority ?? 'normal',
       input.deadline ?? null, status === 'waiting' ? input.waitReason?.trim() || null : null,
       status === 'waiting' ? input.waitCheckAt ?? null : null, status === 'waiting' ? input.blockerTaskId ?? null : null,
-      input.deadlineDate ?? null, input.deadlineTimezone ?? null, input.requestId ?? null, input.requestId ? requestHash : null]);
+      input.deadlineDate ?? null, input.deadlineTimezone ?? null, input.requestId ?? null, input.requestId ? requestHash : null,
+      input.issueUrl ?? null]);
     const task = result.rows[0];
     if (!task) { if (!transaction) await client.query('ROLLBACK'); return null; }
     await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, after_data)
@@ -413,13 +415,15 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
     const result = await client.query(`UPDATE tasks SET project_id = $3, assignee_user_id = $4, title = $5,
       description = $6, status = $7, priority = $8, deadline = $9, wait_reason = $10,
       wait_check_at = $11, blocked_by_task_id = $12, deadline_date = $13, deadline_timezone = $14,
+      issue_url = $15,
       completed_at = CASE WHEN $7 = 'done' AND status <> 'done' THEN now() WHEN $7 <> 'done' THEN NULL ELSE completed_at END,
       updated_at = now() WHERE id = $1 AND board_id = $2 RETURNING *, to_char(deadline_date, 'YYYY-MM-DD') AS deadline_date`,
       [taskId, boardId, projectId, assigneeId, input.title ?? task.title, input.description === undefined ? task.description : input.description,
         status, input.priority ?? task.priority, input.deadline === undefined ? (input.deadlineDate ? null : task.deadline) : input.deadline,
         waitReason, waiting ? (input.waitCheckAt === undefined ? task.wait_check_at : input.waitCheckAt) : null, blockerTaskId,
         input.deadlineDate === undefined ? (input.deadline === undefined ? task.deadline_date : null) : input.deadlineDate,
-        input.deadlineTimezone === undefined ? (input.deadline === undefined ? task.deadline_timezone : null) : input.deadlineTimezone]);
+        input.deadlineTimezone === undefined ? (input.deadline === undefined ? task.deadline_timezone : null) : input.deadlineTimezone,
+        input.issueUrl === undefined ? task.issue_url : input.issueUrl]);
     await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, before_data, after_data)
       VALUES ($1, $2, $3, $4, 'updated', $5, $6)`, [randomUUID(), boardId, taskId, userId, task, result.rows[0]]);
     const blockerChanged = task.blocked_by_task_id !== blockerTaskId || task.wait_reason !== waitReason;

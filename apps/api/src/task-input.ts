@@ -1,10 +1,27 @@
 import type { TaskInput } from './db.js';
 import { validTimezone } from './recurrence.js';
 
+export const issueUrlPattern = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/issues\/([1-9][0-9]*)$/;
+// Accepts full https://github.com/owner/repo/issues/N or owner/repo#N; canonicalizes to the full URL. null clears.
+export const canonicalIssueUrl = (value: string | null | undefined): string | null | undefined | 'invalid issue url' => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== 'string') return 'invalid issue url';
+  const match = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)#([1-9][0-9]*)$/.exec(value.trim()) ?? issueUrlPattern.exec(value.trim());
+  if (!match) return 'invalid issue url';
+  const url = `https://github.com/${match[1]}/${match[2]}/issues/${match[3]}`;
+  return url.length > 500 ? 'invalid issue url' : url;
+};
+
 export const taskInput = (body: TaskInput | undefined, partial = false): TaskInput | string => {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'invalid task';
   for (const key of ['title', 'description', 'waitReason', 'deadline', 'deadlineDate', 'deadlineTimezone', 'waitCheckAt', 'projectId', 'assigneeUserId', 'blockerTaskId'] as const) {
     if (body[key] !== undefined && body[key] !== null && typeof body[key] !== 'string') return `invalid ${key}`;
+  }
+  if (body.issueUrl !== undefined) {
+    const issueUrl = canonicalIssueUrl(body.issueUrl);
+    if (issueUrl === 'invalid issue url') return issueUrl;
+    body.issueUrl = issueUrl;
   }
   const title = body?.title?.trim();
   if ((!partial || body?.title !== undefined) && (!title || title.length > 200)) return 'title must contain 1-200 characters';

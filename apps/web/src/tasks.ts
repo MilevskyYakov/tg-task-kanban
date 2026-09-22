@@ -21,6 +21,7 @@ export type Task = {
   deadline_timezone?: string;
   wait_check_at?: string;
   wait_reason?: string;
+  issue_url?: string;
   blocked_by_task_id?: string;
   blocker_title?: string;
   archived_at?: string;

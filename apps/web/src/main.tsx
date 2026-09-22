@@ -672,7 +672,7 @@ function App() {
         project_id: patch.projectId ?? undefined, project_name: detailProjects.find((project) => project.id === patch.projectId)?.name,
         assignee_user_id: patch.assigneeUserId ?? undefined, assignee_name: detailMembers.find((member) => member.id === patch.assigneeUserId)?.first_name,
         deadline: saved.deadline, deadline_date: saved.deadline_date, deadline_timezone: saved.deadline_timezone,
-        overdue: isTaskOverdue(saved), blocked_by_task_id: patch.blockerTaskId ?? undefined, wait_reason: patch.waitReason ?? undefined
+        overdue: isTaskOverdue(saved), blocked_by_task_id: patch.blockerTaskId ?? undefined, wait_reason: patch.waitReason ?? undefined, issue_url: saved.issue_url
       } : item));
       setMessage('Задача обновлена');
     }}
