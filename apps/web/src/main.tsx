@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { flushSync } from 'react-dom';
 import './style.css';
 import { api, ApiError, json } from './api';
 import { ActionRow, AppShell, Avatar, Badge, ChoiceAction, ChoiceRow, CreateScreen, Disclosure, EnvironmentStatus, FieldRow, Icon, SectionHeader, SettingsScreen, Sheet, Skeleton, TaskGlyph, TasksScreen, type IconName } from './app-shell';
@@ -111,7 +112,15 @@ function App() {
   const projectCreateLock = useRef(false);
   const createLock = useRef(false);
   const createRequest = useRef<{ payload: string; id: string } | undefined>(undefined);
+  // Track where the task list was scrolled so «Назад к задачам» restores it (issue #122).
+  const listScrollY = useRef(storedTaskView.scrollY);
+  // Track open generations so a late response cannot overwrite a newer open or a closed card (issue #122).
+  const taskScrollSequence = useRef(0);
   const taskScroll = useRef(storedTaskView.scrollY);
+  // True while the DOM shows the details card instead of the task list; card scrolling and the
+  // scroll clamp after the DOM swap must not overwrite the list snapshot (issue #122).
+  const listSnapshotActive = useRef(true);
+  listSnapshotActive.current = navigation.screen !== 'tasks' || openTask !== undefined;
   const swipeStart = useRef<{x: number; y: number} | null>(null);
   const selectedTaskBoardId = resolveTaskBoard(globalBoardId, boardOverrideId, boards.map((item) => item.id));
   const board = navigation.screen === 'board'
@@ -141,13 +150,17 @@ function App() {
     return true;
   };
   const loadTaskDetails = async (task: Task) => {
+    const openedAt = ++taskScrollSequence.current;
     const [nextCollaboration, nextProjects, nextMembers, nextTasks] = await Promise.all([
       api<Collaboration>(`/api/boards/${task.board_id}/tasks/${task.id}/collaboration`),
       api<{projects: Project[]}>(`/api/boards/${task.board_id}/projects`),
       api<{members: Member[]}>(`/api/boards/${task.board_id}/members`),
       api<{tasks: Task[]}>(`/api/boards/${task.board_id}/tasks`)
     ]);
-    taskScroll.current = window.scrollY;
+    if (openedAt !== taskScrollSequence.current) return;
+    // Deep link: no source list to restore, so the list snapshot stays untouched (issue #122).
+    listScrollY.current = 0;
+    taskScroll.current = 0;
     setOpenTask(task); setCollaboration(nextCollaboration); setDetailProjects(nextProjects.projects); setDetailMembers(nextMembers.members); setDetailTasks(nextTasks.tasks); setMessage('');
   };
 
@@ -267,16 +280,24 @@ function App() {
   }, [navigation.screen]);
   useEffect(() => {
     if (navigation.screen !== 'tasks') return;
+    // Synchronous ref: flips before any scroll event from the DOM swap can fire (issue #122).
+    const paused = () => listSnapshotActive.current;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const save = () => {
-      taskScroll.current = window.scrollY;
+      if (paused()) return;
+      listScrollY.current = window.scrollY;
+      taskScroll.current = listScrollY.current;
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => writeStorage('tasks.viewState', serializeTaskViewState({ view: taskView, grouping, filters, scrollY: taskScroll.current, kanbanStatus })), 100);
+      timer = setTimeout(() => writeStorage('tasks.viewState', serializeTaskViewState({ view: taskView, grouping, filters, scrollY: listScrollY.current, kanbanStatus })), 100);
     };
     window.addEventListener('scroll', save, { passive: true });
-    save();
-    return () => { window.removeEventListener('scroll', save); if (timer) clearTimeout(timer); taskScroll.current = window.scrollY; writeStorage('tasks.viewState', serializeTaskViewState({ view: taskView, grouping, filters, scrollY: taskScroll.current, kanbanStatus })); };
-  }, [navigation.screen, taskView, grouping, filters, kanbanStatus]);
+    return () => {
+      window.removeEventListener('scroll', save);
+      if (timer) clearTimeout(timer);
+      // Cleanup runs after the details card replaced the list; never read the card scroll here (issue #122).
+      writeStorage('tasks.viewState', serializeTaskViewState({ view: taskView, grouping, filters, scrollY: listScrollY.current, kanbanStatus }));
+    };
+  }, [navigation.screen, taskView, grouping, filters, kanbanStatus, openTask]);
 
   useEffect(() => {
     if (!userId || !board) return;
@@ -378,7 +399,24 @@ function App() {
       setMessage(`Статус не изменён: ${error instanceof Error ? error.message : 'Ошибка'}`);
     }
   };
+  // Single close path: restores the list snapshot captured at open time (issue #122).
+  const closeTaskDetails = () => {
+    const restoreTo = listScrollY.current;
+    // Commit the list synchronously so the document is tall again before the browser can
+    // clamp the scroll position of the short page (issue #122).
+    flushSync(() => { setOpenTask(undefined); setCollaboration(undefined); });
+    let attempts = 0;
+    const restore = () => {
+      window.scrollTo({ top: restoreTo });
+      if (Math.abs(window.scrollY - restoreTo) <= 1 || ++attempts > 30) return;
+      requestAnimationFrame(restore);
+    };
+    restore();
+  };
   const openCollaboration = async (task: Task) => {
+    // Capture the list position before the DOM switches to the loading/details screen (issue #122).
+    listScrollY.current = window.scrollY;
+    const openedAt = ++taskScrollSequence.current;
     setOpenTask(task); setCollaboration(undefined); setMessage('');
     try {
       const [nextCollaboration, nextProjects, nextMembers, nextTasks] = await Promise.all([
@@ -387,10 +425,16 @@ function App() {
         api<{members: Member[]}>(`/api/boards/${task.board_id}/members`),
         api<{tasks: Task[]}>(`/api/boards/${task.board_id}/tasks`)
       ]);
-      taskScroll.current = window.scrollY;
+      // The user may have closed the card or opened another one while this request was in flight.
+      if (openedAt !== taskScrollSequence.current) return;
+      taskScroll.current = listScrollY.current;
       setCollaboration(nextCollaboration); setDetailProjects(nextProjects.projects); setDetailMembers(nextMembers.members); setDetailTasks(nextTasks.tasks);
     }
-    catch (error) { setOpenTask(undefined); setMessage(error instanceof Error ? error.message : 'Ошибка'); }
+    catch (error) {
+      if (openedAt !== taskScrollSequence.current) return;
+      closeTaskDetails();
+      setMessage(error instanceof Error ? error.message : 'Ошибка');
+    }
   };
   const claimFromBacklog = async (task: Task) => {
     if (backlogClaimLock.current || board?.status !== 'active') return;
@@ -399,7 +443,7 @@ function App() {
     try {
       const result = await runClaim(() => api<Task>(`/api/boards/${task.board_id}/tasks/${task.id}/claim`, { method: 'POST' }), (status) => status === 409 ? api<Task>(`/api/boards/${task.board_id}/tasks/${task.id}`) : Promise.resolve(null), userId);
       setMessage(result.message);
-      if (result.claimed) { setBacklog(false); setTaskView('list'); setFilters({ ...defaultFilters, scope: 'mine' }); setTaskReload((value) => value + 1); }
+      if (result.claimed) { const saved = result.task; if (saved) setTasks((current) => current.map((item) => item.id === saved.id ? saved : item)); }
       else if (board) await loadBoard(board.id);
     } finally { backlogClaimLock.current = false; setClaimingRow(undefined); }
   };
@@ -669,14 +713,14 @@ function App() {
     onBack={() => { setBoardOverrideId(claimingTask.board_id); setNavigation({ screen: 'tasks' }); setClaimingTask(undefined); setOpenTask(undefined); setCollaboration(undefined); setBacklog(true); }}
     onMine={() => { setBoardOverrideId(claimingTask.board_id); setNavigation({ screen: 'tasks' }); setClaimingTask(undefined); setOpenTask(undefined); setCollaboration(undefined); setBacklog(false); setTaskView('list'); setFilters({ ...defaultFilters, scope: 'mine' }); setTaskReload((value) => value + 1); }}
     onChanged={(changed) => setTasks((current) => changed ? current.map((item) => item.id === changed.id ? changed : item) : current.filter((item) => item.id !== claimingTask.id))}/></AppShell>;
-  if (openTask && !collaboration) return <main className="task-details"><EnvironmentStatus/><button className="back" onClick={() => setOpenTask(undefined)}>← Задачи</button><Skeleton label="Загрузка задачи"/></main>;
+  if (openTask && !collaboration) return <main className="task-details"><EnvironmentStatus/><button className="back" onClick={() => closeTaskDetails()}>← Задачи</button><Skeleton label="Загрузка задачи"/></main>;
   if (openTask && collaboration) return <TaskDetails
     task={openTask} collaboration={collaboration} projects={detailProjects} members={detailMembers}
     readOnly={boards.find((item) => item.id === openTask.board_id)?.status !== 'active'}
     onClaim={boards.find((item) => item.id === openTask.board_id)?.status === 'active' && isBacklogTask(openTask) ? () => setClaimingTask(openTask) : undefined}
     candidateTasks={detailTasks.filter((item) => item.id !== openTask.id && item.status !== 'done' && !item.archived_at)}
     boardName={boards.find((item) => item.id === openTask.board_id)?.name ?? openTask.board_name ?? 'Задача'}
-    onBack={() => { setOpenTask(undefined); setCollaboration(undefined); requestAnimationFrame(() => window.scrollTo({ top: taskScroll.current })); }}
+    onBack={() => closeTaskDetails()}
     onSave={async (patch, future, confirmIncompleteChecklist = false) => {
       const saved = await api<Task>(`/api/boards/${openTask.board_id}/tasks/${openTask.id}${future ? '?scope=future' : ''}`, json('PATCH', { ...patch, confirmIncompleteChecklist }));
       if (board) await loadBoard(board.id);
