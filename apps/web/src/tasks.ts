@@ -149,9 +149,18 @@ export function resolveKanbanSwipe(status: TaskStatus, startX: number, startY: n
 
 export type DeadlineGroup = 'overdue' | 'today' | 'upcoming' | 'none';
 
+// Intl.DateTimeFormat construction dominates input latency on large boards:
+// it was being created per task per filter pass (up to 8 passes per keystroke).
+// Formatters are pure per timeZone, so cache them for the page lifetime.
+const localDateKeyFormatters = new Map<string, Intl.DateTimeFormat>();
+
 function localDateKey(date: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
-    .formatToParts(date).reduce<Record<string, string>>((result, part) => ({ ...result, [part.type]: part.value }), {});
+  let formatter = localDateKeyFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
+    localDateKeyFormatters.set(timeZone, formatter);
+  }
+  const parts = formatter.formatToParts(date).reduce<Record<string, string>>((result, part) => ({ ...result, [part.type]: part.value }), {});
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
@@ -182,24 +191,39 @@ export function filterTasks(tasks: Task[], filters: TaskFilters, userId: string,
   const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
   const nextWeek = new Date(today); nextWeek.setDate(today.getDate() + 7);
   const search = filters.search.trim().toLocaleLowerCase('ru-RU');
+  const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const dateToday = localDateKey(now, localTimeZone);
+  const dateWeek = new Date(`${dateToday}T00:00:00Z`); dateWeek.setUTCDate(dateWeek.getUTCDate() + 7);
+  const dateWeekKey = dateWeek.toISOString().slice(0, 10);
+  const checkProject = filters.project ? (task: Task) => task.project_id === filters.project : null;
+  const checkAssignee = filters.assignee ? (task: Task) => task.assignee_user_id === filters.assignee : null;
+  const checkPriority = filters.priority ? (task: Task) => task.priority === filters.priority : null;
+  const checkSearch = search
+    ? (task: Task) => task.title.toLocaleLowerCase('ru-RU').includes(search) || task.description?.toLocaleLowerCase('ru-RU').includes(search)
+    : null;
+  // Date-only deadlines are compared in the task's own timezone (an "all-day"
+  // task is today when its date has arrived where the task lives), while
+  // timestamp deadlines use the viewer's local day boundaries.
+  const dateOnlyIsToday = (task: Task) => task.deadline_date === localDateKey(now, task.deadline_timezone ?? localTimeZone);
+  const dateOnlyInWeek = (task: Task) => {
+    const taskToday = localDateKey(now, task.deadline_timezone ?? localTimeZone);
+    return task.deadline_date! >= taskToday && task.deadline_date! < localDateKey(nextWeek, task.deadline_timezone ?? localTimeZone);
+  };
+  const checkDeadline = !filters.deadline ? null
+    : filters.deadline === 'none' ? (task: Task) => !task.deadline && !task.deadline_date
+    : filters.deadline === 'overdue' ? (task: Task) => task.overdue
+    : filters.deadline === 'today' ? (task: Task) => (task.deadline_date ? dateOnlyIsToday(task) : task.deadline ? new Date(task.deadline) >= today && new Date(task.deadline) < tomorrow : false)
+    : (task: Task) => (task.deadline_date ? dateOnlyInWeek(task) : task.deadline ? new Date(task.deadline) >= today && new Date(task.deadline) < nextWeek : false);
 
   return tasks.filter((task) => {
-    const deadline = task.deadline ? new Date(task.deadline) : null;
-    const zone = task.deadline_timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const dateToday = localDateKey(now, zone);
-    const dateWeek = new Date(`${dateToday}T00:00:00Z`); dateWeek.setUTCDate(dateWeek.getUTCDate() + 7);
     return (filters.scope === 'all' || task.assignee_user_id === userId)
-      && (!filters.project || task.project_id === filters.project)
-      && (!filters.assignee || task.assignee_user_id === filters.assignee)
+      && (!checkProject || checkProject(task))
+      && (!checkAssignee || checkAssignee(task))
       && (filters.status ? task.status === filters.status : task.status !== 'done')
-      && (!filters.priority || task.priority === filters.priority)
+      && (!checkPriority || checkPriority(task))
       && (!filters.unassigned || !task.assignee_user_id)
-      && (!search || task.title.toLocaleLowerCase('ru-RU').includes(search) || task.description?.toLocaleLowerCase('ru-RU').includes(search))
-      && (!filters.deadline
-        || (filters.deadline === 'none' && !deadline && !task.deadline_date)
-        || (filters.deadline === 'overdue' && task.overdue)
-        || (filters.deadline === 'today' && (task.deadline_date ? task.deadline_date === dateToday : deadline !== null && deadline >= today && deadline < tomorrow))
-        || (filters.deadline === 'week' && (task.deadline_date ? task.deadline_date >= dateToday && task.deadline_date < dateWeek.toISOString().slice(0, 10) : deadline !== null && deadline >= today && deadline < nextWeek)));
+      && (!checkSearch || checkSearch(task))
+      && (!checkDeadline || checkDeadline(task));
   });
 }
 
