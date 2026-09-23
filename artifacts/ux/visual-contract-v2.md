@@ -91,10 +91,12 @@ Roots `bi8Au`, `VzzNo`, `p8fpt` and any unnamed comparisons are historical only.
 
 ### Детали задачи
 
-- Status is an explicit choice sheet, not raw select.
-- Main fields use action rows. Content and Discussion remain separate editorial sections.
+- Status stays an explicit choice sheet with compact checklist progress; title keeps the existing dimensional blue `TaskGlyph` at right, including narrow widths.
+- Project, assignee, deadline, and priority use compact labeled 2×2 property grid with thin dividers; long values wrap without hiding adjacent controls.
+- Description is read-first, fully visible text preserving paragraphs. `Скопировать` and `Изменить` sit by its heading; editing uses a content-height textarea and explicit `Сохранить изменения`.
+- Checklist and Discussion stay separate sections; GitHub issue remains a compact safe-opening link with explicit add/edit controls, not a permanently open input.
 - `•••` contains archive/history/recurrence; destructive action is visually separated.
-- Comment composer stays fixed; keyboard must not cover it.
+- Comment composer stays fixed; keyboard must not cover it or the final save action.
 
 ### Канбан
 

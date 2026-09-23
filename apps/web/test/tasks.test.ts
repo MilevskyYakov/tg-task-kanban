@@ -236,11 +236,13 @@ test('runClaim reloads list on success and keeps the row on claim errors', async
 test('task details patch validates blockers and preserves editable fields', () => {
   const draft = { ...taskDraft(tasks[0]), title: '  Обновлённая задача  ', description: '  Детали  ', due: { mode: 'date' as const, date: '2026-08-20', time: '', timezone: 'Europe/Moscow' }, status: 'waiting' as const, waitReason: '  Ждём клиента  ' };
   assert.deepEqual(taskPatch(draft), {
-    title: 'Обновлённая задача', description: 'Детали', status: 'waiting', projectId: 'p', assigneeUserId: 'u',
+    title: 'Обновлённая задача', description: '  Детали  ', status: 'waiting', projectId: 'p', assigneeUserId: 'u',
     deadline: null, deadlineDate: '2026-08-20', deadlineTimezone: 'Europe/Moscow', priority: 'urgent', blockerTaskId: null, waitReason: 'Ждём клиента', waitCheckAt: null, issueUrl: null, notifyAssignee: false
   });
   assert.throws(() => taskPatch({ ...draft, waitReason: '' }), /задачу-блокер или внешнюю причину/);
   assert.throws(() => taskPatch({ ...draft, due: { ...draft.due, date: '2026-02-30' } }), /корректный срок/);
+  assert.equal(taskPatch({ ...draft, description: '  Первый абзац.\n\nВторой абзац.  ' }).description, '  Первый абзац.\n\nВторой абзац.  ', 'description whitespace and paragraphs survive editing');
+  assert.equal(taskPatch({ ...draft, description: '   ' }).description, null, 'blank description clears the stored value');
   assert.equal(taskPatch({ ...draft, issueUrl: ' MilevskyYakov/tg-task-kanban#115 ' }).issueUrl, 'MilevskyYakov/tg-task-kanban#115', 'short issue form kept as typed');
   assert.equal(taskPatch({ ...draft, issueUrl: 'https://github.com/o/r/issues/9' }).issueUrl, 'https://github.com/o/r/issues/9');
   assert.throws(() => taskPatch({ ...draft, issueUrl: 'https://github.com/o/r/pulls/1' }), /Ссылка на issue/);
