@@ -399,7 +399,7 @@ function App() {
     try {
       const result = await runClaim(() => api<Task>(`/api/boards/${task.board_id}/tasks/${task.id}/claim`, { method: 'POST' }), (status) => status === 409 ? api<Task>(`/api/boards/${task.board_id}/tasks/${task.id}`) : Promise.resolve(null), userId);
       setMessage(result.message);
-      if (result.claimed) { setBacklog(false); setTaskView('list'); setFilters({ ...defaultFilters, scope: 'mine' }); setTaskReload((value) => value + 1); }
+      if (result.claimed) { const saved = result.task; if (saved) setTasks((current) => current.map((item) => item.id === saved.id ? saved : item)); }
       else if (board) await loadBoard(board.id);
     } finally { backlogClaimLock.current = false; setClaimingRow(undefined); }
   };
