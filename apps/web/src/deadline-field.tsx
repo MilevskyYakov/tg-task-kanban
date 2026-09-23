@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ActionRow, ChoiceRow, Icon, Sheet } from './app-shell';
 import { deadlineModeName, deadlinePatch, formatTaskDeadline, type DeadlineDraft } from './tasks';
 
-export function DeadlineField({ value, onChange, disabled = false }: { value: DeadlineDraft; onChange: (value: DeadlineDraft) => void; disabled?: boolean }) {
+export function DeadlineField({ value, onChange, disabled = false, showIcon = true }: { value: DeadlineDraft; onChange: (value: DeadlineDraft) => void; disabled?: boolean; showIcon?: boolean }) {
   const [draft, setDraft] = useState<DeadlineDraft>();
   const [error, setError] = useState('');
   const label = value.mode === 'none' ? 'Без срока' : formatTaskDeadline({
@@ -10,7 +10,7 @@ export function DeadlineField({ value, onChange, disabled = false }: { value: De
     deadline: value.mode === 'datetime' ? deadlinePatch(value).deadline ?? undefined : undefined
   });
   return <>
-    <ActionRow label="Срок" value={label} icon={<Icon name="calendar"/>} disabled={disabled} onClick={() => { setDraft(value); setError(''); }}/>
+    <ActionRow label="Срок" value={label} icon={showIcon ? <Icon name="calendar"/> : undefined} disabled={disabled} onClick={() => { setDraft(value); setError(''); }}/>
     {draft && <Sheet className="task-sheet deadline-sheet" title="Срок задачи" onClose={() => setDraft(undefined)}>
       <div className="choice-list" role="radiogroup" aria-label="Режим срока">{(Object.keys(deadlineModeName) as DeadlineDraft['mode'][]).map((mode) => <ChoiceRow key={mode} label={deadlineModeName[mode]} selected={draft.mode === mode} onClick={() => { setDraft({ ...draft, mode }); setError(''); }}/>)}</div>
       {draft.mode !== 'none' && <div className="deadline-inputs">

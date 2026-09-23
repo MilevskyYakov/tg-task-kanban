@@ -93,7 +93,7 @@ test('create keeps input after failed request', async ({ page }) => {
   const title = page.getByRole('textbox', { name: 'Что нужно сделать?' });
   await title.fill('Не терять этот текст');
   await page.getByRole('button', { name: 'Создать задачу' }).click();
-  await expect(page.getByRole('status')).toContainText('Не удалось создать задачу');
+  await expect(page.getByRole('status').filter({ hasText: 'Не удалось создать задачу' })).toContainText('Не удалось создать задачу');
   await expect(title).toHaveValue('Не терять этот текст');
 });
 
@@ -146,7 +146,7 @@ for (const width of [390, 320]) {
     await page.screenshot({ path: `${evidence}/issue77-status-${width}.png` });
     await page.getByRole('button', { name: 'Применить' }).click();
     await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();
-    await expect(page.getByRole('status')).toContainText('Задача создана');
+    await expect(page.getByRole('status').filter({ hasText: 'Задача создана' })).toContainText('Задача создана');
     expect(requests).toHaveLength(1);
     expect(requests[0]).toMatchObject({ deadline: null, deadlineDate: '2026-09-18', status: 'in_progress' });
     expect(requests[0].deadlineTimezone).toBeTruthy();
@@ -177,7 +177,7 @@ for (const width of [390, 320]) {
     await page.screenshot({ path: `${evidence}/issue77-blocker-task-${width}.png` });
     await page.getByRole('button', { name: 'Подтвердить блокер' }).click();
     await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();
-    await expect(page.getByRole('status')).toContainText('Задача создана');
+    await expect(page.getByRole('status').filter({ hasText: 'Задача создана' })).toContainText('Задача создана');
     expect(requests[0]).toMatchObject({ status: 'waiting', blockerTaskId: 'blocker-1', waitReason: null, deadline: null, deadlineDate: null });
     await page.getByRole('button', { name: 'Создать задачу' }).click();
     await page.getByRole('textbox', { name: 'Что нужно сделать?' }).fill('Перенести завершённую задачу');
@@ -187,7 +187,7 @@ for (const width of [390, 320]) {
     await page.getByRole('radio', { name: 'Готово' }).click();
     await page.getByRole('button', { name: 'Применить' }).click();
     await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();
-    await expect(page.getByRole('status')).toContainText('Задача создана');
+    await expect(page.getByRole('status').filter({ hasText: 'Задача создана' })).toContainText('Задача создана');
     expect(requests).toHaveLength(2);
     expect(requests[1]).toMatchObject({ status: 'done', assigneeUserId: 'user-2' });
     await page.screenshot({ path: `${evidence}/issue105-done-allowed-${width}.png` });
@@ -204,7 +204,7 @@ test('create does not change task filters after submit', async ({ page }) => {
   await page.getByRole('button', { name: /Проект.*Без проекта/ }).click();
   await page.getByRole('radio', { name: 'Task Kanban' }).click();
   await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('Задача создана');
+  await expect(page.getByRole('status').filter({ hasText: 'Задача создана' })).toContainText('Задача создана');
   expect(requests[0]).toMatchObject({ projectId: 'project-1', status: 'todo' });
   await expect(page.getByRole('button', { name: /Задача в проекте/ })).toBeVisible();
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('tasks.viewState') ?? '{}'));
@@ -235,7 +235,7 @@ test('pending create locks input and reuses request id after a failed response',
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: `${evidence}/issue77-create-pending-390.png` });
   release();
-  await expect(page.getByRole('status')).toContainText('Не удалось подтвердить сохранение');
+  await expect(page.getByRole('status').filter({ hasText: 'Не удалось подтвердить сохранение' })).toContainText('Не удалось подтвердить сохранение');
   await expect(title).toHaveValue('Сохранить один раз');
   await page.screenshot({ path: `${evidence}/issue77-create-error-390.png` });
   await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();

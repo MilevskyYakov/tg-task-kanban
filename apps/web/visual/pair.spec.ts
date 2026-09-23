@@ -161,7 +161,7 @@ test('pair archived member has read-only task details and no owner controls', as
   await page.getByRole('button', { name: /Проверить макет/ }).click();
   await expect(page.getByText('История сохранена')).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Название задачи', exact: true })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Сохранить изменения' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Сохранить изменения' })).toHaveCount(0);
   await expect(page.getByRole('textbox', { name: 'Комментарий', exact: true })).toHaveCount(0);
 });
 

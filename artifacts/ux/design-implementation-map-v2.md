@@ -57,15 +57,15 @@ Foundation зависит от #60 и final closeout #52. Экранные Issue
 
 **Acceptance:** required validation unchanged; failed request preserves input; context board behavior unchanged; 320/390 screenshots match; keyboard does not cover active field/submit; checks pass.
 
-## Issue D — Довести детали и collaboration до `irWr4`
+## Issue D — Детали и collaboration (`irWr4`, уточнено Issue #124)
 
-**Destination:** details reproduce root without browser-default selectors.
+**Destination:** details keep approved shell and glyph while prioritizing full read-first description and compact properties.
 
-**Scope:** top bar/title/status/progress; Main action rows and sheets; Content/checklist; Discussion/attachments; fixed composer; overflow menu; loading/error/blocker/completed states.
+**Scope:** top bar/title/TaskGlyph/status/progress; labeled 2×2 project/assignee/deadline/priority grid; full description with copy and explicit edit/save; compact GitHub issue link and editing; separate checklist and Discussion/attachments; fixed composer; overflow menu; loading/error/blocker/completed states.
 
 **Non-goals:** collaboration API, blocker model, attachment transport.
 
-**Acceptance:** all current actions remain reachable; status/fields use sheets; destructive action separated; failed action keeps screen/input; back restores context; keyboard and 320/390 evidence pass.
+**Acceptance:** all current actions remain reachable; status/properties use accessible controls; description preserves full paragraphs and supports clipboard success/failure, growing editor, server-backed save/reopen, and failed-save recovery; destructive action separated; back restores context; keyboard and 320/390 evidence pass.
 
 ## Issue E — Довести мобильный канбан до `hOXuP`
 

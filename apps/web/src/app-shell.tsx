@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type Key
 import { useTelegramEnvironment } from './environment';
 import { isSettingsNavigation, type NavigationState } from './navigation';
 
-export type IconName = 'tasks' | 'plus' | 'settings' | 'close' | 'chevron' | 'alert' | 'sun' | 'clock' | 'noDeadline' | 'project' | 'assignee' | 'calendar' | 'board' | 'sliders' | 'back' | 'more' | 'attach' | 'send' | 'priority' | 'workspace' | 'automation' | 'image';
+export type IconName = 'tasks' | 'plus' | 'settings' | 'close' | 'chevron' | 'alert' | 'sun' | 'clock' | 'noDeadline' | 'project' | 'assignee' | 'calendar' | 'board' | 'sliders' | 'back' | 'more' | 'attach' | 'send' | 'priority' | 'workspace' | 'automation' | 'image' | 'copy' | 'edit' | 'external';
 
 export function Icon({ name }: { name: IconName }) {
   const paths = {
@@ -27,7 +27,10 @@ export function Icon({ name }: { name: IconName }) {
     priority: <><path d="M5 21V4"/><path d="M5 5h11l-2 4 2 4H5"/></>,
     workspace: <><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M9 10h12"/></>,
     automation: <><path d="M20 7h-5V2M4 17h5v5"/><path d="M18.4 18.4A9 9 0 0 1 4.6 15M5.6 5.6A9 9 0 0 1 19.4 9"/></>,
-    image: <><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-4.5-4.5L7 20"/></>
+    image: <><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-4.5-4.5L7 20"/></>,
+    copy: <><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></>,
+    edit: <><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L9 17l-4 1 1-4Z"/></>,
+    external: <><path d="M14 3h7v7"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></>
   };
   return <svg className="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
