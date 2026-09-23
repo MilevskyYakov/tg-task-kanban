@@ -186,6 +186,7 @@ for (const width of [390, 320]) {
     await page.getByRole('button', { name: /Статус.*К выполнению/ }).click();
     await page.getByRole('radio', { name: 'Готово' }).click();
     await page.getByRole('button', { name: 'Применить' }).click();
+    await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();
     await expect(page.getByRole('status')).toContainText('Задача создана');
     expect(requests).toHaveLength(2);
     expect(requests[1]).toMatchObject({ status: 'done', assigneeUserId: 'user-2' });
