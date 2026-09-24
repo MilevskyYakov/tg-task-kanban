@@ -29,6 +29,8 @@ export type Task = {
   checklist_completed?: number;
   overdue: boolean;
   wait_check_due: boolean;
+  // Server-side revision for optimistic concurrency (autosave conflict detection, issue #129).
+  version?: string;
 };
 
 export type TaskFilters = {

@@ -5,7 +5,7 @@ import Fastify from 'fastify';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateInitData } from './auth.js';
-import { activateChatBoard, addChecklistItem, addTaskAttachment, addTaskComment, addTaskFileAttachment, boardForUser, boardMembers, boardsForUser, claimAssignmentNotification, connectChatBoard, createInvite, createProject, createRecurrence, createTask, deleteChecklistItem, finishAssignmentNotification, freezeChatBoard, incompleteChecklistCount, login, migrateChatBoard, pendingNotificationForTask, ProjectConflictError, projectsForBoard, recurrencesForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskAttachmentFile, taskCollaboration, TaskActionError, TaskConflictError, taskFilterState, taskForBoard, tasksForAssignee, tasksForBoard, updateChecklistItem, updateProject, updateRecurrence, updateTask, updateTaskAndFuture, type AttachmentInput, type Database, type RecurrenceInput, type TaskInput } from './db.js';
+import { activateChatBoard, addChecklistItem, addTaskAttachment, addTaskComment, addTaskFileAttachment, boardForUser, boardMembers, boardsForUser, claimAssignmentNotification, connectChatBoard, createInvite, createProject, createRecurrence, createTask, deleteChecklistItem, finishAssignmentNotification, freezeChatBoard, incompleteChecklistCount, login, migrateChatBoard, pendingNotificationForTask, ProjectConflictError, projectsForBoard, recurrencesForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskAttachmentFile, taskCollaboration, TaskActionError, TaskConflictError, taskFilterState, taskForBoard, tasksForAssignee, tasksForBoard, updateChecklistItem, updateProject, updateRecurrence, updateTask, updateTaskAndFuture, TaskVersionConflictError, type AttachmentInput, type Database, type RecurrenceInput, type TaskInput } from './db.js';
 import type { Config } from './config.js';
 import { isChatAdmin, telegramCall } from './telegram.js';
 import { renderPublication, schedulesForBoard, updateSchedule, validTimezone as validPublicationTimezone, type PublicationKind, type PublicationSchedule } from './publications.js';
@@ -27,6 +27,7 @@ type ChatMemberUpdate = {
 type TelegramUpdate = { update_id: number; my_chat_member?: ChatMemberUpdate; message?: { message_id: number; chat: { id: number; type: string }; text?: string; migrate_to_chat_id?: number; migrate_from_chat_id?: number } };
 type TaskPatchInput = TaskInput & { confirmIncompleteChecklist?: boolean };
 const present = (status: string) => status === 'member' || status === 'administrator';
+const revisionPattern = /^[1-9]\d*$/;
 
 export function buildApp(config: Config, db: Database) {
   const app = Fastify({ logger: { serializers: { req: (request) => ({ method: request.method, url: request.url?.split('?')[0].replace(/^\/mcp.*$/, '/mcp').replace(/^(\/api\/mcp-connections)\/.*$/, '$1/:id') }) }, redact: ['req.headers.authorization', 'req.headers.cookie', 'req.headers.x-telegram-bot-api-secret-token', 'body.initData'] } });
@@ -293,13 +294,23 @@ export function buildApp(config: Config, db: Database) {
   app.patch<{Params: {id: string; taskId: string}, Querystring: {scope?: string}, Body: TaskPatchInput}>('/api/boards/:id/tasks/:taskId', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     const input = taskInput(request.body, true); if (typeof input === 'string') return reply.code(400).send({ error: input });
+    if (request.body?.expectedVersion !== undefined && (typeof request.body.expectedVersion !== 'string' || !revisionPattern.test(request.body.expectedVersion))) {
+      return reply.code(400).send({ error: 'invalid expected version' });
+    }
+    const patch = { ...input, expectedVersion: request.body?.expectedVersion };
 
     let task;
     try {
       task = request.query.scope === 'future'
-        ? await updateTaskAndFuture(db, id, request.params.id, request.params.taskId, input)
-        : await updateTask(db, id, request.params.id, request.params.taskId, input);
+        ? await updateTaskAndFuture(db, id, request.params.id, request.params.taskId, patch)
+        : await updateTask(db, id, request.params.id, request.params.taskId, patch);
     } catch (error) {
+      if (error instanceof TaskVersionConflictError) {
+        // Return the current server state so the client can show both versions and choose
+        // instead of silently overwriting (issue #129).
+        const current = await taskForBoard(db, id, request.params.id, request.params.taskId);
+        return reply.code(409).send({ error: 'version conflict', expectedVersion: error.expectedVersion, task: current });
+      }
       if (error instanceof ChecklistConfirmationError) return reply.code(409).send({ error: error.message, incompleteChecklist: error.count });
       if (error instanceof TaskConflictError) return reply.code(409).send({ error: error.message });
       if (error instanceof TaskActionError) return reply.code(403).send({ error: error.message });

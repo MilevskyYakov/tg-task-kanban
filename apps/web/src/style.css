@@ -462,6 +462,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .detail-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 8px; }
 .detail-add input { min-width: 0; min-height: 44px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-raised); padding: 10px; }
 .detail-save { width: 100%; min-height: 48px; margin-top: 18px; }
+.detail-save-state { min-height: 1.2em; margin: 4px 0 0; color: var(--text-muted); font-size: 0.85rem; }
+.detail-save-state[data-state="saved"] { color: #1a7f4b; }
+.detail-save-state[data-state="error"] { color: var(--coral, #c0392b); }
 
 .detail-discussion article { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 12px; margin: 0; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .detail-discussion article small { display: block; }

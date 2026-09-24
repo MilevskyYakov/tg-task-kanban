@@ -233,20 +233,40 @@ test('runClaim reloads list on success and keeps the row on claim errors', async
   assert.equal(network.task, undefined);
 });
 
-test('task details patch validates blockers and preserves editable fields', () => {
-  const draft = { ...taskDraft(tasks[0]), title: '  Обновлённая задача  ', description: '  Детали  ', due: { mode: 'date' as const, date: '2026-08-20', time: '', timezone: 'Europe/Moscow' }, status: 'waiting' as const, waitReason: '  Ждём клиента  ' };
-  assert.deepEqual(taskPatch(draft), {
-    title: 'Обновлённая задача', description: '  Детали  ', status: 'waiting', projectId: 'p', assigneeUserId: 'u',
-    deadline: null, deadlineDate: '2026-08-20', deadlineTimezone: 'Europe/Moscow', priority: 'urgent', blockerTaskId: null, waitReason: 'Ждём клиента', waitCheckAt: null, issueUrl: null, notifyAssignee: false
-  });
-  assert.throws(() => taskPatch({ ...draft, waitReason: '' }), /задачу-блокер или внешнюю причину/);
-  assert.throws(() => taskPatch({ ...draft, due: { ...draft.due, date: '2026-02-30' } }), /корректный срок/);
-  assert.equal(taskPatch({ ...draft, description: '  Первый абзац.\n\nВторой абзац.  ' }).description, '  Первый абзац.\n\nВторой абзац.  ', 'description whitespace and paragraphs survive editing');
-  assert.equal(taskPatch({ ...draft, description: '   ' }).description, null, 'blank description clears the stored value');
-  assert.equal(taskPatch({ ...draft, issueUrl: ' MilevskyYakov/tg-task-kanban#115 ' }).issueUrl, 'MilevskyYakov/tg-task-kanban#115', 'short issue form kept as typed');
-  assert.equal(taskPatch({ ...draft, issueUrl: 'https://github.com/o/r/issues/9' }).issueUrl, 'https://github.com/o/r/issues/9');
-  assert.throws(() => taskPatch({ ...draft, issueUrl: 'https://github.com/o/r/pulls/1' }), /Ссылка на issue/);
-  assert.throws(() => taskPatch({ ...draft, issueUrl: 'gitlab.com/o/r/issues/1' }), /Ссылка на issue/);
+test('task details patch sends only the changed fields and keeps blocker groups consistent', () => {
+  const base = { ...taskDraft(tasks[0]), status: 'waiting' as const, waitReason: 'Ждём клиента', waitCheckAt: '2026-09-30' };
+  // Nothing changed: empty patch, no request would be sent.
+  assert.deepEqual(taskPatch(base, base), {});
+  // Title edit of a waiting task must not clear waitCheckAt/waitReason (issue #129 root fix).
+  const titleOnly = taskPatch({ ...base, title: 'Новое название' }, base);
+  assert.deepEqual(titleOnly, { title: 'Новое название' });
+  // Description-only edit leaves status/assignee/deadline untouched.
+  const descriptionOnly = taskPatch({ ...base, description: 'Детали' }, base);
+  assert.deepEqual(descriptionOnly, { description: 'Детали' });
+  // Blocker group is edited as one consistent unit.
+  const newCheck = taskPatch({ ...base, waitCheckAt: '2026-10-05' }, base);
+  assert.deepEqual(newCheck, { blockerTaskId: null, waitReason: 'Ждём клиента', waitCheckAt: dateInputToIso('2026-10-05') });
+  // Leaving waiting clears the group together with the status change.
+  const left = taskPatch({ ...base, status: 'in_progress' }, base);
+  assert.deepEqual(left, { status: 'in_progress', blockerTaskId: null, waitReason: null, waitCheckAt: null });
+  // Assignee change carries the one-time notification choice.
+  const reassigned = taskPatch({ ...base, assigneeUserId: 'u2', notifyAssignee: true }, base);
+  assert.deepEqual(reassigned, { assigneeUserId: 'u2', notifyAssignee: true });
+  // Deadline edit moves all three deadline fields together.
+  const moved = taskPatch({ ...base, due: { mode: 'date' as const, date: '2026-11-01', time: '', timezone: 'Europe/Moscow' } }, base);
+  assert.deepEqual(moved, { deadline: null, deadlineDate: '2026-11-01', deadlineTimezone: 'Europe/Moscow' });
+  // Incomplete values stay a local draft: invalid title throws, invalid diff not scheduled.
+  assert.throws(() => taskPatch({ ...base, title: '   ' }, base), /Название задачи обязательно/);
+  assert.throws(() => taskPatch({ ...base, waitReason: '' }, base), /задачу-блокер или внешнюю причину/);
+  assert.throws(() => taskPatch({ ...base, due: { ...base.due, date: '2026-02-30' } }, base), /корректный срок/);
+  assert.equal(taskPatch({ ...base, description: '  Первый абзац.\n\nВторой абзац.  ' }, base).description, '  Первый абзац.\n\nВторой абзац.  ', 'description whitespace and paragraphs survive editing');
+  assert.equal(taskPatch({ ...base, description: '   ' }, base).description, null, 'blank description clears the stored value');
+  assert.equal(taskPatch({ ...base, issueUrl: ' MilevskyYakov/tg-task-kanban#115 ' }, base).issueUrl, 'MilevskyYakov/tg-task-kanban#115', 'short issue form kept as typed');
+  assert.equal(taskPatch({ ...base, issueUrl: 'https://github.com/o/r/issues/9' }, base).issueUrl, 'https://github.com/o/r/issues/9');
+  assert.throws(() => taskPatch({ ...base, issueUrl: 'https://github.com/o/r/pulls/1' }, base), /Ссылка на issue/);
+  assert.throws(() => taskPatch({ ...base, issueUrl: 'gitlab.com/o/r/issues/1' }, base), /Ссылка на issue/);
+  // Clearing the link sends an explicit null, not a missing field.
+  assert.deepEqual(taskPatch({ ...base, issueUrl: '' }, { ...base, issueUrl: 'https://github.com/o/r/issues/9' }), { issueUrl: null });
 });
 
 test('deadline modes round-trip without changing old timestamps, DST folds or date-only zones', () => {
@@ -255,7 +275,10 @@ test('deadline modes round-trip without changing old timestamps, DST folds or da
     for (const zone of ['UTC', 'Europe/Moscow', 'America/New_York', 'Pacific/Honolulu']) {
       process.env.TZ = zone;
       for (const deadline of ['2026-08-14T00:00:00.000Z', '2026-08-14T18:30:47.123Z', '2026-11-01T06:30:00.000Z']) {
-        assert.equal(taskPatch(taskDraft({ ...tasks[0], deadline })).deadline, deadline);
+        const baseWithDeadline = taskDraft({ ...tasks[0], deadline });
+        const cleared = taskPatch({ ...baseWithDeadline, due: { ...baseWithDeadline.due, mode: 'none' as const, date: '', time: '' } }, baseWithDeadline);
+        assert.equal(cleared.deadline, null);
+        assert.deepEqual(taskPatch(baseWithDeadline, taskDraft({ ...tasks[0], deadline: undefined })), deadlinePatch(baseWithDeadline.due));
       }
       const dateTask = { ...tasks[0], deadline: undefined, deadline_date: '2026-03-08', deadline_timezone: 'America/New_York' };
       assert.deepEqual(deadlinePatch(deadlineDraft(dateTask)), { deadline: null, deadlineDate: '2026-03-08', deadlineTimezone: 'America/New_York' });

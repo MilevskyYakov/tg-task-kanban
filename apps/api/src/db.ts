@@ -10,6 +10,9 @@ export class TaskConflictError extends Error {}
 export class ChecklistConfirmationError extends TaskConflictError {
   constructor(readonly count: number) { super('incomplete checklist confirmation required'); }
 }
+export class TaskVersionConflictError extends TaskConflictError {
+  constructor(readonly expectedVersion: string) { super('version conflict'); }
+}
 export class TaskActionError extends Error {}
 export class ProjectConflictError extends Error {}
 const tokenHash = (token: string, secret: string) => createHash('sha256').update(`${secret}:${token}`).digest('hex');
@@ -212,6 +215,9 @@ export type TaskInput = {
   issueUrl?: string | null;
   notifyAssignee?: boolean;
   confirmIncompleteChecklist?: boolean;
+  // Optimistic concurrency guard for PATCH: if set and the stored revision differs, the
+  // update is rejected with TaskVersionConflictError inside the write transaction.
+  expectedVersion?: string;
 };
 
 export type RecurrenceInput = TaskInput & RecurrenceRule;
@@ -261,6 +267,7 @@ const taskColumns = `t.id, t.board_id, t.project_id, p.name AS project_name, t.c
   to_char(t.deadline_date, 'YYYY-MM-DD') AS deadline_date, t.deadline_timezone,
   t.blocked_by_task_id, blocker.title AS blocker_title,
   t.recurrence_template_id, t.occurrence_at, t.archived_at, t.created_at, t.updated_at,
+  t.revision::text AS version,
   (SELECT count(*)::int FROM task_checklist_items ci WHERE ci.task_id = t.id) AS checklist_total,
   (SELECT count(*)::int FROM task_checklist_items ci WHERE ci.task_id = t.id AND ci.completed_at IS NOT NULL) AS checklist_completed,
   task_deadline_overdue(t.status, t.deadline, t.deadline_date, t.deadline_timezone, now()) AS overdue,
@@ -337,7 +344,7 @@ export async function createTask(db: Database, userId: string, boardId: string, 
     LEFT JOIN memberships assignee ON assignee.board_id = b.id AND assignee.user_id = $5
     WHERE b.id = $1 AND b.status = 'active' AND creator.user_id = $2
       AND ($4::uuid IS NULL OR p.id IS NOT NULL) AND ($5::bigint IS NULL OR assignee.user_id IS NOT NULL)
-    RETURNING *, to_char(deadline_date, 'YYYY-MM-DD') AS deadline_date`, [boardId, userId, randomUUID(), input.projectId ?? null, input.assigneeUserId ?? null,
+    RETURNING *, to_char(deadline_date, 'YYYY-MM-DD') AS deadline_date, revision::text AS version`, [boardId, userId, randomUUID(), input.projectId ?? null, input.assigneeUserId ?? null,
       input.title!, input.description ?? null, input.status ?? 'todo', input.priority ?? 'normal',
       input.deadline ?? null, status === 'waiting' ? input.waitReason?.trim() || null : null,
       status === 'waiting' ? input.waitCheckAt ?? null : null, status === 'waiting' ? input.blockerTaskId ?? null : null,
@@ -388,6 +395,12 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
       WHERE t.id = $1 AND t.board_id = $2 AND t.archived_at IS NULL AND b.status = 'active' FOR UPDATE`, [taskId, boardId, userId]);
     const task = current.rows[0];
     if (!task) { if (!transaction) await client.query('ROLLBACK'); return null; }
+    // Version check runs inside the same FOR UPDATE transaction as the write, so a parallel
+    // change between the caller's read and this write is detected atomically (issue #129).
+    if (input.expectedVersion !== undefined && String(task.revision) !== input.expectedVersion) {
+      if (!transaction) await client.query('ROLLBACK');
+      throw new TaskVersionConflictError(input.expectedVersion);
+    }
     const status = input.status ?? task.status;
     if (input.status === 'done' && input.confirmIncompleteChecklist !== true) {
       const incomplete = await client.query<{count: number}>('SELECT count(*)::int AS count FROM task_checklist_items WHERE task_id = $1 AND completed_at IS NULL', [taskId]);
@@ -417,7 +430,7 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
       wait_check_at = $11, blocked_by_task_id = $12, deadline_date = $13, deadline_timezone = $14,
       issue_url = $15,
       completed_at = CASE WHEN $7 = 'done' AND status <> 'done' THEN now() WHEN $7 <> 'done' THEN NULL ELSE completed_at END,
-      updated_at = now() WHERE id = $1 AND board_id = $2 RETURNING *, to_char(deadline_date, 'YYYY-MM-DD') AS deadline_date`,
+      updated_at = now() WHERE id = $1 AND board_id = $2 RETURNING *, to_char(deadline_date, 'YYYY-MM-DD') AS deadline_date, revision::text AS version`,
       [taskId, boardId, projectId, assigneeId, input.title ?? task.title, input.description === undefined ? task.description : input.description,
         status, input.priority ?? task.priority, input.deadline === undefined ? (input.deadlineDate ? null : task.deadline) : input.deadline,
         waitReason, waiting ? (input.waitCheckAt === undefined ? task.wait_check_at : input.waitCheckAt) : null, blockerTaskId,
@@ -709,7 +722,10 @@ export async function updateTaskAndFuture(db: Database, userId: string, boardId:
   const task = await updateTask(db, userId, boardId, taskId, input);
   if (!task || !task.recurrence_template_id) return task;
   const template = await updateRecurrence(db, userId, boardId, task.recurrence_template_id, input);
-  return template ? task : null;
+  // Partial failure must not look like success: the instance is changed but the series is not,
+  // so surface the mismatch instead of a plain task object (issue #129).
+  if (!template) return { ...task, seriesUpdateFailed: true };
+  return task;
 }
 
 export async function runRecurrenceScheduler(db: Database, now = new Date()) {
