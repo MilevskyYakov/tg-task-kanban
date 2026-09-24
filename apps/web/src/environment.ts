@@ -25,9 +25,11 @@ export function readStorage(key: string): string | null {
   catch { return null; }
 }
 
-export function writeStorage(key: string, value: string): void {
-  try { localStorage.setItem(key, value); }
-  catch { /* Storage may be unavailable inside a Telegram WebView. */ }
+// Returns false when the value could not be persisted (quota/full/WebView storage
+// unavailable) so callers can warn instead of promising a saved draft (issue #129).
+export function writeStorage(key: string, value: string): boolean {
+  try { localStorage.setItem(key, value); return true; }
+  catch { return false; }
 }
 
 export function removeStorage(key: string): void {

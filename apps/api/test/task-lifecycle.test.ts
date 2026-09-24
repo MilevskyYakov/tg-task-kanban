@@ -37,6 +37,14 @@ test('task lifecycle enforces tenant, role and transition rules', async () => {
   assert.equal(await saveTaskFilterState(db, users[3], boardId, { status: 'done' }), null, 'outsider cannot save filter state');
 
   assert.equal((await updateTask(db, users[2], boardId, task.id, { title: 'Renamed by member' }))?.title, 'Renamed by member', 'any member edits task fields');
+  // Optimistic concurrency: expectedVersion guards against a lost update between reads (issue #129).
+  const currentVersion = (await tasksForBoard(db, users[2], boardId)).find((item) => item.id === task.id)!.version!;
+  await assert.rejects(
+    () => updateTask(db, users[2], boardId, task.id, { title: 'Stale write', expectedVersion: '1' }),
+    (error: unknown) => error instanceof Error && (error as {expectedVersion?: string}).expectedVersion === '1' && error.message === 'version conflict',
+    'stale expectedVersion is rejected atomically'
+  );
+  assert.equal((await updateTask(db, users[2], boardId, task.id, { title: 'Concurrent-safe rename', expectedVersion: currentVersion }))?.title, 'Concurrent-safe rename', 'matching expectedVersion applies');
   const auditRename = (await db.query(`SELECT before_data, after_data FROM task_audit_events WHERE task_id = $1 AND action = 'updated' ORDER BY created_at, id LIMIT 1`, [task.id])).rows[0];
   assert.equal(auditRename.before_data.title, 'Ship', 'audit keeps before-state');
   assert.equal(auditRename.after_data.title, 'Renamed by member', 'audit keeps after-state');

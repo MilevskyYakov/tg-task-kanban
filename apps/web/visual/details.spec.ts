@@ -8,7 +8,7 @@ const task = {
   id: 'task-1', board_id: board.id, board_name: board.name, title: 'Подготовить UX-спецификацию',
   description: 'Зафиксировать структуру экранов и состояния перед разработкой.\n\nОписать создание задачи, просмотр карточки и редактирование описания. Для каждого сценария показать основной экран, пустое состояние и ошибку.\n\nСохранить привычную навигацию и сделать описание главным содержанием карточки.', project_id: 'project-1', project_name: 'Task Kanban',
   assignee_user_id: 'user-2', assignee_name: 'Данил', creator_user_id: 'user-1', status: 'in_progress', priority: 'normal',
-  deadline: '2026-08-15T18:00:00Z', overdue: false, wait_check_due: false, checklist_completed: 2, checklist_total: 4, issue_url: ''
+  deadline: '2026-08-15T18:00:00Z', overdue: false, wait_check_due: false, checklist_completed: 2, checklist_total: 4, issue_url: '', version: '1'
 };
 const collaboration = {
   checklist: [
@@ -29,6 +29,7 @@ async function mockDetails(page: Page, { failSave = false, readOnly = false, tas
   const detailBoard = readOnly ? { ...board, status: 'frozen' } : board;
   let savedTask: Record<string, any> = { ...detailTask };
   let shouldFailSave = failSave;
+  let revision = Number(detailTask.version ?? 1);
   const requests: Record<string, any>[] = [];
   await page.addInitScript((boardId) => {
     localStorage.setItem('tasks.globalBoardId', boardId);
@@ -49,8 +50,17 @@ async function mockDetails(page: Page, { failSave = false, readOnly = false, tas
     if (request.method() === 'PATCH' && path.endsWith(`/tasks/${task.id}`)) {
       const input = request.postDataJSON();
       requests.push(input);
-      savedTask = { ...savedTask, title: input.title, description: input.description, issue_url: input.issueUrl, deadline: input.deadline, deadline_date: input.deadlineDate, deadline_timezone: input.deadlineTimezone };
-      await route.fulfill({ json: savedTask }); return;
+      if (input.expectedVersion !== undefined && input.expectedVersion !== String(revision)) {
+        await route.fulfill({ status: 409, json: { error: 'version conflict', expectedVersion: input.expectedVersion, task: { ...savedTask, version: String(revision) } } });
+        return;
+      }
+      revision += 1;
+      savedTask = { ...savedTask, ...Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'expectedVersion' && key !== 'notifyAssignee')) , version: String(revision) };
+      if ('deadline' in input) savedTask.deadline = input.deadline;
+      if ('deadlineDate' in input) savedTask.deadline_date = input.deadlineDate;
+      if ('deadlineTimezone' in input) savedTask.deadline_timezone = input.deadlineTimezone;
+      await route.fulfill({ json: savedTask });
+      return;
     }
     const payload = path === '/api/auth/telegram' ? { userId: 'user-2' }
       : path === '/api/boards' ? { boards: [detailBoard] }
@@ -74,6 +84,16 @@ async function openDetails(page: Page, width: number, options: DetailsOptions = 
   await page.getByRole('button').filter({ hasText: options.taskOverrides?.title ?? task.title }).first().click();
   await expect(page.getByRole('heading', { name: 'Детали задачи' })).toBeAttached();
   return requests;
+}
+
+async function flushAutosave(page: Page) {
+  // The save-state line announces the flush result; wait until it settles on «Сохранено»
+  // or an error, not merely the transient «Сохраняется…» of an earlier edit (issue #129).
+  await expect(async () => {
+    const text = await page.locator('.detail-save-state').textContent();
+    expect(text).toMatch(/Сохранено|Не сохранено/i);
+    expect(text).not.toBe('Сохраняется…');
+  }).toPass({ timeout: 5000 });
 }
 
 for (const width of [390, 320]) {
@@ -101,40 +121,48 @@ for (const width of [390, 320]) {
     await page.getByRole('button', { name: 'Изменить', exact: true }).click();
     const editor = page.getByRole('textbox', { name: 'Описание' });
     await expect(editor).toBeFocused();
-    const save = page.getByRole('button', { name: 'Сохранить изменения' });
-    await expect(save).toBeVisible();
-    await save.evaluate((element) => element.scrollIntoView({ block: 'center' }));
-    const saveBox = await save.boundingBox();
-    const composerBox = await page.locator('.comment-composer').boundingBox();
-    const editorBox = await editor.boundingBox();
-    expect(saveBox).not.toBeNull();
-    expect(composerBox).not.toBeNull();
-    expect(editorBox).not.toBeNull();
-    expect(saveBox!.y + saveBox!.height).toBeLessThan(composerBox!.y);
-    expect(editorBox!.y + editorBox!.height).toBeLessThan(saveBox!.y);
+    // No global save button anymore: the editor closes onto autosave, not a submit (issue #129).
+    await expect(page.getByRole('button', { name: 'Сохранить изменения' })).toHaveCount(0);
     expect(await editor.evaluate((element) => getComputedStyle(element).overflowY)).toBe('hidden');
     await page.screenshot({ path: `${evidence}/details-${width}x844-edit.png` });
   });
 }
 
-test('details keeps edited input after failed save', async ({ page }) => {
+test('details autosaves a title edit without any save button and confirms on the server', async ({ page }) => {
+  const requests = await openDetails(page, 390);
+  const title = page.getByRole('textbox', { name: 'Название задачи' });
+  await title.fill('Автосохранённое название');
+  await flushAutosave(page);
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0].title).toBe('Автосохранённое название');
+  expect(requests[0].expectedVersion).toBe('1');
+  // Only the changed field is sent: status/deadline/assignee are not overwritten (issue #129).
+  expect(Object.keys(requests[0]).filter((key) => !['expectedVersion', 'confirmIncompleteChecklist'].includes(key))).toEqual(['title']);
+});
+
+test('details flushes the last edit when leaving the card immediately', async ({ page }) => {
+  const requests = await openDetails(page, 390);
+  const title = page.getByRole('textbox', { name: 'Название задачи' });
+  await title.fill('Правка перед выходом');
+  await page.getByRole('button', { name: 'Назад к задачам' }).click();
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0].title).toBe('Правка перед выходом');
+});
+
+test('details keeps edited input after failed save and resends it once', async ({ page }) => {
   const requests = await openDetails(page, 390, { failSave: true });
   const title = page.getByRole('textbox', { name: 'Название задачи' });
   await title.fill('Не терять эту правку');
-  await page.getByRole('button', { name: 'Изменить', exact: true }).click();
-  const description = page.getByRole('textbox', { name: 'Описание' });
-  await description.fill('Черновик описания нужно сохранить при ошибке.');
-  await page.getByRole('button', { name: 'Сохранить изменения' }).click();
-  await expect(page.getByRole('alert')).toContainText('Не удалось сохранить задачу');
+  await expect(page.locator('.detail-save-state')).toHaveText(/Не сохранено/, { timeout: 5000 });
   await expect(title).toHaveValue('Не терять эту правку');
-  await expect(description).toHaveValue('Черновик описания нужно сохранить при ошибке.');
-  await expect(page.getByRole('button', { name: 'Сохранить изменения' })).toBeEnabled();
-  await page.getByRole('button', { name: 'Сохранить изменения' }).click();
+  // Reconnect (online event) retries the queued patch; nothing is lost.
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
   await expect.poll(() => requests.length).toBe(1);
-  await expect.poll(() => page.getByRole('alert').count()).toBe(0);
+  expect(requests[0].title).toBe('Не терять эту правку');
+  await expect(page.locator('.detail-save-state')).toHaveText('Сохранено', { timeout: 5000 });
 });
 
-test('description stays read-only until edit, resizes both ways, and saves explicitly', async ({ page }) => {
+test('description stays read-only until edit, autosaves on done, resizes both ways', async ({ page }) => {
   const requests = await openDetails(page, 390);
   const readOnlyText = page.locator('.detail-description-read');
   expect(await readOnlyText.textContent()).toBe(task.description);
@@ -151,8 +179,6 @@ test('description stays read-only until edit, resizes both ways, and saves expli
   await editor.fill('Короткий текст.');
   await expect.poll(() => editor.evaluate((element) => element.clientHeight)).toBeLessThan(expandedHeight);
   await page.locator('.detail-description-actions').getByRole('button', { name: 'Готово' }).click();
-  expect(requests).toHaveLength(0);
-  await page.getByRole('button', { name: 'Сохранить изменения' }).click();
   await expect.poll(() => requests.length).toBe(1);
   expect(requests[0].description).toBe('Короткий текст.');
 });
@@ -173,7 +199,7 @@ test('description copy waits for clipboard success and preserves exact paragraph
   await expect(page.locator('.detail-copy-feedback')).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => (window as Window & { __clipboardText?: string }).__clipboardText)).toBe(task.description);
   await page.evaluate(() => (window as Window & { __resolveClipboard?: () => void }).__resolveClipboard?.());
-  await expect(page.getByRole('status')).toHaveText('Описание скопировано');
+  await expect(page.locator('.detail-copy-feedback')).toHaveText('Описание скопировано');
 });
 
 for (const mode of ['rejected', 'unavailable'] as const) {
@@ -195,9 +221,10 @@ test('read-only details allow copy but not description editing or task changes',
   await expect(page.locator('.detail-description-read')).toHaveText(task.description);
   await expect(page.getByRole('button', { name: 'Изменить', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Сохранить изменения' })).toHaveCount(0);
+  await expect(page.locator('.detail-save-state')).toHaveCount(0);
   await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => undefined } }));
   await page.getByRole('button', { name: 'Скопировать' }).click();
-  await expect(page.getByRole('status')).toHaveText('Описание скопировано');
+  await expect(page.locator('.detail-copy-feedback.success')).toHaveText('Описание скопировано');
 });
 
 test('empty description has compact add action and cannot report empty copy as success', async ({ page }) => {
@@ -206,7 +233,7 @@ test('empty description has compact add action and cannot report empty copy as s
   await expect(page.getByRole('button', { name: 'Скопировать' })).toBeDisabled();
   await page.locator('.detail-description-actions').getByRole('button', { name: 'Добавить описание' }).click();
   await page.getByRole('textbox', { name: 'Описание' }).fill('Новое описание.');
-  await page.getByRole('button', { name: 'Сохранить изменения' }).click();
+  await page.locator('.detail-description-actions').getByRole('button', { name: 'Готово' }).click();
   await expect.poll(() => requests.length).toBe(1);
   expect(requests[0].description).toBe('Новое описание.');
 });
@@ -216,7 +243,7 @@ test('description patch survives closing and reopening from server-backed task l
   await page.locator('.detail-description-actions').getByRole('button', { name: 'Изменить' }).click();
   const description = 'Первый абзац.\n\nВторой абзац после повторного открытия.';
   await page.getByRole('textbox', { name: 'Описание' }).fill(description);
-  await page.getByRole('button', { name: 'Сохранить изменения' }).click();
+  await page.locator('.detail-description-actions').getByRole('button', { name: 'Готово' }).click();
   await expect.poll(() => requests.length).toBe(1);
   expect(requests[0].description).toBe(description);
   await page.getByRole('button', { name: 'Назад к задачам' }).click();
@@ -224,7 +251,27 @@ test('description patch survives closing and reopening from server-backed task l
   await expect(page.locator('.detail-description-read')).toHaveText(description);
 });
 
-test('GitHub issue stays compact, opens safely, and supports edit and removal', async ({ page }) => {
+test('version conflict shows both versions and keeps the local edit on «решить позже»', async ({ page }) => {
+  await openDetails(page, 390, { taskOverrides: { version: '7' } });
+  const title = page.getByRole('textbox', { name: 'Название задачи' });
+  await title.fill('Моя версия названия');
+  // Server reports a different revision than the one the client read.
+  await page.route(`**/api/boards/${board.id}/tasks/${task.id}`, async (route) => {
+    if (route.request().method() !== 'PATCH') return route.fallback();
+    await route.fulfill({ status: 409, json: { error: 'version conflict', expectedVersion: '7', task: { ...task, title: 'Чужая версия названия', version: '8' } } });
+  });
+  await flushAutosave(page);
+  await expect(page.getByRole('dialog', { name: 'Конфликт изменений' })).toBeVisible();
+  await page.getByRole('radio', { name: 'Решить позже' }).isVisible();
+  // Close via «Решить позже»: the local edit stays in the field, nothing is overwritten.
+  await page.getByRole('button', { name: 'Решить позже' }).click();
+  await expect(title).toHaveValue('Моя версия названия');
+  // Choosing the server version replaces the draft with the confirmed object.
+  await page.route(`**/api/boards/${board.id}/tasks/${task.id}`, (route) => route.fallback());
+  await page.getByRole('button', { name: 'Назад к задачам' }).click();
+});
+
+test('GitHub issue stays compact, opens safely, and autosaves edits', async ({ page }) => {
   const requests = await openDetails(page, 390, { taskOverrides: { issue_url: 'https://github.com/owner/repo/issues/7' } });
   const issue = page.locator('.detail-github');
   const link = issue.getByRole('link', { name: /owner\/repo#7/ });
@@ -235,23 +282,23 @@ test('GitHub issue stays compact, opens safely, and supports edit and removal', 
   await issue.getByRole('button', { name: 'Изменить' }).click();
   await issue.getByRole('textbox', { name: 'Ссылка на GitHub issue' }).fill('owner/next#8');
   await issue.getByRole('button', { name: 'Готово' }).click();
+  await flushAutosave(page);
   await expect(issue.getByRole('link', { name: /owner\/next#8/ })).toHaveAttribute('href', 'https://github.com/owner/next/issues/8');
-  await page.getByRole('button', { name: 'Сохранить изменения' }).click();
   await expect.poll(() => requests.length).toBe(1);
   expect(requests[0].issueUrl).toBe('owner/next#8');
   await issue.getByRole('button', { name: 'Изменить' }).click();
   await issue.getByRole('button', { name: 'Удалить' }).click();
-  await issue.getByRole('button', { name: 'Готово' }).click();
+  // The remove action leaves edit mode by itself and autosaves the cleared link.
   await expect(issue.getByRole('button', { name: 'Добавить GitHub issue' })).toBeVisible();
-  await page.getByRole('button', { name: 'Сохранить изменения' }).click();
   await expect.poll(() => requests.length).toBe(2);
   expect(requests[1].issueUrl).toBeNull();
+  await flushAutosave(page);
   await issue.getByRole('button', { name: 'Добавить GitHub issue' }).click();
   await issue.getByRole('textbox', { name: 'Ссылка на GitHub issue' }).fill('owner/added#9');
   await issue.getByRole('button', { name: 'Готово' }).click();
-  await page.getByRole('button', { name: 'Сохранить изменения' }).click();
   await expect.poll(() => requests.length).toBe(3);
   expect(requests[2].issueUrl).toBe('owner/added#9');
+  await flushAutosave(page);
 });
 
 test('compact property controls still open project, assignee, and priority sheets', async ({ page }) => {
@@ -284,7 +331,7 @@ test('details wraps without horizontal overflow at 200 percent text size', async
   await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await expect(page.locator('.detail-title .task-glyph')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Сохранить изменения' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Сохранить изменения' })).toHaveCount(0);
 });
 
 test('details preserves desktop shell and full-width reading without horizontal overflow', async ({ page }) => {
@@ -306,13 +353,6 @@ test('details keeps composer reachable with a short visual viewport', async ({ p
   const box = await composer.boundingBox();
   expect((box?.y ?? 520) + (box?.height ?? 0)).toBeLessThanOrEqual(521);
   await page.screenshot({ path: `${evidence}/details-320x520-keyboard.png` });
-  const save = page.getByRole('button', { name: 'Сохранить изменения' });
-  await save.evaluate((element) => element.scrollIntoView({ block: 'center' }));
-  const saveBox = await save.boundingBox();
-  const composerBox = await composer.boundingBox();
-  expect(saveBox).not.toBeNull();
-  expect(composerBox).not.toBeNull();
-  expect(saveBox!.y + saveBox!.height).toBeLessThan(composerBox!.y);
 });
 
 test('details separates destructive action in menu', async ({ page }) => {
@@ -321,7 +361,7 @@ test('details separates destructive action in menu', async ({ page }) => {
   await expect(page.locator('.detail-danger-zone').getByRole('button', { name: 'Архивировать задачу' })).toBeVisible();
 });
 
-test('details saves and reopens every deadline mode without changing an untouched timestamp', async ({ page }) => {
+test('details autosaves every deadline mode without changing an untouched timestamp', async ({ page }) => {
   const requests = await mockDetails(page);
   await page.setViewportSize({ width: 320, height: 844 });
   const reopen = async () => {
@@ -329,18 +369,15 @@ test('details saves and reopens every deadline mode without changing an untouche
     await page.getByRole('button', { name: /Подготовить UX-спецификацию/ }).click();
   };
   await reopen();
-  await page.getByRole('button', { name: 'Сохранить изменения' }).click();
-  await expect.poll(() => requests.length).toBe(1);
-  expect(requests[0].deadline).toBe(task.deadline);
+  // Opening without edits sends nothing: autosave diffs against the server object.
+  await expect(page.locator('.detail-save-state')).toHaveText('', { timeout: 3000 });
   for (const [mode, name] of [['date', 'Только дата'], ['none', 'Без срока'], ['datetime', 'Дата и время']]) {
     await page.getByRole('button', { name: /^Срок/ }).click();
     await page.getByRole('radio', { name, exact: true }).click();
     if (mode !== 'none') await page.getByLabel('Дата срока').fill('2026-09-18');
     if (mode === 'datetime') await page.getByLabel('Время срока').fill('18:30');
     await page.getByRole('button', { name: 'Применить' }).click();
-    const count = requests.length;
-    await page.getByRole('button', { name: 'Сохранить изменения' }).click();
-    await expect.poll(() => requests.length).toBe(count + 1);
+    await flushAutosave(page);
     const saved = requests.at(-1)!;
     expect(saved.deadlineDate).toBe(mode === 'date' ? '2026-09-18' : null);
     expect(Boolean(saved.deadline)).toBe(mode === 'datetime');
