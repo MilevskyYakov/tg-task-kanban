@@ -1,0 +1,95 @@
+{
+  "source": "tasca-brand-v07.pen",
+  "brand_nodes": {
+    "avatar": "iYcGz",
+    "welcome": "M00YXB",
+    "desktop": "Q8IKSO",
+    "mobile": "xkj3i",
+    "narrow": "sWXAC"
+  },
+  "accepted_app_nodes": [
+    "uGdN2",
+    "eSknl",
+    "v9yVPT",
+    "t7WE3H",
+    "NRrRL"
+  ],
+  "assets": {
+    "assets/app-preview.png": {
+      "bytes": 755249,
+      "sha256": "13b560b2451ff25d54778861c94aad496beccd06eee02d3a628c97015bee7f94"
+    },
+    "assets/bot-avatar-512.png": {
+      "bytes": 256256,
+      "sha256": "0f7456be40a00b8c7f7a25caf021c77124ee8eee8691d23eb8b741fa954e49df"
+    },
+    "assets/fonts/GolosText-OFL.txt": {
+      "bytes": 4393,
+      "sha256": "270e8bfc5b8f26a2ca1433cf4d65d6d93771d2131715a57460702c0df4057c06"
+    },
+    "assets/fonts/GolosText-variable.ttf": {
+      "bytes": 184292,
+      "sha256": "17bb58fb69aec2dfb047a2ebf52534023e9b688c97a6b7ac795b0a72912c2063"
+    },
+    "assets/fonts/Manrope-OFL.txt": {
+      "bytes": 4386,
+      "sha256": "d6a309fcfb963d329a93baf9df66fa5f3c23a4be2b5f67edf24d6cafecde12ac"
+    },
+    "assets/fonts/Manrope-variable.ttf": {
+      "bytes": 164700,
+      "sha256": "3ae11c49db0455a3cc33e37d380f20fdb8c7f8b41dc07625c177e3d87a9d6ae6"
+    },
+    "assets/group-welcome.png": {
+      "bytes": 938723,
+      "sha256": "90cf42a175198eb232a0582e0ce792b2675db1042897a4637fda7804b792c456"
+    },
+    "assets/wordmarks/tasca-latin-black.png": {
+      "bytes": 28327,
+      "sha256": "8e08d0daf499b47fcc1c604fcd044e55e0ccbd6a8b6bdedf265819f8d01042c6"
+    },
+    "assets/wordmarks/tasca-latin-black.svg": {
+      "bytes": 4650,
+      "sha256": "94836b932f94dfea754e0da880e37239756182d59b97ad205b62b0ebd0f69cfe"
+    },
+    "assets/wordmarks/tasca-latin-green.png": {
+      "bytes": 38987,
+      "sha256": "2b9cf4be8f2b67e93a28815e0efb7b4591d8b17ffe9ccf7c29d49960080a8c4d"
+    },
+    "assets/wordmarks/tasca-latin-green.svg": {
+      "bytes": 4650,
+      "sha256": "ee960bad4546d3a18a5b4a6bf946fc8a43c8a78c6c5082240b835cc6586e7c1a"
+    },
+    "assets/wordmarks/tasca-latin-white.png": {
+      "bytes": 30936,
+      "sha256": "b1483c6cb13fedce4fafc937074a0b56e1c7a0ec4b577e1727846d9e45deeb3b"
+    },
+    "assets/wordmarks/tasca-latin-white.svg": {
+      "bytes": 4650,
+      "sha256": "991fb619b3360b79145d34b72cbb7032fcba50bccf6e37225d45f32f1f1b180a"
+    },
+    "assets/wordmarks/tasca-ru-black.png": {
+      "bytes": 26366,
+      "sha256": "a4c21a08f1444fd059d9afdfe54ba8e7a7bf442b789e03682fd5c3e543277a17"
+    },
+    "assets/wordmarks/tasca-ru-black.svg": {
+      "bytes": 3652,
+      "sha256": "9e995b95f8ea23d009f4095b249eeabb6912138845bfb02792a817c67fbaff49"
+    },
+    "assets/wordmarks/tasca-ru-green.png": {
+      "bytes": 35494,
+      "sha256": "b773d912e9548977233afe9812541d8b3e641bd5de54512a49efaad62ed8f153"
+    },
+    "assets/wordmarks/tasca-ru-green.svg": {
+      "bytes": 3652,
+      "sha256": "e9251116d18e8062a77b88e69f9174aab4d157cca3193f5e1c2bc000e50e7db3"
+    },
+    "assets/wordmarks/tasca-ru-white.png": {
+      "bytes": 28370,
+      "sha256": "0b888c3495c42b8f14c0a7852a60094c694c08a69c748ee8529014b8202145cf"
+    },
+    "assets/wordmarks/tasca-ru-white.svg": {
+      "bytes": 3652,
+      "sha256": "585e18725e2213bff57aaee3f25eaf35089b5a5feb3a3190e35eb1a0e29f1880"
+    }
+  }
+}
