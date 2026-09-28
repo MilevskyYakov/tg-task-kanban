@@ -1,0 +1,113 @@
+{
+  "visual_passed": 89,
+  "create_recheck_passed": 11,
+  "unit_and_integration": [
+    32,
+    13
+  ],
+  "fail_counts": [
+    0,
+    0
+  ],
+  "contrast": [
+    {
+      "width": 390,
+      "text": "Основной",
+      "minimum_ratio": 7.754,
+      "darkest_rgb": [
+        184,
+        214,
+        184
+      ]
+    },
+    {
+      "width": 390,
+      "text": "Вторичный",
+      "minimum_ratio": 6.027,
+      "darkest_rgb": [
+        184,
+        214,
+        184
+      ]
+    },
+    {
+      "width": 390,
+      "text": "Просрочка",
+      "minimum_ratio": 4.877,
+      "darkest_rgb": [
+        184,
+        214,
+        184
+      ]
+    },
+    {
+      "width": 320,
+      "text": "Основной",
+      "minimum_ratio": 7.768,
+      "darkest_rgb": [
+        185,
+        214,
+        184
+      ]
+    },
+    {
+      "width": 320,
+      "text": "Вторичный",
+      "minimum_ratio": 6.038,
+      "darkest_rgb": [
+        185,
+        214,
+        184
+      ]
+    },
+    {
+      "width": 320,
+      "text": "Просрочка",
+      "minimum_ratio": 4.886,
+      "darkest_rgb": [
+        185,
+        214,
+        184
+      ]
+    },
+    {
+      "text": "Белая надпись на светлом конце основной кнопки",
+      "minimum_ratio": 5.296
+    }
+  ],
+  "screenshots": [
+    {
+      "path": "after/tasks-390x844.png",
+      "sha256": "79b37a63721607caec875deedf231a21628fa0816e04aa5bb5f5ebc0048a997f"
+    },
+    {
+      "path": "after/tasks-bottom-390.png",
+      "sha256": "af7fb65b53f324a2325049e65b8d29f73365bb52ddfb421c3d50bd8bfc15fff4"
+    },
+    {
+      "path": "after/create-390x844.png",
+      "sha256": "c963845bb997b73257554a96eba32f052101f16830e5a30848fa98a9bec00dd4"
+    },
+    {
+      "path": "after/create-bottom-390.png",
+      "sha256": "10e1f10280277b1aa35877f7a02c396f34c38b3340d9d407fcb2e96ef9106856"
+    },
+    {
+      "path": "after/tasks-320x844.png",
+      "sha256": "01c34d0b978c08c6a8d32e036f02435139e858bf32af55542d498e5864c32901"
+    },
+    {
+      "path": "after/tasks-bottom-320.png",
+      "sha256": "5fd6ab678c9682fe6558260dc245acc0237765f6954786e2bbca1c61055009f5"
+    },
+    {
+      "path": "after/create-320x844.png",
+      "sha256": "d86ed8372365505bb0be0e6de6b96a5e12afce6273c2f168c47016234eb8f828"
+    },
+    {
+      "path": "after/create-bottom-320.png",
+      "sha256": "5bca7b6da23463404e5e44ace35f4e7d1513bea8cbbd7f97b81f8aa2582fce56"
+    }
+  ],
+  "scope": "Два экрана и общая нижняя навигация. Визуальная приёмка владельца и Telegram iOS/Android остаются открытыми."
+}

@@ -25,7 +25,8 @@ for (const width of [390, 320]) {
     });
     await mkdir(evidence, { recursive: true });
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Личные и общие задачи в Telegram' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Дела под рукой' })).toBeVisible();
+    await expect(page.getByRole('img', { name: 'Таска' })).toBeVisible();
     await page.screenshot({ path: `${evidence}/entry-help-${width}.png` });
     await page.getByRole('button', { name: 'Доска для группы', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Общие задачи в вашей группе.' })).toBeVisible();

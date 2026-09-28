@@ -59,6 +59,13 @@ for (const width of [390, 320]) {
   test(`settings root ${width}x844 matches contract anatomy`, async ({ page }) => {
     await openSettings(page, width);
     await expect(page.locator('.settings-card')).toHaveCount(3);
+    await expect(page.locator('.settings-card').nth(1)).not.toHaveCSS('box-shadow', 'none');
+    const cards = await page.locator('.settings-card').evaluateAll((elements) => elements.map((element) => {
+      const { top, bottom } = element.getBoundingClientRect();
+      return { top, bottom };
+    }));
+    expect(cards[1].top - cards[0].bottom).toBeGreaterThanOrEqual(14);
+    expect(cards[2].top - cards[1].bottom).toBeGreaterThanOrEqual(14);
     await expect(page.locator('.settings-card').nth(0)).toContainText('2 доски · 3 проекта');
     await expect(page.locator('.settings-card').nth(1)).toContainText('1 активный сценарий');
     await expect(page.locator('.settings-root select, .settings-root details, .settings-root summary')).toHaveCount(0);
@@ -76,16 +83,19 @@ test('settings children use shared controls and keep failed input', async ({ pag
   await expect(page.getByRole('heading', { name: 'Primex' })).toBeVisible();
   await expect(page.locator('.settings-screen select, .settings-screen details, .settings-screen summary')).toHaveCount(0);
 
+  await page.screenshot({ path: `${evidence}/settings-workspace-320x844.png`, fullPage: true });
   await page.getByRole('button', { name: /Настройки/ }).first().click();
   await page.getByRole('button', { name: /Автоматизация/ }).click();
   await page.getByRole('button', { name: /Primex/ }).click();
   await expect(page.getByRole('heading', { name: 'Primex' })).toBeVisible();
   await expect(page.locator('.settings-screen select, .settings-screen details, .settings-screen summary')).toHaveCount(0);
   const title = page.getByRole('textbox', { name: 'Название задачи' });
+  await expect(page.locator('.settings-form > .action-row').first()).toHaveCSS('background-image', 'none');
   await title.fill('Не терять повтор');
   await page.getByRole('button', { name: 'Добавить повтор' }).click();
   await expect(page.getByRole('status')).toContainText('Не удалось создать повтор');
   await expect(title).toHaveValue('Не терять повтор');
+  await page.screenshot({ path: `${evidence}/settings-automation-320x844.png`, fullPage: true });
 
   await page.getByRole('button', { name: /Настройки/ }).first().click();
   await page.getByRole('button', { name: /Аккаунт/ }).click();

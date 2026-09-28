@@ -1,0 +1,6 @@
+{"phase":"issue-134-final-regression","surface":"create-title queue=50","metric":"input-to-next-frame","events":279,"slowEventDurations":[16],"p50":3,"max":9,"longtaskMs":0}
+{"phase":"issue-134-final-regression","surface":"details-title queue=50","metric":"input-to-next-frame","events":234,"slowEventDurations":[16],"p50":1,"max":9,"longtaskMs":0}
+{"phase":"issue-134-final-regression","surface":"comment queue=50","metric":"input-to-next-frame","events":280,"slowEventDurations":[],"p50":1,"max":9,"longtaskMs":0}
+{"phase":"issue-134-final-regression","surface":"create-title queue=600","metric":"input-to-next-frame","events":279,"slowEventDurations":[16,16,24,16,16,16,24,16,16,16,24,16,16,16,24,16,16,16,24,16,16,16,24,16,16,16,24,16,16,16,24,16,16,16,24,16,16,16,24,16],"p50":15,"max":17,"longtaskMs":0}
+{"phase":"issue-134-final-regression","surface":"details-title queue=600","metric":"input-to-next-frame","events":234,"slowEventDurations":[],"p50":1,"max":9,"longtaskMs":0}
+{"phase":"issue-134-final-regression","surface":"comment queue=600","metric":"input-to-next-frame","events":280,"slowEventDurations":[16,16,16,16],"p50":1,"max":9,"longtaskMs":0}

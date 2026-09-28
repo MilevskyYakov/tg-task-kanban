@@ -2,11 +2,12 @@ import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type Key
 import { useTelegramEnvironment } from './environment';
 import { isSettingsNavigation, type NavigationState } from './navigation';
 
-export type IconName = 'tasks' | 'plus' | 'settings' | 'close' | 'chevron' | 'alert' | 'sun' | 'clock' | 'noDeadline' | 'project' | 'assignee' | 'calendar' | 'board' | 'sliders' | 'back' | 'more' | 'attach' | 'send' | 'priority' | 'workspace' | 'automation' | 'image' | 'copy' | 'edit' | 'external';
+export type IconName = 'search' | 'tasks' | 'plus' | 'settings' | 'close' | 'chevron' | 'alert' | 'sun' | 'clock' | 'noDeadline' | 'project' | 'assignee' | 'calendar' | 'board' | 'sliders' | 'back' | 'more' | 'attach' | 'send' | 'priority' | 'workspace' | 'automation' | 'image' | 'copy' | 'edit' | 'external';
 
 export function Icon({ name }: { name: IconName }) {
   const paths = {
-    tasks: <><path d="M8 6h11M8 12h11M8 18h11"/><path d="m3 6 1 1 2-2m-3 7 1 1 2-2m-3 7 1 1 2-2"/></>,
+    search: <><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></>,
+    tasks: <><rect x="3" y="3" width="18" height="18" rx="6"/><path d="m7.5 12 3 3 6-6"/></>,
     plus: <path d="M12 5v14M5 12h14"/>,
     settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></>,
     close: <path d="m6 6 12 12M18 6 6 18"/>,
@@ -57,7 +58,7 @@ function BottomNavigation({ navigation, navigate }: { navigation: NavigationStat
   return <nav className="bottom-navigation" aria-label="Основная навигация">
     <button className={navigation.screen === 'tasks' ? 'active' : ''} aria-current={navigation.screen === 'tasks' ? 'page' : undefined} onClick={() => navigate({ screen: 'tasks' })}><Icon name="tasks"/><span>Задачи</span></button>
     <button className="create" aria-label="Создать задачу" onClick={() => navigate({ screen: 'create' })}><Icon name="plus"/></button>
-    <button className={isSettingsNavigation(navigation) ? 'active' : ''} aria-current={isSettingsNavigation(navigation) ? 'page' : undefined} onClick={() => navigate({ screen: 'settings' })}><Icon name="settings"/><span>Настройки</span></button>
+    <button className={isSettingsNavigation(navigation) ? 'active' : ''} aria-current={isSettingsNavigation(navigation) ? 'page' : undefined} onClick={() => navigate({ screen: 'settings' })}><Icon name="sliders"/><span>Настройки</span></button>
   </nav>;
 }
 
@@ -66,7 +67,7 @@ export function IconButton({ label, children, ...props }: { label: string; child
 }
 
 export function TaskGlyph() {
-  return <span className="task-glyph" aria-hidden="true"><span/><span/><svg viewBox="0 0 32 32"><defs><radialGradient id="task-glyph-gradient" cx="35%" cy="28%"><stop stopColor="#8ec5ff"/><stop offset=".62" stopColor="#2f79ed"/><stop offset="1" stopColor="#1452b8"/></radialGradient></defs><circle cx="16" cy="16" r="15" fill="url(#task-glyph-gradient)"/><path d="m9.5 16 4.5 4.5 8.5-9" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg></span>;
+  return <span className="task-glyph" aria-hidden="true"><span/><span/><svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="currentColor"/><path d="m9.5 16 4.5 4.5 8.5-9" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg></span>;
 }
 
 export function SectionHeader({ children, count, tone = 'upcoming' }: { children: ReactNode; count: number; tone?: 'overdue' | 'today' | 'upcoming' | 'none' }) {
@@ -155,7 +156,7 @@ export function Badge({ children, tone = 'neutral' }: { children: ReactNode; ton
 }
 
 export function TasksScreen({ children, boardName, onSelectBoard }: { children: ReactNode; boardName: string; onSelectBoard: () => void }) {
-  return <><header className="page-header"><div className="title-row"><h1>Задачи</h1><TaskGlyph/></div><button className="board-selector" onClick={onSelectBoard}>{boardName}<Icon name="chevron"/></button></header>{children}</>;
+  return <><header className="page-header"><div className="title-row"><h1>Задачи</h1></div><button className="board-selector" onClick={onSelectBoard}>{boardName}<Icon name="chevron"/></button></header>{children}</>;
 }
 
 export function SettingsScreen({ children, title = 'Настройки', subtitle }: { children: ReactNode; title?: string; subtitle?: string }) {

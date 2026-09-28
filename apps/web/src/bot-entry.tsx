@@ -37,7 +37,7 @@ export function EntryGuide({ path, onPath, onPersonal, onPair, onClose }: {
     return () => { cancelled = true; };
   }, [path, reload]);
   if (path === 'help') return <PairScreen title="Как начать" onBack={onClose} actions={<button className="secondary" onClick={onClose}>К задачам</button>}>
-    <h2>Личные и общие задачи в Telegram</h2><p>Добавляйте задачи, выбирайте исполнителя и следите за сроками.</p><p>Как будете работать?</p>
+    <img className="brand-wordmark" src="/brand/tasca-ru-green.svg" alt="Таска"/><h2>Дела под рукой</h2><p>Личные и общие задачи в Telegram. Добавляйте задачи, выбирайте исполнителя и следите за сроками.</p><p>Как будете работать?</p>
     <div className="entry-choices"><button className="secondary" onClick={() => onPath('personal')}>Личные задачи</button><button className="secondary" onClick={() => onPath('pair')}>Доска на двоих</button><button className="secondary" onClick={() => onPath('group')}>Доска для группы</button></div>
   </PairScreen>;
   const guide = guides[path];

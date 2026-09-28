@@ -13,4 +13,19 @@ Set `PLAYWRIGHT_PORT` when default port 4173 is occupied, for example `PLAYWRIGH
 
 Generated PNG files are written to `artifacts/visual-evidence/` and intentionally ignored by Git.
 
+Tasca (#134) keeps the light-only contract under dark Telegram/browser settings.
+The suite checks local Manrope loading, blocked-font/system fallback, disabled
+blur, 200% text, collapsed search and query preservation, grouping in filters,
+native horizontal kanban scrolling, touch/keyboard/tab navigation and rollback.
+`branding.spec.ts` captures outside, loading, auth failure, empty, offline and
+403 states; the actual bot URL remains unchanged. Browser emulation is not
+Telegram iOS/Android device acceptance.
+
+`input-perf.spec.ts` samples input-to-next-frame latency and records sparse
+Event Timing entries separately; fast input need not emit entries above 16 ms.
+Set `PERF_PHASE` and an absolute `PERF_EVIDENCE_DIR` to keep a task's new metrics
+separate from historical measurements. For the #134 screenshot/contrast/asset
+manifest, run `python3 artifacts/ux/issue-134-layout/collect-evidence.py` after
+the checks described in `docs/issue-134-verification.md`.
+
 `backlog.spec.ts` exercises the browser against real Fastify handlers (via `app.inject`) and PostgreSQL using synthetic sessions for an author and another member. Telegram launch/auth remains mocked; no real bot messages are sent. The suite covers partial list creation, lost responses, idempotent replay, competing claims, series context/reset, other unassigned statuses, and loading/error/empty states. Missing `TEST_DATABASE_URL` fails this gate rather than silently skipping it. Test records are deleted in `finally`; never use a production database.
