@@ -7,3 +7,6 @@ dist/
 artifacts/visual-evidence/
 playwright-report/
 test-results/
+
+# Local third-party references for #133; not redistribution assets.
+artifacts/ux/tasca-v03/references/

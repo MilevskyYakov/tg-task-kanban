@@ -1,0 +1,17 @@
+{
+  "source": "tasca-concept-v06.pen",
+  "accepted_list": "uGdN2",
+  "screens": {
+    "create": {"wide": "eSknl", "narrow": "JC8qX", "label": "Создание"},
+    "details": {"wide": "v9yVPT", "narrow": "BY6EU", "label": "Детали"},
+    "kanban": {"wide": "t7WE3H", "narrow": "sNMyg", "label": "Канбан"},
+    "settings": {"wide": "NRrRL", "narrow": "YmRrm", "label": "Настройки"}
+  },
+  "states": {
+    "details_scrolled": "s2LCn3",
+    "details_scrolled_narrow": "YpQfP",
+    "empty_list": "f5BABh",
+    "create_uncertain": "xIbzm",
+    "status_sheet": "SIRzp"
+  }
+}
