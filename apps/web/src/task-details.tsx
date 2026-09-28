@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from './api';
-import { ActionRow, Avatar, ChoiceRow, EnvironmentStatus, Icon, Sheet, TaskGlyph } from './app-shell';
+import { ActionRow, Avatar, ChoiceRow, EnvironmentStatus, Icon, Sheet } from './app-shell';
 import { issueUrlShort, type Collaboration, type Member, type Project } from './domain';
 import { dateInputToIso, deadlineDraft, deadlinePatch, priorityDisplayName, statusDisplayName, type DeadlineDraft, type Task, type TaskPriority, type TaskStatus } from './tasks';
 import { DeadlineField } from './deadline-field';
@@ -255,10 +255,10 @@ export function TaskDetails({ task, collaboration, projects, members, candidateT
     {savable && <p className="detail-save-state" role="status" data-state={saveState}>{saveStateLabels[saveState]}</p>}
     {storageWarning && <p className="detail-error" role="alert">Локальное хранилище недоступно: при закрытии приложения несохранённые правки будут потеряны.</p>}
     <form onSubmit={(event) => event.preventDefault()}>
-      <fieldset className="readonly-fields" disabled={readOnly}>
-        <div className="detail-title"><textarea aria-label="Название задачи" maxLength={200} value={draft.title} onChange={(event) => set('title', event.target.value)} onBlur={() => void flushNow()}/><TaskGlyph/></div>
-        <div className="detail-status"><button type="button" className="detail-status-action" onClick={() => setChoice('status')}><span className="status-dot"/>{statusDisplayName[draft.status]}<Icon name="chevron"/></button>{collaboration.checklist.length > 0 && <span className="detail-progress"><i><i style={{ width: `${completed / collaboration.checklist.length * 100}%` }}/></i>{completed} из {collaboration.checklist.length} шагов</span>}</div>
-        <div className="detail-property-grid">
+      <fieldset className="readonly-fields detail-surface" disabled={readOnly}>
+        <div className="detail-heading"><div className="detail-title"><textarea aria-label="Название задачи" maxLength={200} value={draft.title} onChange={(event) => set('title', event.target.value)} onBlur={() => void flushNow()}/></div>
+        <div className="detail-status"><button type="button" className="detail-status-action" onClick={() => setChoice('status')}><span className="status-dot"/>{statusDisplayName[draft.status]}<Icon name="chevron"/></button>{collaboration.checklist.length > 0 && <span className="detail-progress"><span>{completed} из {collaboration.checklist.length} шагов</span><i aria-hidden="true"><i style={{ width: `${completed / collaboration.checklist.length * 100}%` }}/></i></span>}</div>
+        </div><div className="detail-property-grid">
           <ActionRow label="Проект" value={projects.find((item) => item.id === draft.projectId)?.name ?? 'Без проекта'} onClick={() => setChoice('project')}/>
           <ActionRow label="Исполнитель" value={members.find((item) => item.id === draft.assigneeUserId)?.first_name ?? 'Без ответственного'} onClick={() => setChoice('assignee')}/>
           <DeadlineField value={draft.due} onChange={(value) => set('due', value)} showIcon={false}/>

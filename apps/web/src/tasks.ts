@@ -141,14 +141,6 @@ export function restoreTaskViewState(value: string | null): TaskViewState {
   }
 }
 
-export function resolveKanbanSwipe(status: TaskStatus, startX: number, startY: number, endX: number, endY: number): TaskStatus {
-  const deltaX = endX - startX;
-  const deltaY = endY - startY;
-  if (Math.abs(deltaX) < 48 || Math.abs(deltaX) <= Math.abs(deltaY)) return status;
-  const index = taskStatuses.indexOf(status) + (deltaX < 0 ? 1 : -1);
-  return taskStatuses[Math.max(0, Math.min(taskStatuses.length - 1, index))];
-}
-
 export type DeadlineGroup = 'overdue' | 'today' | 'upcoming' | 'none';
 
 // Intl.DateTimeFormat construction dominates input latency on large boards:

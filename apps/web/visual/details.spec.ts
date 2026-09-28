@@ -102,10 +102,29 @@ for (const width of [390, 320]) {
     await expect(page.locator('.task-details select, .task-details details, .task-details summary')).toHaveCount(0);
     await expect(page.getByRole('button', { name: /В работе/ })).toBeVisible();
     await expect(page.locator('.detail-property-grid > .action-row')).toHaveCount(4);
+    await expect(page.locator('.detail-heading')).not.toHaveCSS('box-shadow', 'none');
+    await expect(page.locator('.detail-property-grid > .action-row').first()).not.toHaveCSS('box-shadow', 'none');
+    const hero = (await page.locator('.detail-heading').boundingBox())!;
+    const properties = (await page.locator('.detail-property-grid').boundingBox())!;
+    expect(properties.y - hero.y - hero.height).toBeGreaterThanOrEqual(12);
     await expect(page.getByRole('heading', { name: 'Описание' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Чек-лист' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Обсуждение' })).toBeVisible();
-    await expect(page.locator('.detail-title .task-glyph')).toBeVisible();
+    const titleField = page.getByRole('textbox', { name: 'Название задачи' });
+    await expect(titleField).toHaveValue(task.title);
+    expect(await titleField.evaluate((element) => element.clientHeight / parseFloat(getComputedStyle(element).lineHeight))).toBeLessThanOrEqual(2);
+    for (const selector of ['.detail-status-action', '.detail-progress']) {
+      await expect(page.locator(selector)).toHaveCSS('white-space', 'nowrap');
+      expect(await page.locator(selector).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    }
+    const status = (await page.locator('.detail-status-action').boundingBox())!;
+    const progress = (await page.locator('.detail-progress').boundingBox())!;
+    expect(Math.abs(status.y + status.height / 2 - progress.y - progress.height / 2)).toBeLessThanOrEqual(1);
+    const send = (await page.getByRole('button', { name: 'Отправить комментарий' }).boundingBox())!;
+    const plane = (await page.getByRole('button', { name: 'Отправить комментарий' }).locator('svg').boundingBox())!;
+    expect(send.width).toBe(send.height);
+    expect(Math.abs(send.x + send.width / 2 - plane.x - plane.width / 2)).toBeLessThanOrEqual(1);
+    expect(Math.abs(send.y + send.height / 2 - plane.y - plane.height / 2)).toBeLessThanOrEqual(1);
     await expect(page.locator('.detail-description-read')).toHaveText(task.description);
     await expect(page.getByRole('textbox', { name: 'Описание' })).toHaveCount(0);
     await page.getByRole('button', { name: /В работе/ }).click();
@@ -118,6 +137,9 @@ for (const width of [390, 320]) {
     expect((composer?.y ?? 844) + (composer?.height ?? 0)).toBeLessThanOrEqual(845);
     await mkdir(evidence, { recursive: true });
     await page.screenshot({ path: `${evidence}/details-${width}x844.png` });
+    await page.locator('.detail-discussion').scrollIntoViewIfNeeded();
+    await expect(page.locator('.detail-discussion article').first()).not.toHaveCSS('box-shadow', 'none');
+    await page.screenshot({ path: `${evidence}/details-bottom-${width}.png` });
     await page.getByRole('button', { name: 'Изменить', exact: true }).click();
     const editor = page.getByRole('textbox', { name: 'Описание' });
     await expect(editor).toBeFocused();
@@ -311,7 +333,7 @@ test('compact property controls still open project, assignee, and priority sheet
   }
 });
 
-test('long title and metadata retain glyph and stay within narrow viewport', async ({ page }) => {
+test('long title and metadata use full title width without viewport overflow', async ({ page }) => {
   const title = 'Подготовить длинное название задачи для проверки размещения значка и переноса текста '.repeat(2);
   await openDetails(page, 320, {
     taskOverrides: { title },
@@ -320,17 +342,17 @@ test('long title and metadata retain glyph and stay within narrow viewport', asy
   });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   const titleBox = await page.getByRole('textbox', { name: 'Название задачи' }).boundingBox();
-  const glyphBox = await page.locator('.detail-title .task-glyph').boundingBox();
+  const heading = await page.locator('.detail-heading').boundingBox();
   expect(titleBox).not.toBeNull();
-  expect(glyphBox).not.toBeNull();
-  expect(titleBox!.x + titleBox!.width).toBeLessThanOrEqual(glyphBox!.x + 1);
+  expect(heading).not.toBeNull();
+  expect(Math.abs(titleBox!.x - heading!.x - (heading!.x + heading!.width - titleBox!.x - titleBox!.width))).toBeLessThanOrEqual(1);
 });
 
 test('details wraps without horizontal overflow at 200 percent text size', async ({ page }) => {
   await openDetails(page, 320, { projectName: 'Длинное название проекта '.repeat(5), memberName: 'Длинное имя исполнителя '.repeat(5) });
   await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await expect(page.locator('.detail-title .task-glyph')).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Название задачи' })).toHaveValue(task.title);
   await expect(page.getByRole('button', { name: 'Сохранить изменения' })).toHaveCount(0);
 });
 
@@ -338,7 +360,7 @@ test('details preserves desktop shell and full-width reading without horizontal 
   await openDetails(page, 1280);
   await page.setViewportSize({ width: 1280, height: 900 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await expect(page.locator('.detail-title .task-glyph')).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Название задачи' })).toHaveValue(task.title);
   await expect(page.locator('.detail-description-read')).toHaveText(task.description);
   await mkdir(evidence, { recursive: true });
   await page.screenshot({ path: `${evidence}/details-1280x900.png` });

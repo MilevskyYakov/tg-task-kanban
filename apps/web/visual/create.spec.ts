@@ -76,12 +76,23 @@ for (const width of [390, 320]) {
     await openFilledCreate(page, width);
     await expect(page.locator('.create-screen select, .create-screen details, .create-screen summary')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Создать задачу' })).toBeEnabled();
+    await expect(page.getByRole('textbox', { name: 'Описание', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Дополнительно' })).toHaveAttribute('aria-expanded', 'false');
+    const close = await page.getByRole('button', { name: 'Закрыть', exact: true }).boundingBox();
+    const heading = await page.getByRole('heading', { name: 'Новая задача' }).boundingBox();
+    expect(heading!.x).toBeGreaterThanOrEqual(close!.x + close!.width + 8);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     const action = await page.locator('.create-action').boundingBox();
     expect((action?.y ?? 844) + (action?.height ?? 0)).toBeLessThanOrEqual(845);
     await expect(page.getByRole('button', { name: /Срок.*18:00/ })).toBeVisible();
     await mkdir(evidence, { recursive: true });
     await page.screenshot({ path: `${evidence}/create-${width}x844.png` });
+    await page.getByRole('button', { name: 'Дополнительно', exact: true }).click();
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    const additional = await page.locator('.create-additional-fields').boundingBox();
+    const footer = await page.locator('.create-action').boundingBox();
+    expect(additional!.y + additional!.height).toBeLessThanOrEqual(footer!.y);
+    await page.screenshot({ path: `${evidence}/create-bottom-${width}.png` });
   });
 }
 
@@ -92,9 +103,12 @@ test('create keeps input after failed request', async ({ page }) => {
   await page.getByRole('button', { name: 'Создать задачу' }).click();
   const title = page.getByRole('textbox', { name: 'Что нужно сделать?' });
   await title.fill('Не терять этот текст');
+  const description = page.getByRole('textbox', { name: 'Описание', exact: true });
+  await description.fill('Детали задачи тоже должны сохраниться');
   await page.getByRole('button', { name: 'Создать задачу' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Не удалось создать задачу' })).toContainText('Не удалось создать задачу');
   await expect(title).toHaveValue('Не терять этот текст');
+  await expect(description).toHaveValue('Детали задачи тоже должны сохраниться');
 });
 
 test('create submit stays reachable when visual viewport shrinks for keyboard', async ({ page }) => {
@@ -201,11 +215,12 @@ test('create does not change task filters after submit', async ({ page }) => {
   await page.evaluate(() => document.fonts.ready);
   await page.getByRole('button', { name: 'Создать задачу' }).click();
   await page.getByRole('textbox', { name: 'Что нужно сделать?' }).fill('Задача в проекте');
+  await page.getByRole('textbox', { name: 'Описание', exact: true }).fill('Описание из основного блока');
   await page.getByRole('button', { name: /Проект.*Без проекта/ }).click();
   await page.getByRole('radio', { name: 'Task Kanban' }).click();
   await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Задача создана' })).toContainText('Задача создана');
-  expect(requests[0]).toMatchObject({ projectId: 'project-1', status: 'todo' });
+  expect(requests[0]).toMatchObject({ projectId: 'project-1', status: 'todo', description: 'Описание из основного блока' });
   await expect(page.getByRole('button', { name: /Задача в проекте/ })).toBeVisible();
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('tasks.viewState') ?? '{}'));
   expect(stored.filters).toMatchObject({ scope: 'mine', project: '', status: '' });

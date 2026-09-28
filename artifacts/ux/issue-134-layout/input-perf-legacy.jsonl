@@ -1,0 +1,12 @@
+{"phase":"before","surface":"create-title queue=50","events":2,"p50":16,"max":16,"longtaskMs":0}
+{"phase":"before","surface":"details-title queue=50","events":1,"p50":16,"max":16,"longtaskMs":0}
+{"phase":"before","surface":"comment queue=50","events":8,"p50":16,"max":16,"longtaskMs":0}
+{"phase":"before","surface":"create-title queue=600","events":40,"p50":16,"max":24,"longtaskMs":0}
+{"phase":"before","surface":"details-title queue=600","events":0,"p50":null,"max":null,"longtaskMs":0}
+{"phase":"before","surface":"comment queue=600","events":2,"p50":16,"max":16,"longtaskMs":0}
+{"phase":"before","surface":"create-title queue=50","events":0,"p50":null,"max":null,"longtaskMs":0}
+{"phase":"before","surface":"details-title queue=50","events":4,"p50":16,"max":16,"longtaskMs":0}
+{"phase":"before","surface":"comment queue=50","events":2,"p50":16,"max":16,"longtaskMs":0}
+{"phase":"before","surface":"create-title queue=600","events":40,"p50":16,"max":24,"longtaskMs":0}
+{"phase":"before","surface":"details-title queue=600","events":0,"p50":null,"max":null,"longtaskMs":0}
+{"phase":"before","surface":"comment queue=600","events":0,"p50":null,"max":null,"longtaskMs":0}

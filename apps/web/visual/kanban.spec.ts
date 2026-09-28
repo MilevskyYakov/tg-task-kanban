@@ -34,14 +34,26 @@ async function mockKanban(page: Page, failPatch = false) {
 }
 
 for (const width of [390, 320]) {
-  test(`kanban ${width}x844 matches one-column contract`, async ({ page }) => {
+  test(`kanban ${width}x844 shows the active column and neighbouring peek`, async ({ page }) => {
     await mockKanban(page);
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/');
     await page.evaluate(() => document.fonts.ready);
-    await expect(page.locator('.active-kanban-column')).toHaveCount(1);
-    await expect(page.locator('.kanban-task-row')).toHaveCount(2);
+    await expect(page.locator('.active-kanban-column')).toHaveCount(4);
+    await expect(page.locator('#kanban-in_progress .kanban-task-row')).toHaveCount(2);
+    await expect(page.getByRole('button', { name: 'В работе 2', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    const active = await page.locator('#kanban-in_progress').boundingBox();
+    const next = await page.locator('#kanban-waiting').boundingBox();
+    const track = await page.locator('.kanban-track').boundingBox();
+    expect(Math.abs(active!.x - track!.x)).toBeLessThanOrEqual(3);
+    expect(next!.x).toBeLessThan(track!.x + track!.width - 20);
+    expect(next!.x + next!.width).toBeGreaterThan(track!.x + track!.width);
     await expect(page.locator('.mobile-kanban select, .mobile-kanban .kanban-column')).toHaveCount(0);
+    const cards = page.locator('#kanban-in_progress .kanban-task-row');
+    await expect(cards.first()).not.toHaveCSS('box-shadow', 'none');
+    const firstCard = (await cards.nth(0).boundingBox())!;
+    const secondCard = (await cards.nth(1).boundingBox())!;
+    expect(secondCard.y - firstCard.y - firstCard.height).toBeGreaterThanOrEqual(10);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await mkdir(evidence, { recursive: true });
     await page.screenshot({ path: `${evidence}/kanban-${width}x844.png` });
@@ -52,9 +64,48 @@ test('kanban exposes status sheet and rolls back a rejected change', async ({ pa
   await mockKanban(page, true);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
-  await page.getByRole('button', { name: /Статус В работе/ }).first().click();
+  await page.getByRole('button', { name: 'Сменить статус: Подготовить UX-спецификацию' }).first().click();
   await expect(page.getByRole('dialog', { name: 'Статус' })).toBeVisible();
   await page.getByRole('radio', { name: 'Новая' }).click();
   await expect(page.getByRole('status')).toContainText('Статус не изменён');
-  await expect(page.locator('.kanban-task-row')).toHaveCount(2);
+  await expect(page.locator('#kanban-in_progress .kanban-task-row')).toHaveCount(2);
+});
+
+test('native horizontal scrolling, tabs and keyboard select columns without changing tasks', async ({ page }) => {
+  await mockKanban(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const writes: string[] = [];
+  page.on('request', (request) => { if (request.method() === 'PATCH') writes.push(request.url()); });
+  await page.goto('/');
+  const track = page.getByRole('region', { name: 'Колонки канбана' });
+  const waiting = page.getByRole('button', { name: 'Блокер 1', exact: true });
+  await expect(page.getByRole('button', { name: 'В работе 2', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await track.hover();
+  await page.mouse.wheel(300, 0);
+  await expect(waiting).toHaveAttribute('aria-pressed', 'true');
+  await track.focus();
+  await page.keyboard.press('End');
+  await expect(page.getByRole('button', { name: 'Готово 0', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#kanban-done')).toBeInViewport({ ratio: .95 });
+  await page.keyboard.press('Home');
+  await expect(page.getByRole('button', { name: 'Новая 1', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await waiting.click();
+  await expect(page.locator('#kanban-waiting')).toBeInViewport({ ratio: .95 });
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('tasks.viewState')!).kanbanStatus)).toBe('waiting');
+  expect(writes).toEqual([]);
+});
+
+test('touch swipe scrolls columns and vertical swipe remains page scrolling', async ({ page }) => {
+  await mockKanban(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await expect(page.locator('#kanban-in_progress')).toBeInViewport({ ratio: .95 });
+  const client = await page.context().newCDPSession(page);
+  await client.send('Emulation.setTouchEmulationEnabled', { enabled: true });
+  const box = (await page.locator('#kanban-in_progress').boundingBox())!;
+  const x = Math.round(box.x + box.width - 20), y = Math.round(box.y + 36);
+  await client.send('Input.synthesizeScrollGesture', { x, y, xDistance: -280, yDistance: 0, gestureSourceType: 'touch', speed: 600 });
+  await expect(page.getByRole('button', { name: 'Блокер 1', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await client.send('Input.synthesizeScrollGesture', { x: 180, y, xDistance: 0, yDistance: -100, gestureSourceType: 'touch', speed: 400 });
+  await expect(page.getByRole('button', { name: 'Блокер 1', exact: true })).toHaveAttribute('aria-pressed', 'true');
 });

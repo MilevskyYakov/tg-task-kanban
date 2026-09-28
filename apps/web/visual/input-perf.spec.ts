@@ -5,12 +5,13 @@ import { fileURLToPath } from 'node:url';
 // Input-to-paint measurement for issue #123: types into the create-title
 // textarea and into the task-details title/comment while the board holds a
 // long task queue, using sequential keyboard events (not fill) and the
-// Event Timing API (input -> next paint) plus long-task blocking time.
+// Input-to-next-frame samples, sparse Event Timing API entries (>=16 ms)
+// and long-task blocking time. Fast interactions do not emit Event Timing entries.
 // Appends one JSONL line per surface to artifacts/evidence/input-perf.jsonl.
 
-type PerfWindow = Window & { __events: number[]; __block: number };
+type PerfWindow = Window & { __events: number[]; __frames: number[]; __block: number };
 
-const evidenceDir = fileURLToPath(new URL('../../../artifacts/evidence/', import.meta.url));
+const evidenceDir = process.env.PERF_EVIDENCE_DIR ?? fileURLToPath(new URL('../../../artifacts/evidence/', import.meta.url));
 const evidenceFile = `${evidenceDir}/input-perf.jsonl`;
 const phase = (process.env.PERF_PHASE ?? 'before').trim();
 const lines = process.env.PERF_LINES ? Number(process.env.PERF_LINES) : 40;
@@ -74,7 +75,12 @@ async function mockApp(page: Page, taskCount: number) {
 
 const INSTRUMENT = `(function () {
   window.__events = [];
+  window.__frames = [];
   window.__block = 0;
+  document.addEventListener('input', function () {
+    var start = performance.now();
+    requestAnimationFrame(function () { window.__frames.push(performance.now() - start); });
+  }, { capture: true });
   new PerformanceObserver(function (list) {
     list.getEntries().forEach(function (entry) {
       if (entry.interactionId) window.__events.push(entry.duration);
@@ -91,10 +97,12 @@ async function measure(page: Page, surface: string, run: () => Promise<void>) {
   const result = await page.evaluate(async () => {
     await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
     await new Promise((resolve) => setTimeout(resolve, 300));
-    const events = (window as unknown as PerfWindow).__events;
-    const sorted = [...events].sort((left, right) => left - right);
+    const samples = (window as unknown as PerfWindow).__frames;
+    const sorted = [...samples].sort((left, right) => left - right);
     return {
-      events: events.length,
+      metric: 'input-to-next-frame',
+      events: samples.length,
+      slowEventDurations: (window as unknown as PerfWindow).__events,
       p50: sorted.length ? Math.round(sorted[Math.floor(sorted.length / 2)]) : null,
       max: sorted.length ? Math.round(sorted[sorted.length - 1]) : null,
       longtaskMs: Math.round((window as unknown as PerfWindow).__block)

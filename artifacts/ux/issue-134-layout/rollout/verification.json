@@ -1,0 +1,74 @@
+{
+  "unit": 32,
+  "integration": 13,
+  "browser_full_before_final_settings_css": 89,
+  "settings_after_final_css": 4,
+  "screenshots": [
+    {
+      "path": "after/kanban-390x844.png",
+      "sha256": "810bcce0683ff55fcfb15828d05e9cc81674f24a1b51b406b5a57eaec8704ae2"
+    },
+    {
+      "path": "after/details-390x844.png",
+      "sha256": "30396e9ef983540035310e93f5bdd6d35d166387fab49d4d834b588e7f1f6ebb"
+    },
+    {
+      "path": "after/settings-390x844.png",
+      "sha256": "741f32c3854bb75f6a61f8da49190db6b9cf39a320f2b85cd9cafec05ca32d47"
+    },
+    {
+      "path": "after/kanban-320x844.png",
+      "sha256": "27979367ac5aecbad5cda3c8e6768d1954bb2413b9efac4c2a915019ac57a363"
+    },
+    {
+      "path": "after/details-320x844.png",
+      "sha256": "d757d5f56cdfaf7ac480065cb2cb3944fd236853cf88fd15c6d633df8e890175"
+    },
+    {
+      "path": "after/settings-320x844.png",
+      "sha256": "4f3af88f5c4a963e1619c7a044fedb5d5324c9002dde8de8fd4774561940af4c"
+    },
+    {
+      "path": "after/tasks-filter-sheet-320x844.png",
+      "sha256": "a58d30d260ca5b7947f7e5dff019c30bd17051fc44b3f199ae6edc407d6d6571"
+    },
+    {
+      "path": "after/details-bottom-320.png",
+      "sha256": "d3fc2a1817dc49d60048bfe63929ac2a65caacb5cdaa9876aa34ad188c398139"
+    },
+    {
+      "path": "after/details-bottom-390.png",
+      "sha256": "0fc44dcbaffb8ece12e7f843acd1165ae9ead88d0afe236981d131c5131c2b55"
+    },
+    {
+      "path": "after/settings-workspace-320x844.png",
+      "sha256": "0ef81ee4ef76060c608e0db52477237af340066436c159a404a3856f7466e4ba"
+    },
+    {
+      "path": "after/settings-automation-320x844.png",
+      "sha256": "fd3e0f51e2d00c7d75a094d1467095e694938b05055bb37adc71a4c5d99a5431"
+    },
+    {
+      "path": "after/settings-account-320x844.png",
+      "sha256": "467a0c8b3e7172d997b68c3ce7fbe9e8859c578742f508ef2c881671564a16a9"
+    },
+    {
+      "path": "after/issue78-backlog-rows-320.png",
+      "sha256": "eb54668f30bb1af8e9a683dec9e0989e4a34db8b61c0d2f24137b5d7428e7ca2"
+    },
+    {
+      "path": "after/issue82/create-320.png",
+      "sha256": "eced9b97bf0ea6c2399cac0f8ed79721ab4892eeed7125fdefe504fbb3ff2284"
+    },
+    {
+      "path": "after/issue82/boards-320.png",
+      "sha256": "21c9017ae0cec869a06168fc012a061f386bb7f386e36630641a1e2a5855d219"
+    },
+    {
+      "path": "after/issue82/help-320.png",
+      "sha256": "b3e2aed90069490fa2ad4e8f5ff61f850d0f3760ccb1be1dc97fb823114a9b18"
+    }
+  ],
+  "device_tested": false,
+  "published": false
+}

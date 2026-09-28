@@ -13,10 +13,10 @@ for (const width of [390, 320]) {
     await page.evaluate(() => document.fonts.ready);
 
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-    expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(255, 255, 255)');
+    expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(237, 240, 234)');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     expect(fontRequests.length).toBeGreaterThan(0);
-    expect(fontRequests.every((url) => new URL(url).origin === 'http://127.0.0.1:4173')).toBe(true);
+    expect(fontRequests.every((url) => new URL(url).origin === new URL(page.url()).origin && url.endsWith('/fonts/manrope-variable.ttf'))).toBe(true);
 
     const opener = page.getByRole('button', { name: /Доска.*Kairos/ });
     await opener.click();
