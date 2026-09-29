@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ApiError } from './api';
+import { ApiError, api } from './api';
 import { ActionRow, Avatar, ChoiceRow, EnvironmentStatus, Icon, Sheet } from './app-shell';
 import { issueUrlShort, type Collaboration, type Member, type Project } from './domain';
 import { dateInputToIso, deadlineDraft, deadlinePatch, priorityDisplayName, statusDisplayName, type DeadlineDraft, type Task, type TaskPriority, type TaskStatus } from './tasks';
@@ -71,7 +71,10 @@ export function taskPatch(draft: TaskDraft, base: TaskDraft) {
     // Notification is chosen once for this assignment, not replayed by later autosaves (issue #129).
     patch.notifyAssignee = draft.notifyAssignee;
   }
-  if (draft.due.mode !== base.due.mode || draft.due.date !== base.due.date || draft.due.time !== base.due.time) {
+  const deadlineChanged = draft.due.mode !== base.due.mode
+    || (draft.due.mode === 'date' && (draft.due.date !== base.due.date || draft.due.timezone !== base.due.timezone))
+    || (draft.due.mode === 'datetime' && (draft.due.date !== base.due.date || draft.due.time !== base.due.time));
+  if (deadlineChanged) {
     patch.deadline = deadline.deadline;
     patch.deadlineDate = deadline.deadlineDate;
     patch.deadlineTimezone = deadline.deadlineTimezone;
@@ -102,7 +105,7 @@ type Props = {
   boardName: string;
   onBack: () => void;
   onClaim?: () => void;
-  onSave: (patch: Record<string, unknown>, future: boolean, confirmIncompleteChecklist?: boolean) => Promise<Task>;
+  onSave: (patch: Record<string, unknown>, future: boolean, confirmIncompleteChecklist?: boolean, expectedVersion?: string) => Promise<Task>;
   onArchive: () => Promise<void>;
   onChecklistAdd: (text: string) => Promise<void>;
   onChecklistUpdate: (itemId: string, patch: { text?: string; completed?: boolean }) => Promise<void>;
@@ -125,7 +128,8 @@ const safePatch = (draft: TaskDraft, base: TaskDraft): Record<string, unknown> =
 
 export function TaskDetails({ task, collaboration, projects, members, candidateTasks, boardName, onBack, onClaim, onSave, onArchive, onChecklistAdd, onChecklistUpdate, onChecklistDelete, onComment, onUrlAttachment, onFileAttachment, readOnly = false }: Props) {
   const [draft, setDraft] = useState(() => taskDraft(task));
-  const baseDraft = useMemo(() => taskDraft(task), [task]);
+  const baseRef = useRef(taskDraft(task));
+  const versionRef = useRef(task.version);
   const [descriptionEditing, setDescriptionEditing] = useState(false);
   const [descriptionFeedback, setDescriptionFeedback] = useState<{ text: string; success: boolean }>();
   const [issueUrlEditing, setIssueUrlEditing] = useState(false);
@@ -145,41 +149,56 @@ export function TaskDetails({ task, collaboration, projects, members, candidateT
   const descriptionEditor = useRef<HTMLTextAreaElement>(null);
   const draftRef = useRef(draft);
   draftRef.current = draft;
-  const baseRef = useRef(baseDraft);
-  baseRef.current = baseDraft;
   const savable = !readOnly;
-  const sendPatch = useRef<(patch: Record<string, unknown>) => Promise<void>>(async () => { throw new Error('not ready'); });
+  const sendPatch = useRef<(patch: Record<string, unknown>) => Promise<Task>>(async () => { throw new Error('not ready'); });
   sendPatch.current = async (patch) => {
-    await onSave(patch, draftRef.current.future, false);
+    return onSave(patch, draftRef.current.future, false, versionRef.current);
   };
-  const handleSaveError = (caught: unknown, patch: Record<string, unknown>) => {
+  const handleSaveError = (caught: unknown) => {
     if (caught instanceof ApiError && caught.status === 409) {
       const data = caught.data as { task?: Task };
-      if (data?.task) setConflict({ serverTask: data.task, localPatch: patch });
+      if (data?.task) setConflict({ serverTask: data.task, localPatch: safePatch(draftRef.current, taskDraft(data.task)) });
       setError('Задачу изменил кто-то другой. Выберите, какую версию сохранить.');
     } else setError(caught instanceof Error ? caught.message : 'Ошибка сохранения');
   };
-  const autosave = useMemo(() => new Autosave<Record<string, unknown>>({
+  let autosave: Autosave<Record<string, unknown>>;
+  autosave = useMemo(() => new Autosave<Record<string, unknown>>({
     key: `task.${task.id}`,
     send: async (patch) => {
-      try { await sendPatch.current(patch); }
-      catch (caught) { handleSaveError(caught, patch); throw caught; }
+      try {
+        const saved = await sendPatch.current(patch);
+        versionRef.current = saved.version ?? versionRef.current;
+        baseRef.current = taskDraft(saved);
+        setError('');
+        autosave.schedule(safePatch(draftRef.current, baseRef.current), 0);
+      } catch (caught) {
+        handleSaveError(caught);
+        if (caught instanceof TypeError || (caught instanceof ApiError && caught.status >= 500)) {
+          try {
+            const current = await api<Task>(`/api/boards/${task.board_id}/tasks/${task.id}`);
+            versionRef.current = current.version ?? versionRef.current;
+            baseRef.current = taskDraft(current);
+            const latest = safePatch(draftRef.current, baseRef.current);
+            autosave.schedule(latest, null);
+            if (!Object.keys(latest).length) { setError(''); return; }
+          } catch { /* Keep the original save error and queued draft. */ }
+        }
+        throw caught;
+      }
     },
-    onState: setSaveState
+    onState: setSaveState,
+    onOfflineQueued: () => setStorageWarning(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [task.id]);
   useEffect(() => () => autosave.stop(), [autosave]);
   useEffect(() => reconnectRetry(() => { if (savable) void autosave.flush().catch(() => undefined); }), [autosave, savable]);
-  const dirty = useMemo(() => Object.keys(safePatch(draft, baseDraft)).length > 0, [draft, baseDraft]);
   const scheduleSave = (nextDraft: TaskDraft) => {
     if (!savable) return;
-    const patch = safePatch(nextDraft, baseDraft);
-    if (Object.keys(patch).length) autosave.schedule(patch);
+    autosave.schedule(safePatch(nextDraft, baseRef.current));
   };
   const flushNow = async () => {
     if (!savable) return;
-    const patch = safePatch(draftRef.current, baseRef.current);
-    if (Object.keys(patch).length) autosave.schedule(patch, 0);
+    autosave.schedule(safePatch(draftRef.current, baseRef.current), 0);
     await autosave.flush();
   };
   useLayoutEffect(() => {
@@ -310,7 +329,7 @@ export function TaskDetails({ task, collaboration, projects, members, candidateT
       <p>Задачу изменил кто-то другой, пока вы редактировали поле «{conflict.localPatch && Object.keys(conflict.localPatch).length ? 'текущие поля' : 'задачу'}». Выберите версию:</p>
       <div className="choice-list" role="radiogroup">
         <ChoiceRow label="Моя правка поверх серверной" selected={false} onClick={() => { setConflict(undefined); void sendResolution(conflict.localPatch, conflict.serverTask); }}/>
-        <ChoiceRow label="Оставить серверную версию" selected={false} onClick={() => { setConflict(undefined); setDraft(taskDraft(conflict.serverTask)); baseRef.current = taskDraft(conflict.serverTask); setSaveState('saved'); }}/>
+        <ChoiceRow label="Оставить серверную версию" selected={false} onClick={() => { setConflict(undefined); const serverDraft = taskDraft(conflict.serverTask); draftRef.current = serverDraft; setDraft(serverDraft); baseRef.current = serverDraft; versionRef.current = conflict.serverTask.version ?? versionRef.current; autosave.schedule({}, null); setError(''); setSaveState('saved'); }}/>
       </div>
       <button className="sheet-close secondary" onClick={() => setConflict(undefined)}>Решить позже</button>
     </Sheet>}
@@ -320,10 +339,14 @@ export function TaskDetails({ task, collaboration, projects, members, candidateT
   async function sendResolution(localPatch: Record<string, unknown>, serverTask: Task) {
     setSaveState('saving');
     try {
-      const saved = await onSave(localPatch, draftRef.current.future, false);
+      const saved = await onSave(localPatch, draftRef.current.future, false, serverTask.version);
       const nextBase = taskDraft(saved);
+      draftRef.current = nextBase;
       setDraft(nextBase);
       baseRef.current = nextBase;
+      versionRef.current = saved.version ?? serverTask.version ?? versionRef.current;
+      autosave.schedule({}, null);
+      setError('');
       setSaveState('saved');
     } catch (caught) {
       if (caught instanceof ApiError && caught.status === 409) {

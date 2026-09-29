@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { resolveChoiceIndex, resolveFocusIndex } from '../src/app-shell.js';
 import { ApiError } from '../src/api.js';
+import { Autosave } from '../src/autosave.js';
 import { runClaim } from '../src/claim-task.js';
 import { resolveThemeScheme } from '../src/environment.js';
 import { countLabel, initialNavigation, isSettingsNavigation, settingsSections } from '../src/navigation.js';
@@ -272,6 +273,8 @@ test('deadline modes round-trip without changing old timestamps, DST folds or da
         assert.deepEqual(taskPatch(baseWithDeadline, taskDraft({ ...tasks[0], deadline: undefined })), deadlinePatch(baseWithDeadline.due));
       }
       const dateTask = { ...tasks[0], deadline: undefined, deadline_date: '2026-03-08', deadline_timezone: 'America/New_York' };
+      const dateOnlyDraft = taskDraft(dateTask);
+      assert.deepEqual(taskPatch({ ...dateOnlyDraft, due: { ...dateOnlyDraft.due, time: '10:30' } }, dateOnlyDraft), {});
       assert.deepEqual(deadlinePatch(deadlineDraft(dateTask)), { deadline: null, deadlineDate: '2026-03-08', deadlineTimezone: 'America/New_York' });
       assert.equal(isTaskOverdue(dateTask, new Date('2026-03-09T03:59:59.999Z')), false);
       assert.equal(isTaskOverdue(dateTask, new Date('2026-03-09T04:00:00.000Z')), true);
@@ -285,4 +288,129 @@ test('deadline modes round-trip without changing old timestamps, DST folds or da
     assert.equal(dateTimeInputsToIso('2026-08-14', ''), null, 'exact deadline requires time');
     assert.deepEqual(deadlinePatch(deadlineDraft()), { deadline: null, deadlineDate: null, deadlineTimezone: null });
   } finally { if (originalTZ === undefined) delete process.env.TZ; else process.env.TZ = originalTZ; }
+});
+
+function installMemoryStorage() {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const values = new Map<string, string>();
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+    removeItem: (key: string) => { values.delete(key); }
+  } });
+  return {
+    values,
+    restore: () => {
+      if (previous) Object.defineProperty(globalThis, 'localStorage', previous);
+      else delete (globalThis as { localStorage?: Storage }).localStorage;
+    }
+  };
+}
+
+function deferred() {
+  let resolve!: () => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+test('autosave serializes overlapping flushes and keeps only latest queued revision', async (context) => {
+  const storage = installMemoryStorage();
+  const firstGate = deferred();
+  const sent: Record<string, unknown>[] = [];
+  let active = 0;
+  let maxActive = 0;
+  let storedAtSecondSend: Record<string, unknown> | undefined;
+  const autosave = new Autosave<Record<string, unknown>>({
+    key: 'autosave-serial',
+    send: async (patch) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      sent.push(patch);
+      if (sent.length === 1) await firstGate.promise;
+      else storedAtSecondSend = JSON.parse(storage.values.get('tasks.autosave.autosave-serial')!).patch;
+      active -= 1;
+    }
+  });
+  context.after(() => { autosave.stop(); storage.restore(); });
+
+  autosave.schedule({ title: 'A' }, null);
+  const first = autosave.flush();
+  autosave.schedule({ title: 'B' }, null);
+  const second = autosave.flush();
+  autosave.schedule({ title: 'C' }, null);
+  const third = autosave.flush();
+  firstGate.resolve();
+  await Promise.all([first, second, third]);
+
+  assert.deepEqual(sent, [{ title: 'A' }, { title: 'C' }]);
+  assert.equal(maxActive, 1);
+  assert.deepEqual(storedAtSecondSend, { title: 'C' });
+  assert.equal(storage.values.has('tasks.autosave.autosave-serial'), false);
+});
+
+test('late success keeps newer queued storage and pending status until it saves', async (context) => {
+  const storage = installMemoryStorage();
+  const firstGate = deferred();
+  const states: string[] = [];
+  const sent: Record<string, unknown>[] = [];
+  const autosave = new Autosave<Record<string, unknown>>({
+    key: 'autosave-late-success',
+    send: async (patch) => { sent.push(patch); if (sent.length === 1) await firstGate.promise; },
+    onState: (state) => states.push(state)
+  });
+  context.after(() => { autosave.stop(); storage.restore(); });
+
+  autosave.schedule({ title: 'A' }, null);
+  const firstFlush = autosave.flush();
+  autosave.schedule({ title: 'B' }, null);
+  firstGate.resolve();
+  await firstFlush;
+
+  assert.deepEqual(JSON.parse(storage.values.get('tasks.autosave.autosave-late-success')!).patch, { title: 'B' });
+  assert.equal(states.at(-1), 'pending');
+  await autosave.flush();
+  assert.deepEqual(sent, [{ title: 'A' }, { title: 'B' }]);
+  assert.equal(storage.values.has('tasks.autosave.autosave-late-success'), false);
+  assert.equal(states.at(-1), 'saved');
+});
+
+test('autosave failure cannot replace newer draft; explicit retry sends latest patch', async (context) => {
+  const storage = installMemoryStorage();
+  const firstGate = deferred();
+  const sent: Record<string, unknown>[] = [];
+  const autosave = new Autosave<Record<string, unknown>>({
+    key: 'autosave-failure',
+    send: async (patch) => {
+      sent.push(patch);
+      if (sent.length === 1) await firstGate.promise;
+    }
+  });
+  context.after(() => { autosave.stop(); storage.restore(); });
+
+  autosave.schedule({ title: 'A' }, null);
+  const first = autosave.flush();
+  autosave.schedule({ title: 'B' }, null);
+  const waiting = autosave.flush();
+  firstGate.reject(new Error('lost response'));
+  await Promise.all([first, waiting]);
+  assert.deepEqual(JSON.parse(storage.values.get('tasks.autosave.autosave-failure')!).patch, { title: 'B' });
+
+  await autosave.flush();
+  assert.deepEqual(sent, [{ title: 'A' }, { title: 'B' }]);
+  assert.equal(storage.values.has('tasks.autosave.autosave-failure'), false);
+});
+
+test('autosave cancels queued diff when latest draft returns to confirmed base', async (context) => {
+  const storage = installMemoryStorage();
+  const sent: Record<string, unknown>[] = [];
+  const autosave = new Autosave<Record<string, unknown>>({ key: 'autosave-cancel', send: async (patch) => { sent.push(patch); } });
+  context.after(() => { autosave.stop(); storage.restore(); });
+
+  autosave.schedule({ title: 'Changed' }, 25);
+  autosave.schedule({}, 25);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.deepEqual(sent, []);
+  assert.equal(storage.values.has('tasks.autosave.autosave-cancel'), false);
 });

@@ -6,7 +6,7 @@ import { api, json } from './api';
 
 export type SaveState = 'idle' | 'pending' | 'saving' | 'saved' | 'error';
 
-export type AutosaveDeps<P> = {
+export type AutosaveDeps<P extends Record<string, unknown>> = {
   key: string;
   send: (patch: P) => Promise<void>;
   onState?: (state: SaveState) => void;
@@ -35,10 +35,13 @@ const writeQueued = <P,>(key: string, value: QueuedDraft<P> | null): boolean => 
   } catch { return false; }
 };
 
-export class Autosave<P> {
+type Pending<P> = { patch: P; revision: number };
+
+export class Autosave<P extends Record<string, unknown>> {
   private timer?: ReturnType<typeof setTimeout>;
-  private inFlight: Promise<void> | null = null;
-  private queued: P | null = null;
+  private inFlight: Promise<boolean> | null = null;
+  private queued: Pending<P> | null = null;
+  private revision = 0;
   private state: SaveState = 'idle';
   private stopped = false;
 
@@ -50,49 +53,81 @@ export class Autosave<P> {
     this.deps.onState?.(next);
   }
 
+  private getPending() { return this.queued; }
+
   // Schedule a debounced save; call for every draft mutation.
-  schedule(patch: P, delayMs = 900) {
+  schedule(patch: P, delayMs: number | null = 900) {
     if (this.stopped) return;
-    this.queued = patch;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => void this.flush(), delayMs);
+    this.timer = undefined;
+    const pending = { patch, revision: ++this.revision };
+    if (!Object.keys(patch).length) {
+      this.queued = this.inFlight ? pending : null;
+      if (!this.inFlight) {
+        writeQueued(this.deps.key, null);
+        if (this.state !== 'error') this.setState('saved');
+      } else this.setState('pending');
+      return;
+    }
+    this.queued = pending;
+    if (!writeQueued(this.deps.key, { patch, at: Date.now() })) this.deps.onOfflineQueued?.(patch);
+    if (delayMs !== null) this.timer = setTimeout(() => void this.flush(), delayMs);
     this.setState('pending');
   }
 
   // Send immediately (chosen values, blur, screen exit). Never drops a newer edit.
   async flush(): Promise<void> {
     if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }
-    if (!this.queued || this.stopped) return;
-    const patch = this.queued;
+    if (this.stopped) return;
+    if (this.inFlight) {
+      const succeeded = await this.inFlight;
+      if (succeeded && this.queued) await this.flush();
+      return;
+    }
+    const pending = this.queued;
+    if (!pending) return;
+    if (!Object.keys(pending.patch).length) {
+      this.queued = null;
+      if (this.state !== 'error') {
+        writeQueued(this.deps.key, null);
+        this.setState('saved');
+      }
+      return;
+    }
     this.queued = null;
     this.setState('saving');
-    const stored = writeQueued(this.deps.key, { patch, at: Date.now() });
-    if (!stored) this.deps.onOfflineQueued?.(patch); // storage unavailable: caller must warn
-    await this.send(patch);
+    if (!writeQueued(this.deps.key, { patch: pending.patch, at: Date.now() })) this.deps.onOfflineQueued?.(pending.patch);
+    let current: Promise<boolean>;
+    current = this.send(pending).finally(() => {
+      if (this.inFlight === current) this.inFlight = null;
+    });
+    this.inFlight = current;
+    const succeeded = await current;
+    if (!succeeded) return;
+    const latest = this.getPending();
+    if (latest && !Object.keys(latest.patch).length) {
+      this.queued = null;
+      writeQueued(this.deps.key, null);
+      this.setState('saved');
+    } else if (!latest && this.revision === pending.revision) {
+      writeQueued(this.deps.key, null);
+      this.setState('saved');
+    } else if (latest) this.setState('pending');
   }
 
-  private async send(patch: P): Promise<void> {
-    if (this.inFlight) await this.inFlight.catch(() => undefined);
-    let current: Promise<void> | null = null;
-    current = this.inFlight = (async () => {
-      try {
-        await this.deps.send(patch);
-        // A late success for an older request must not mark a newer edit saved: only
-        // report 'saved' when nothing newer has been scheduled meanwhile (issue #129).
-        if (!this.queued) this.setState('saved');
-        writeQueued(this.deps.key, null);
-      } catch (error) {
-        // Hold the patch for the next flush; no infinite retry on validation/auth —
-        // the next attempt happens only on user action or reconnect (issue #129).
-        this.queued = patch;
-        writeQueued(this.deps.key, { patch, at: Date.now() });
-        this.setState('error');
-        this.deps.onError?.(error);
-      } finally {
-        if (this.inFlight === current) this.inFlight = null;
+  private async send(pending: Pending<P>): Promise<boolean> {
+    try {
+      await this.deps.send(pending.patch);
+      return true;
+    } catch (error) {
+      if (!this.queued || this.queued.revision <= pending.revision) {
+        this.queued = pending;
+        if (!writeQueued(this.deps.key, { patch: pending.patch, at: Date.now() })) this.deps.onOfflineQueued?.(pending.patch);
       }
-    })();
-    return current;
+      this.setState('error');
+      this.deps.onError?.(error);
+      return false;
+    }
   }
 
   // Resume a draft persisted by a previous session (offline close / lost response).

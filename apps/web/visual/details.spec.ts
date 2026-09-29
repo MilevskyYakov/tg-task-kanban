@@ -56,6 +56,12 @@ async function mockDetails(page: Page, { failSave = false, readOnly = false, tas
       }
       revision += 1;
       savedTask = { ...savedTask, ...Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'expectedVersion' && key !== 'notifyAssignee')) , version: String(revision) };
+      if ('projectId' in input) savedTask.project_id = input.projectId;
+      if ('assigneeUserId' in input) savedTask.assignee_user_id = input.assigneeUserId;
+      if ('blockerTaskId' in input) savedTask.blocked_by_task_id = input.blockerTaskId;
+      if ('waitReason' in input) savedTask.wait_reason = input.waitReason;
+      if ('waitCheckAt' in input) savedTask.wait_check_at = input.waitCheckAt;
+      if ('issueUrl' in input) savedTask.issue_url = input.issueUrl;
       if ('deadline' in input) savedTask.deadline = input.deadline;
       if ('deadlineDate' in input) savedTask.deadline_date = input.deadlineDate;
       if ('deadlineTimezone' in input) savedTask.deadline_timezone = input.deadlineTimezone;
@@ -70,6 +76,7 @@ async function mockDetails(page: Page, { failSave = false, readOnly = false, tas
       : path.endsWith('/publications') ? { schedules: [] }
       : path.endsWith('/recurrences') ? { recurrences: [] }
       : path.endsWith('/task-filters') ? { filters: {} }
+      : path.endsWith(`/tasks/${task.id}`) ? savedTask
       : { tasks: [savedTask] };
     await route.fulfill({ json: payload });
   });
@@ -182,6 +189,161 @@ test('details keeps edited input after failed save and resends it once', async (
   await expect.poll(() => requests.length).toBe(1);
   expect(requests[0].title).toBe('Не терять эту правку');
   await expect(page.locator('.detail-save-state')).toHaveText('Сохранено', { timeout: 5000 });
+});
+
+test('details serializes flushes and sends latest edit with confirmed version', async ({ page }) => {
+  const requests = await openDetails(page, 390);
+  let releaseFirst!: () => void;
+  let markFirstStarted!: () => void;
+  const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
+  let serverTask = { ...task };
+  let revision = Number(task.version);
+  let active = 0;
+  let maxActive = 0;
+
+  await page.route('**/api/boards/board-1/tasks/task-1', async (route) => {
+    if (route.request().method() !== 'PATCH') { await route.fallback(); return; }
+    const input = route.request().postDataJSON();
+    requests.push(input);
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    try {
+      if (requests.length === 1) { markFirstStarted(); await firstGate; }
+      if (input.expectedVersion !== serverTask.version) {
+        await route.fulfill({ status: 409, json: { error: 'version conflict', expectedVersion: input.expectedVersion, task: serverTask } });
+        return;
+      }
+      revision += 1;
+      serverTask = { ...serverTask, title: input.title ?? serverTask.title, version: String(revision) };
+      await route.fulfill({ json: serverTask });
+    } finally { active -= 1; }
+  });
+
+  const title = page.getByRole('textbox', { name: 'Название задачи' });
+  await title.fill('A');
+  await title.blur();
+  await firstStarted;
+  await title.fill('B');
+  await title.blur();
+  await title.fill('C');
+  await title.blur();
+  await page.waitForTimeout(100);
+  expect(requests).toHaveLength(1);
+  expect(await title.inputValue()).toBe('C');
+
+  releaseFirst();
+  await expect.poll(() => requests.length).toBe(2);
+  await expect(page.locator('.detail-save-state')).toHaveText('Сохранено', { timeout: 5000 });
+  expect(requests.map(({ title: value, expectedVersion }) => [value, expectedVersion])).toEqual([['A', '1'], ['C', '2']]);
+  expect(maxActive).toBe(1);
+  expect(serverTask.title).toBe('C');
+});
+
+test('details retries latest draft after an older save fails', async ({ page }) => {
+  const requests = await openDetails(page, 390);
+  let releaseFirst!: () => void;
+  let markFirstStarted!: () => void;
+  const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
+  let serverTask = { ...task };
+  let revision = Number(task.version);
+
+  await page.route('**/api/boards/board-1/tasks/task-1', async (route) => {
+    const request = route.request();
+    if (request.method() === 'GET') { await route.fulfill({ json: serverTask }); return; }
+    if (request.method() !== 'PATCH') { await route.fallback(); return; }
+    const input = request.postDataJSON();
+    requests.push(input);
+    if (requests.length === 1) {
+      markFirstStarted();
+      await firstGate;
+      await route.fulfill({ status: 500, json: { error: 'temporary failure' } });
+      return;
+    }
+    revision += 1;
+    serverTask = { ...serverTask, title: input.title ?? serverTask.title, version: String(revision) };
+    await route.fulfill({ json: serverTask });
+  });
+
+  const title = page.getByRole('textbox', { name: 'Название задачи' });
+  await title.fill('Older request');
+  await title.blur();
+  await firstStarted;
+  await title.fill('Latest intent');
+  await title.blur();
+  releaseFirst();
+  await expect(page.locator('.detail-save-state')).toHaveText(/Не сохранено/, { timeout: 5000 });
+  expect(requests).toHaveLength(1);
+
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect.poll(() => requests.length).toBe(2);
+  await expect(page.locator('.detail-save-state')).toHaveText('Сохранено', { timeout: 5000 });
+  expect(requests.map(({ title: value, expectedVersion }) => [value, expectedVersion])).toEqual([['Older request', '1'], ['Latest intent', '1']]);
+  expect(serverTask.title).toBe('Latest intent');
+});
+
+test('details reconciles a committed edit when PATCH response is lost', async ({ page }) => {
+  const requests = await openDetails(page, 390);
+  let serverTask = { ...task };
+  let revision = Number(task.version);
+
+  await page.route('**/api/boards/board-1/tasks/task-1', async (route) => {
+    const request = route.request();
+    if (request.method() === 'GET') { await route.fulfill({ json: serverTask }); return; }
+    if (request.method() !== 'PATCH') { await route.fallback(); return; }
+    const input = request.postDataJSON();
+    requests.push(input);
+    revision += 1;
+    serverTask = { ...serverTask, title: input.title ?? serverTask.title, version: String(revision) };
+    await route.abort();
+  });
+
+  const title = page.getByRole('textbox', { name: 'Название задачи' });
+  await title.fill('Confirmed by refresh');
+  await title.blur();
+  await expect(page.locator('.detail-save-state')).toHaveText('Сохранено', { timeout: 5000 });
+  expect(requests).toHaveLength(1);
+  expect(serverTask.title).toBe('Confirmed by refresh');
+  expect(await title.inputValue()).toBe('Confirmed by refresh');
+  expect(await page.evaluate(() => localStorage.getItem('tasks.autosave.task.task-1'))).toBeNull();
+});
+
+test('details does not automatically retry auth, not-found, or validation errors', async ({ page }) => {
+  const requests = await openDetails(page, 390);
+  let status = 401;
+  await page.route('**/api/boards/board-1/tasks/task-1', async (route) => {
+    if (route.request().method() !== 'PATCH') { await route.fallback(); return; }
+    requests.push(route.request().postDataJSON());
+    await route.fulfill({ status, json: { error: `save rejected: ${status}` } });
+  });
+
+  const title = page.getByRole('textbox', { name: 'Название задачи' });
+  for (const nextStatus of [401, 403, 404, 422]) {
+    status = nextStatus;
+    await title.fill(`Rejected ${nextStatus}`);
+    await title.blur();
+    await expect.poll(() => requests.length).toBe([401, 403, 404, 422].indexOf(nextStatus) + 1);
+    await expect(page.locator('.detail-save-state')).toHaveText(/Не сохранено/, { timeout: 5000 });
+    await page.waitForTimeout(950);
+    expect(requests).toHaveLength([401, 403, 404, 422].indexOf(nextStatus) + 1);
+  }
+});
+
+test('details cancels reverted title diff and keeps independent field edit', async ({ page }) => {
+  const requests = await openDetails(page, 390);
+  const title = page.getByRole('textbox', { name: 'Название задачи' });
+  await title.fill('Устаревшее название');
+  await title.fill(task.title);
+  await page.waitForTimeout(1000);
+  expect(requests).toHaveLength(0);
+
+  await page.locator('.detail-description-actions').getByRole('button', { name: 'Изменить' }).click();
+  await page.getByRole('textbox', { name: 'Описание' }).fill('Новое описание');
+  await flushAutosave(page);
+  expect(requests).toHaveLength(1);
+  expect(requests[0].description).toBe('Новое описание');
+  expect(requests[0]).not.toHaveProperty('title');
 });
 
 test('description stays read-only until edit, autosaves on done, resizes both ways', async ({ page }) => {

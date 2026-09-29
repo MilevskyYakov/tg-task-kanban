@@ -724,9 +724,9 @@ function App() {
     candidateTasks={detailTasks.filter((item) => item.id !== openTask.id && item.status !== 'done' && !item.archived_at)}
     boardName={boards.find((item) => item.id === openTask.board_id)?.name ?? openTask.board_name ?? 'Задача'}
     onBack={() => closeTaskDetails()}
-    onSave={async (patch, future, confirmIncompleteChecklist = false) => {
+    onSave={async (patch, future, confirmIncompleteChecklist = false, expectedVersion) => {
       const query = future ? '?scope=future' : '';
-      const saved = await api<Task & { notificationWarning?: string; seriesUpdateFailed?: boolean }>(`/api/boards/${openTask.board_id}/tasks/${openTask.id}${query}`, json('PATCH', { ...patch, expectedVersion: openTask.version, confirmIncompleteChecklist }));
+      const saved = await api<Task & { notificationWarning?: string; seriesUpdateFailed?: boolean }>(`/api/boards/${openTask.board_id}/tasks/${openTask.id}${query}`, json('PATCH', { ...patch, expectedVersion: expectedVersion ?? openTask.version, confirmIncompleteChecklist }));
       // Server-confirmed object becomes the new baseline: no stale local merge, no full
       // board reload per keystroke batch (issue #129).
       const confirmed: Task = { ...saved, checklist_total: openTask.checklist_total, checklist_completed: openTask.checklist_completed };
