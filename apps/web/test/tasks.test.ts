@@ -7,7 +7,7 @@ import { Autosave } from '../src/autosave.js';
 import { runClaim } from '../src/claim-task.js';
 import { resolveThemeScheme } from '../src/environment.js';
 import { countLabel, initialNavigation, isSettingsNavigation, settingsSections } from '../src/navigation.js';
-import { taskDraft, taskPatch } from '../src/task-details.js';
+import { taskDraft, taskDraftStorageKey, taskPatch } from '../src/task-details.js';
 import {
   activeFilterCount,
   dateInputToIso,
@@ -259,6 +259,15 @@ test('task details patch sends only the changed fields and keeps blocker groups 
   assert.throws(() => taskPatch({ ...base, issueUrl: 'gitlab.com/o/r/issues/1' }, base), /Ссылка на issue/);
   // Clearing the link sends an explicit null, not a missing field.
   assert.deepEqual(taskPatch({ ...base, issueUrl: '' }, { ...base, issueUrl: 'https://github.com/o/r/issues/9' }), { issueUrl: null });
+});
+
+test('task draft storage key isolates users, boards, and tasks', () => {
+  const key = taskDraftStorageKey('user 1', 'board-1', 'task-1');
+  assert.equal(key, 'tasks.draft.v1.["user 1","board-1","task-1"]');
+  assert.notEqual(key, taskDraftStorageKey('user-2', 'board-1', 'task-1'));
+  assert.notEqual(key, taskDraftStorageKey('user 1', 'board-2', 'task-1'));
+  assert.notEqual(key, taskDraftStorageKey('user 1', 'board-1', 'task-2'));
+  assert.notEqual(taskDraftStorageKey('user.board', 'task', '1'), taskDraftStorageKey('user', 'board.task', '1'));
 });
 
 test('deadline modes round-trip without changing old timestamps, DST folds or date-only zones', () => {

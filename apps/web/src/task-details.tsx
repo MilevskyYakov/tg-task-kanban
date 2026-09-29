@@ -97,6 +97,7 @@ export function taskPatch(draft: TaskDraft, base: TaskDraft) {
 
 type Props = {
   task: Task;
+  userId: string;
   readOnly?: boolean;
   collaboration: Collaboration;
   projects: Project[];
@@ -126,8 +127,63 @@ const safePatch = (draft: TaskDraft, base: TaskDraft): Record<string, unknown> =
   catch { return {}; }
 };
 
-export function TaskDetails({ task, collaboration, projects, members, candidateTasks, boardName, onBack, onClaim, onSave, onArchive, onChecklistAdd, onChecklistUpdate, onChecklistDelete, onComment, onUrlAttachment, onFileAttachment, readOnly = false }: Props) {
-  const [draft, setDraft] = useState(() => taskDraft(task));
+export const taskDraftStorageKey = (userId: string, boardId: string, taskId: string) =>
+  `tasks.draft.v1.${JSON.stringify([userId, boardId, taskId])}`;
+
+const isStoredTaskDraft = (value: unknown): value is TaskDraft => {
+  if (!value || typeof value !== 'object') return false;
+  const draft = value as Partial<TaskDraft>;
+  return typeof draft.title === 'string' && typeof draft.description === 'string'
+    && statuses.includes(draft.status as TaskStatus)
+    && typeof draft.projectId === 'string' && typeof draft.assigneeUserId === 'string'
+    && Boolean(draft.due && typeof draft.due === 'object'
+      && ['none', 'date', 'datetime'].includes(draft.due.mode)
+      && typeof draft.due.date === 'string' && typeof draft.due.time === 'string'
+      && typeof draft.due.timezone === 'string'
+      && (draft.due.originalTimestamp === undefined || draft.due.originalTimestamp === null || typeof draft.due.originalTimestamp === 'string'))
+    && Object.keys(priorityDisplayName).includes(draft.priority ?? '')
+    && typeof draft.blockerTaskId === 'string' && typeof draft.issueUrl === 'string'
+    && typeof draft.waitReason === 'string' && typeof draft.waitCheckAt === 'string';
+};
+
+const readTaskDraft = (key: string, base: TaskDraft, enabled: boolean) => {
+  if (!enabled) return { draft: base, restored: false, warning: false };
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return { draft: base, restored: false, warning: false };
+    const stored: unknown = JSON.parse(raw);
+    if (!stored || typeof stored !== 'object' || (stored as { version?: unknown }).version !== 1
+      || !isStoredTaskDraft((stored as { draft?: unknown }).draft)) throw new Error('Invalid saved draft');
+    const draft = (stored as { draft: TaskDraft }).draft;
+    return { draft: { ...draft, future: false, notifyAssignee: false }, restored: true, warning: false };
+  } catch {
+    try { localStorage.removeItem(key); } catch { /* Keep the visible warning if storage is unavailable. */ }
+    return { draft: base, restored: false, warning: true };
+  }
+};
+
+const writeTaskDraft = (key: string, draft: TaskDraft) => {
+  try {
+    localStorage.setItem(key, JSON.stringify({ version: 1, draft: { ...draft, future: false, notifyAssignee: false } }));
+    return true;
+  } catch { return false; }
+};
+
+const clearTaskDraft = (key: string) => {
+  try { localStorage.removeItem(key); return true; }
+  catch { return false; }
+};
+
+const validPatch = (draft: TaskDraft, base: TaskDraft): Record<string, unknown> | null => {
+  try { return taskPatch(draft, base); }
+  catch { return null; }
+};
+
+export function TaskDetails({ task, userId, collaboration, projects, members, candidateTasks, boardName, onBack, onClaim, onSave, onArchive, onChecklistAdd, onChecklistUpdate, onChecklistDelete, onComment, onUrlAttachment, onFileAttachment, readOnly = false }: Props) {
+  const initialBase = taskDraft(task);
+  const localDraftKey = taskDraftStorageKey(userId, task.board_id, task.id);
+  const [initialDraft] = useState(() => readTaskDraft(localDraftKey, initialBase, !readOnly));
+  const [draft, setDraft] = useState(initialDraft.draft);
   const baseRef = useRef(taskDraft(task));
   const versionRef = useRef(task.version);
   const [descriptionEditing, setDescriptionEditing] = useState(false);
@@ -143,16 +199,25 @@ export function TaskDetails({ task, collaboration, projects, members, candidateT
   const [historyOpen, setHistoryOpen] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [saveState, setSaveState] = useState<SaveState>('idle');
+  const [saveState, setSaveState] = useState<SaveState>(initialDraft.restored ? 'pending' : 'idle');
   const [conflict, setConflict] = useState<{ serverTask: Task; localPatch: Record<string, unknown> }>();
-  const [storageWarning, setStorageWarning] = useState(false);
+  const [storageWarning, setStorageWarning] = useState(initialDraft.warning);
+  const retryOnReconnect = useRef(true);
+  const localDraftPending = useRef(false);
   const descriptionEditor = useRef<HTMLTextAreaElement>(null);
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const savable = !readOnly;
   const sendPatch = useRef<(patch: Record<string, unknown>) => Promise<Task>>(async () => { throw new Error('not ready'); });
   sendPatch.current = async (patch) => {
-    return onSave(patch, draftRef.current.future, false, versionRef.current);
+    try {
+      const saved = await onSave(patch, draftRef.current.future, false, versionRef.current);
+      retryOnReconnect.current = true;
+      return saved;
+    } catch (caught) {
+      retryOnReconnect.current = !(caught instanceof ApiError && caught.status >= 400 && caught.status < 500);
+      throw caught;
+    }
   };
   const handleSaveError = (caught: unknown) => {
     if (caught instanceof ApiError && caught.status === 409) {
@@ -163,14 +228,18 @@ export function TaskDetails({ task, collaboration, projects, members, candidateT
   };
   let autosave: Autosave<Record<string, unknown>>;
   autosave = useMemo(() => new Autosave<Record<string, unknown>>({
-    key: `task.${task.id}`,
+    key: JSON.stringify([userId, task.board_id, task.id]),
     send: async (patch) => {
       try {
         const saved = await sendPatch.current(patch);
         versionRef.current = saved.version ?? versionRef.current;
         baseRef.current = taskDraft(saved);
         setError('');
-        autosave.schedule(safePatch(draftRef.current, baseRef.current), 0);
+        const currentPatch = validPatch(draftRef.current, baseRef.current);
+        localDraftPending.current = currentPatch === null;
+        if (currentPatch && !Object.keys(currentPatch).length) setStorageWarning(!clearTaskDraft(localDraftKey));
+        else setStorageWarning(!writeTaskDraft(localDraftKey, draftRef.current));
+        autosave.schedule(currentPatch ?? {}, 0);
       } catch (caught) {
         handleSaveError(caught);
         if (caught instanceof TypeError || (caught instanceof ApiError && caught.status >= 500)) {
@@ -178,23 +247,47 @@ export function TaskDetails({ task, collaboration, projects, members, candidateT
             const current = await api<Task>(`/api/boards/${task.board_id}/tasks/${task.id}`);
             versionRef.current = current.version ?? versionRef.current;
             baseRef.current = taskDraft(current);
-            const latest = safePatch(draftRef.current, baseRef.current);
-            autosave.schedule(latest, null);
-            if (!Object.keys(latest).length) { setError(''); return; }
-          } catch { /* Keep the original save error and queued draft. */ }
+            const latest = validPatch(draftRef.current, baseRef.current);
+            if (latest && !Object.keys(latest).length) {
+              localDraftPending.current = false;
+              setStorageWarning(!clearTaskDraft(localDraftKey));
+              autosave.schedule({}, null);
+              setError('');
+              return;
+            }
+            if (latest) autosave.schedule(latest, null);
+          } catch (refreshError) {
+            if (refreshError instanceof ApiError && refreshError.status >= 400 && refreshError.status < 500) retryOnReconnect.current = false;
+            /* Keep the original save error and queued draft. */
+          }
         }
         throw caught;
       }
     },
-    onState: setSaveState,
-    onOfflineQueued: () => setStorageWarning(true)
+    onState: (state) => setSaveState(state === 'saved' && localDraftPending.current ? 'pending' : state)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [task.id]);
+  }), [userId, task.board_id, task.id]);
   useEffect(() => () => autosave.stop(), [autosave]);
-  useEffect(() => reconnectRetry(() => { if (savable) void autosave.flush().catch(() => undefined); }), [autosave, savable]);
+  useEffect(() => reconnectRetry(() => { if (savable && retryOnReconnect.current) void autosave.flush().catch(() => undefined); }), [autosave, savable]);
+  useEffect(() => {
+    if (!initialDraft.restored || !savable) return;
+    const patch = validPatch(initialDraft.draft, baseRef.current);
+    if (!patch) { localDraftPending.current = true; setSaveState('pending'); return; }
+    if (!Object.keys(patch).length) {
+      localDraftPending.current = false;
+      setStorageWarning(!clearTaskDraft(localDraftKey));
+      setSaveState('saved');
+      return;
+    }
+    autosave.schedule(patch);
+  }, [autosave, initialDraft, localDraftKey, savable]);
   const scheduleSave = (nextDraft: TaskDraft) => {
     if (!savable) return;
-    autosave.schedule(safePatch(nextDraft, baseRef.current));
+    retryOnReconnect.current = true;
+    setStorageWarning(!writeTaskDraft(localDraftKey, nextDraft));
+    const patch = validPatch(nextDraft, baseRef.current);
+    localDraftPending.current = patch === null;
+    autosave.schedule(patch ?? {});
   };
   const flushNow = async () => {
     if (!savable) return;
@@ -272,7 +365,7 @@ export function TaskDetails({ task, collaboration, projects, members, candidateT
 
     {readOnly && <p className="notice">Доска доступна только для чтения.</p>}
     {savable && <p className="detail-save-state" role="status" data-state={saveState}>{saveStateLabels[saveState]}</p>}
-    {storageWarning && <p className="detail-error" role="alert">Локальное хранилище недоступно: при закрытии приложения несохранённые правки будут потеряны.</p>}
+    {storageWarning && <p className="detail-error" role="alert">Локальная копия недоступна или повреждена: несохранённые правки могут потеряться при закрытии приложения.</p>}
     <form onSubmit={(event) => event.preventDefault()}>
       <fieldset className="readonly-fields detail-surface" disabled={readOnly}>
         <div className="detail-heading"><div className="detail-title"><textarea aria-label="Название задачи" maxLength={200} value={draft.title} onChange={(event) => set('title', event.target.value)} onBlur={() => void flushNow()}/></div>
