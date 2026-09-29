@@ -1,11 +1,81 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { createDatabase, createTask, redeemBoardLink, updateTask } from '../src/db.js';
+import { createDatabase, createTask, login, redeemBoardLink, updateTask } from '../src/db.js';
 import { deliverPendingPublications, queueDuePublications, renderPublication, updateSchedule } from '../src/publications.js';
+import { buildApp } from '../src/app.js';
+import type { Config } from '../src/config.js';
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url) throw new Error('TEST_DATABASE_URL is required');
+
+test('publication PUT/GET persists toggles, enforces access and stops new scheduler runs only', async (t) => {
+  const db = createDatabase(url!);
+  const config: Config = { botToken: 'test', databaseUrl: url!, sessionSecret: 'isolated-publications-secret', initDataMaxAgeSeconds: 60,
+    sessionMaxAgeSeconds: 3600, host: '127.0.0.1', port: 0, production: false, webhookSecret: 'isolated-publications-webhook',
+    publicUrl: 'https://example.test', botUsername: 'test_bot' };
+  const stamp = randomBytes(6).readUIntBE(0, 6);
+  const people = await Promise.all(['Admin', 'Member', 'Outsider'].map((first_name, index) => login(db, { id: stamp + index, first_name }, 3600, config.sessionSecret)));
+  const [admin, member, outsider] = people;
+  const boardId = randomUUID();
+  const otherBoardId = randomUUID();
+  const app = buildApp(config, db);
+  let adminAllowed = true;
+  t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, options?: RequestInit) => {
+    assert.ok(String(input).endsWith('/getChatMember'), 'no live delivery');
+    return Response.json({ ok: true, result: { status: adminAllowed && String(JSON.parse(String(options?.body)).user_id) === String(stamp) ? 'administrator' : 'member' } });
+  });
+  const call = (person: typeof admin | undefined, method: 'GET' | 'PUT' | 'POST', path: string, payload?: object) => app.inject({ method, url: path, cookies: person ? { session: person.token } : {}, payload });
+  const path = `/api/boards/${boardId}/publications`;
+  const input = { enabled: true, weekdays: [1], local_time: '09:00', timezone: 'UTC', included_statuses: ['todo'] };
+  const readback = async () => (await call(admin, 'GET', path)).json().schedules;
+  try {
+    for (const id of [boardId, otherBoardId]) {
+      await db.query("INSERT INTO boards (id,type,name,telegram_chat_id,status) VALUES ($1,'chat','Publication test',$2,'active')", [id, id === boardId ? -stamp : -stamp - 1]);
+      await db.query("INSERT INTO publication_schedules (board_id,kind,enabled,weekdays,local_time,timezone) VALUES ($1,'daily',true,ARRAY[1]::smallint[],'09:00','UTC'),($1,'weekly',true,ARRAY[1]::smallint[],'09:00','UTC')", [id]);
+    }
+    for (const person of [admin, member]) await db.query("INSERT INTO memberships (board_id,user_id,role) VALUES ($1,$2,$3)", [boardId, person.userId, person === admin ? 'admin' : 'member']);
+    await queueDuePublications(db, new Date('2026-08-10T09:00:00Z'));
+    const before = (await db.query('SELECT id,status,sent_parts FROM publication_runs WHERE board_id=$1 ORDER BY kind', [boardId])).rows;
+    assert.equal(before.length, 2);
+    for (const kind of ['daily', 'weekly']) {
+      const response = await call(admin, 'PUT', `${path}/${kind}`, { ...input, enabled: false });
+      assert.equal(response.statusCode, 200);
+      assert.equal(response.json().enabled, false);
+    }
+    assert.ok((await readback()).every((schedule: { enabled: boolean }) => !schedule.enabled));
+    await queueDuePublications(db, new Date('2026-08-17T09:00:00Z'));
+    assert.deepEqual((await db.query('SELECT id,status,sent_parts FROM publication_runs WHERE board_id=$1 ORDER BY kind', [boardId])).rows, before, 'disabled schedules add no runs and leave existing runs untouched');
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM publication_runs WHERE board_id=$1', [otherBoardId])).rows[0].count, 4, 'other board schedules remain enabled');
+    for (const kind of ['daily', 'weekly']) assert.equal((await call(admin, 'PUT', `${path}/${kind}`, input)).statusCode, 200);
+    await queueDuePublications(db, new Date('2026-08-17T09:00:00Z'));
+    await queueDuePublications(db, new Date('2026-08-17T09:00:00Z'));
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM publication_runs WHERE board_id=$1', [boardId])).rows[0].count, 4, 'reenabled schedules resume, without duplicate runs');
+    for (const invalid of [{ enabled: 'false' }, { weekdays: [] }, { weekdays: [0] }, { local_time: '24:00' }, { timezone: 'Invalid/Zone' }, { included_statuses: ['invalid'] }]) {
+      assert.equal((await call(admin, 'PUT', `${path}/daily`, { ...input, enabled: false, ...invalid })).statusCode, 400);
+    }
+    assert.equal((await call(undefined, 'PUT', `${path}/daily`, input)).statusCode, 401);
+    assert.equal((await call(member, 'PUT', `${path}/daily`, input)).statusCode, 403);
+    assert.equal((await call(outsider, 'PUT', `${path}/daily`, input)).statusCode, 404);
+    assert.equal((await call(outsider, 'GET', path)).statusCode, 404);
+    assert.equal((await call(admin, 'PUT', `/api/boards/${otherBoardId}/publications/daily`, input)).statusCode, 404);
+    assert.equal((await call(admin, 'POST', `${path}/daily/preview`, { ...input, enabled: false })).statusCode, 200);
+    adminAllowed = false;
+    assert.equal((await call(admin, 'PUT', `${path}/daily`, { ...input, enabled: false })).statusCode, 403, 'current Telegram rights required');
+    adminAllowed = true;
+    for (const status of ['frozen', 'archived', 'draft']) {
+      await db.query('UPDATE boards SET status=$2 WHERE id=$1', [boardId, status]);
+      assert.equal((await call(admin, 'PUT', `${path}/daily`, { ...input, enabled: false })).statusCode, 403, `${status} board is read-only`);
+      assert.equal(await updateSchedule(db, boardId, 'daily', { ...input, enabled: false }), null, 'DB write also checks board state');
+    }
+    assert.ok((await readback()).every((schedule: { enabled: boolean }) => schedule.enabled), 'rejected writes do not change schedules');
+  } finally {
+    await app.close();
+    await db.query('DELETE FROM boards WHERE id=ANY($1) OR owner_user_id=ANY($2)', [[boardId, otherBoardId], people.map((person) => person.userId)]);
+    await db.query('DELETE FROM users WHERE id=ANY($1)', [people.map((person) => person.userId)]);
+    await db.end();
+  }
+});
 
 test('publications honor timezone, deduplicate runs, group tasks and keep deep links valid', async () => {
   const db = createDatabase(url!);

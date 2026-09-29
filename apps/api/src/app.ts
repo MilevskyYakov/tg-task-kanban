@@ -181,9 +181,10 @@ export function buildApp(config: Config, db: Database) {
     if (!user) return reply.code(401).send({ error: 'authentication required' });
     const board = await boardForUser(db, user.id, request.params.id);
     if (!board || board.type !== 'chat' || !['daily', 'weekly'].includes(request.params.kind)) return reply.code(404).send({ error: 'publication not found' });
+    if (board.status !== 'active') return reply.code(403).send({ error: 'board is read-only' });
     if (!await isChatAdmin(config.botToken, board.telegram_chat_id, user.telegram_id)) return reply.code(403).send({ error: 'Telegram chat admin required' });
     const input = scheduleInput(request.body); if (typeof input === 'string') return reply.code(400).send({ error: input });
-    return updateSchedule(db, board.id, request.params.kind, input);
+    return await updateSchedule(db, board.id, request.params.kind, input) ?? reply.code(403).send({ error: 'publication is not writable' });
   });
   app.post<{Params: {id: string; kind: PublicationKind}, Body: Omit<PublicationSchedule, 'kind'>}>('/api/boards/:id/publications/:kind/preview', async (request, reply) => {
     const user = await sessionUser(db, request.cookies.session, config.sessionSecret);

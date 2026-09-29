@@ -44,7 +44,8 @@ export async function schedulesForBoard(db: Database, userId: string, boardId: s
 export async function updateSchedule(db: Database, boardId: string, kind: PublicationKind, input: Omit<PublicationSchedule, 'kind'>) {
   const result = await db.query<PublicationSchedule>(`UPDATE publication_schedules SET enabled = $3, weekdays = $4,
       local_time = $5, timezone = $6, included_statuses = $7, updated_at = now()
-    WHERE board_id = $1 AND kind = $2 RETURNING kind, enabled, weekdays,
+    WHERE board_id = $1 AND kind = $2 AND EXISTS (SELECT 1 FROM boards WHERE id = $1 AND status = 'active')
+    RETURNING kind, enabled, weekdays,
       to_char(local_time, 'HH24:MI') AS local_time, timezone, included_statuses`,
     [boardId, kind, input.enabled, input.weekdays, input.local_time, input.timezone, input.included_statuses]);
   return result.rows[0] ?? null;
