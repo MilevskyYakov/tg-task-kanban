@@ -1,6 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
+import { randomBytes } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { buildApp } from '../../api/src/app';
+import { createDatabase, createTask, login } from '../../api/src/db';
+import type { Config } from '../../api/src/config';
 
 const evidence = fileURLToPath(new URL('../../../artifacts/visual-evidence/', import.meta.url));
 const board = { id: 'board-1', name: 'Task Kanban', type: 'personal', status: 'active', role: 'owner' };
@@ -33,6 +37,7 @@ async function mockDetails(page: Page, { failSave = false, readOnly = false, tas
   const requests: Record<string, any>[] = [];
   await page.addInitScript((boardId) => {
     localStorage.setItem('tasks.globalBoardId', boardId);
+    if (!localStorage.getItem('test.detailsUserId')) localStorage.setItem('test.detailsUserId', 'user-2');
     localStorage.setItem('tasks.viewState', JSON.stringify({ view: 'list', grouping: 'deadline', filters: { scope: 'all', project: '', assignee: '', status: '', priority: '', deadline: '', unassigned: false, search: '' }, scrollY: 0, kanbanStatus: 'todo' }));
   }, board.id);
   await page.route('https://telegram.org/js/telegram-web-app.js', (route) => route.fulfill({
@@ -68,8 +73,8 @@ async function mockDetails(page: Page, { failSave = false, readOnly = false, tas
       await route.fulfill({ json: savedTask });
       return;
     }
-    const payload = path === '/api/auth/telegram' ? { userId: 'user-2' }
-      : path === '/api/boards' ? { boards: [detailBoard] }
+    if (path === '/api/auth/telegram') return route.fulfill({ json: { userId: await page.evaluate(() => localStorage.getItem('test.detailsUserId') ?? 'user-2') } });
+    const payload = path === '/api/boards' ? { boards: [detailBoard] }
       : path.endsWith('/collaboration') ? collaboration
       : path.endsWith('/projects') ? { projects: [{ id: 'project-1', name: projectName }] }
       : path.endsWith('/members') ? { members: [{ id: 'user-2', first_name: memberName }] }
@@ -191,6 +196,171 @@ test('details keeps edited input after failed save and resends it once', async (
   await expect(page.locator('.detail-save-state')).toHaveText('Сохранено', { timeout: 5000 });
 });
 
+test('details restores the latest edit after reload before debounce and confirms it on the server', async ({ page }) => {
+  const requests = await openDetails(page, 390);
+  const title = 'Правка до debounce';
+  await page.getByRole('textbox', { name: 'Название задачи' }).fill(title);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('tasks.draft.v1.["user-2","board-1","task-1"]'))).toContain(title);
+  await page.reload();
+  await page.getByRole('button').filter({ hasText: task.title }).first().click();
+  await expect(page.getByRole('textbox', { name: 'Название задачи' })).toHaveValue(title);
+  await flushAutosave(page);
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0].title).toBe(title);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('tasks.draft.v1.["user-2","board-1","task-1"]'))).toBeNull();
+});
+
+test('details reopens a failed offline draft and sends it once after reconnect', async ({ page }) => {
+  const requests = await openDetails(page, 390, { failSave: true });
+  const title = 'Правка после обрыва связи';
+  await page.getByRole('textbox', { name: 'Название задачи' }).fill(title);
+  await expect(page.locator('.detail-save-state')).toHaveText(/Не сохранено/, { timeout: 5000 });
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('tasks.draft.v1.["user-2","board-1","task-1"]'))).toContain(title);
+  await page.reload();
+  await page.getByRole('button').filter({ hasText: task.title }).first().click();
+  await expect(page.getByRole('textbox', { name: 'Название задачи' })).toHaveValue(title);
+  await flushAutosave(page);
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0].title).toBe(title);
+});
+
+test('details restores invalid local input without sending it or claiming it saved', async ({ page }) => {
+  const requests = await openDetails(page, 390);
+  await page.getByRole('textbox', { name: 'Название задачи' }).fill('');
+  await expect(page.locator('.detail-save-state')).toHaveText('Ожидает отправки');
+  await page.reload();
+  await page.getByRole('button').filter({ hasText: task.title }).first().click();
+  const title = page.getByRole('textbox', { name: 'Название задачи' });
+  await expect(title).toHaveValue('');
+  await expect(page.locator('.detail-save-state')).toHaveText('Ожидает отправки');
+  expect(requests).toHaveLength(0);
+  await title.fill('Исправленная правка');
+  await flushAutosave(page);
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0].title).toBe('Исправленная правка');
+});
+
+test('details does not show or send draft while board is read-only', async ({ page }) => {
+  const requests = await openDetails(page, 390, { readOnly: true });
+  await page.evaluate((description) => localStorage.setItem('tasks.draft.v1.["user-2","board-1","task-1"]', JSON.stringify({ version: 1, draft: {
+    title: 'Чужая правка', description, status: 'in_progress', projectId: 'project-1', assigneeUserId: 'user-2',
+    due: { mode: 'datetime', date: '2026-08-15', time: '18:00', timezone: 'UTC' }, priority: 'normal', blockerTaskId: '',
+    issueUrl: '', waitReason: '', waitCheckAt: ''
+  } })), task.description);
+  await page.reload();
+  await page.getByRole('button').filter({ hasText: task.title }).first().click();
+  await expect(page.getByRole('textbox', { name: 'Название задачи' })).toHaveValue(task.title);
+  await page.waitForTimeout(1000);
+  expect(requests).toHaveLength(0);
+});
+
+test('corrupt draft storage warns and falls back to the server task', async ({ page }) => {
+  await openDetails(page, 390);
+  await page.evaluate(() => localStorage.setItem('tasks.draft.v1.["user-2","board-1","task-1"]', '{broken'));
+  await page.reload();
+  await page.getByRole('button').filter({ hasText: task.title }).first().click();
+  await expect(page.getByRole('textbox', { name: 'Название задачи' })).toHaveValue(task.title);
+  await expect(page.getByRole('alert')).toContainText('Локальная копия недоступна или повреждена');
+});
+
+test('quota failure warns before closing with unsaved edits', async ({ page }) => {
+  await openDetails(page, 390);
+  await page.evaluate(() => {
+    const setItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key.startsWith('tasks.draft.v1.')) throw new DOMException('quota exceeded', 'QuotaExceededError');
+      return setItem.call(this, key, value);
+    };
+  });
+  await page.getByRole('textbox', { name: 'Название задачи' }).fill('Правка без места в storage');
+  await expect(page.getByRole('alert')).toContainText('Локальная копия недоступна или повреждена');
+});
+
+test('another account never restores or sends the previous account draft', async ({ page }) => {
+  const requests = await openDetails(page, 390, { failSave: true });
+  const title = 'Локальная правка первого пользователя';
+  await page.getByRole('textbox', { name: 'Название задачи' }).fill(title);
+  await expect(page.locator('.detail-save-state')).toHaveText(/Не сохранено/, { timeout: 5000 });
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('tasks.draft.v1.["user-2","board-1","task-1"]'))).toContain(title);
+  await page.evaluate(() => localStorage.setItem('test.detailsUserId', 'user-1'));
+  const filtersLoaded = page.waitForResponse((response) => response.url().includes('/task-filters') && response.request().method() === 'GET');
+  await page.reload();
+  await filtersLoaded;
+  await expect(page.getByRole('heading', { name: 'Задачи' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Название задачи' })).toHaveCount(0);
+  await expect(page.getByText(title, { exact: true })).toHaveCount(0);
+  await page.waitForTimeout(1000);
+  expect(requests).toHaveLength(0);
+});
+
+test('failed autosave queue write does not warn when durable draft storage succeeds', async ({ page }) => {
+  await openDetails(page, 390);
+  await page.evaluate(() => {
+    const setItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key.startsWith('tasks.autosave.')) throw new DOMException('quota exceeded', 'QuotaExceededError');
+      return setItem.call(this, key, value);
+    };
+  });
+  await page.getByRole('textbox', { name: 'Название задачи' }).fill('Черновик сохранён отдельно');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('tasks.draft.v1.["user-2","board-1","task-1"]'))).toContain('Черновик сохранён отдельно');
+  await expect(page.locator('.detail-error')).toHaveCount(0);
+});
+
+test('details draft restores and persists through real API and database', async ({ page }) => {
+  const databaseUrl = process.env.TEST_DATABASE_URL;
+  test.skip(!databaseUrl, 'TEST_DATABASE_URL required for API/DB verification');
+  const db = createDatabase(databaseUrl!);
+  const stamp = randomBytes(6).readUIntBE(0, 6);
+  const config: Config = { botToken: 'test', databaseUrl: databaseUrl!, sessionSecret: 'task-details-draft-test-secret', initDataMaxAgeSeconds: 60,
+    sessionMaxAgeSeconds: 3600, host: '127.0.0.1', port: 0, production: false, webhookSecret: 'task-details-draft-test-webhook',
+    publicUrl: 'https://example.test', botUsername: 'test_bot' };
+  let owner: Awaited<ReturnType<typeof login>> | undefined;
+  let boardId = '';
+  let app: ReturnType<typeof buildApp> | undefined;
+  try {
+    owner = await login(db, { id: stamp, first_name: 'Draft test' }, 3600, config.sessionSecret);
+    boardId = (await db.query<{id: string}>("SELECT id FROM boards WHERE type = 'personal' AND owner_user_id = $1", [owner.userId])).rows[0].id;
+    const created = await createTask(db, owner.userId, boardId, { title: 'Server title before edit' });
+    if (!created) throw new Error('Could not create API/DB test task');
+    app = buildApp(config, db);
+    await page.addInitScript((id) => localStorage.setItem('tasks.globalBoardId', id), boardId);
+    await page.route('https://telegram.org/js/telegram-web-app.js', (route) => route.fulfill({
+      contentType: 'application/javascript',
+      body: `window.Telegram={WebApp:{initData:'task-details-draft-test',initDataUnsafe:{start_param:'task_${boardId}_${created.id}'},ready(){},expand(){}}};`
+    }));
+    await page.route('**/api/**', async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (url.pathname === '/api/auth/telegram') return route.fulfill({ json: { userId: owner!.userId } });
+      const response = await app!.inject({ method: request.method() as 'GET' | 'POST' | 'PATCH' | 'PUT',
+        url: url.pathname + url.search, cookies: { session: owner!.token },
+        payload: request.postData() ? request.postDataJSON() : undefined });
+      await route.fulfill({ status: response.statusCode, contentType: 'application/json', body: response.body });
+    });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    const title = page.getByRole('textbox', { name: 'Название задачи' });
+    await expect(title).toHaveValue('Server title before edit');
+    await title.fill('Persisted through the API');
+    const draftKey = `tasks.draft.v1.${JSON.stringify([owner.userId, boardId, created.id])}`;
+    await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), draftKey)).toContain('Persisted through the API');
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Детали задачи' })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Название задачи' })).toHaveValue('Persisted through the API');
+    await expect(page.locator('.detail-save-state')).toHaveText('Сохранено', { timeout: 10000 });
+    const persisted = await db.query<{title: string}>('SELECT title FROM tasks WHERE id = $1 AND board_id = $2', [created.id, boardId]);
+    expect(persisted.rows[0]?.title).toBe('Persisted through the API');
+    await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), draftKey)).toBeNull();
+  } finally {
+    if (app) await app.close();
+    if (boardId) await db.query('DELETE FROM boards WHERE id = $1', [boardId]);
+    if (owner) await db.query('DELETE FROM users WHERE id = $1', [owner.userId]);
+    await db.end();
+  }
+});
+
 test('details serializes flushes and sends latest edit with confirmed version', async ({ page }) => {
   const requests = await openDetails(page, 390);
   let releaseFirst!: () => void;
@@ -306,7 +476,8 @@ test('details reconciles a committed edit when PATCH response is lost', async ({
   expect(requests).toHaveLength(1);
   expect(serverTask.title).toBe('Confirmed by refresh');
   expect(await title.inputValue()).toBe('Confirmed by refresh');
-  expect(await page.evaluate(() => localStorage.getItem('tasks.autosave.task.task-1'))).toBeNull();
+  expect(await page.evaluate(() => localStorage.getItem('tasks.autosave.["user-2","board-1","task-1"]'))).toBeNull();
+  expect(await page.evaluate(() => localStorage.getItem('tasks.draft.v1.["user-2","board-1","task-1"]'))).toBeNull();
 });
 
 test('details does not automatically retry auth, not-found, or validation errors', async ({ page }) => {
@@ -326,6 +497,9 @@ test('details does not automatically retry auth, not-found, or validation errors
     await expect.poll(() => requests.length).toBe([401, 403, 404, 422].indexOf(nextStatus) + 1);
     await expect(page.locator('.detail-save-state')).toHaveText(/Не сохранено/, { timeout: 5000 });
     await page.waitForTimeout(950);
+    expect(requests).toHaveLength([401, 403, 404, 422].indexOf(nextStatus) + 1);
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await page.waitForTimeout(100);
     expect(requests).toHaveLength([401, 403, 404, 422].indexOf(nextStatus) + 1);
   }
 });

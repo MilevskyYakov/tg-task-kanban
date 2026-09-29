@@ -718,8 +718,9 @@ function App() {
     onChanged={(changed) => setTasks((current) => changed ? current.map((item) => item.id === changed.id ? changed : item) : current.filter((item) => item.id !== claimingTask.id))}/></AppShell>;
   if (openTask && !collaboration) return <main className="task-details"><EnvironmentStatus/><button className="back" onClick={() => closeTaskDetails()}>← Задачи</button><Skeleton label="Загрузка задачи"/></main>;
   if (openTask && collaboration) return <TaskDetails
-    task={openTask} collaboration={collaboration} projects={detailProjects} members={detailMembers}
-    readOnly={boards.find((item) => item.id === openTask.board_id)?.status !== 'active'}
+    key={`${userId}:${openTask.board_id}:${openTask.id}:${boards.find((item) => item.id === openTask.board_id)?.status}:${Boolean(openTask.archived_at)}`}
+    task={openTask} userId={userId} collaboration={collaboration} projects={detailProjects} members={detailMembers}
+    readOnly={Boolean(openTask.archived_at) || boards.find((item) => item.id === openTask.board_id)?.status !== 'active'}
     onClaim={boards.find((item) => item.id === openTask.board_id)?.status === 'active' && isBacklogTask(openTask) ? () => setClaimingTask(openTask) : undefined}
     candidateTasks={detailTasks.filter((item) => item.id !== openTask.id && item.status !== 'done' && !item.archived_at)}
     boardName={boards.find((item) => item.id === openTask.board_id)?.name ?? openTask.board_name ?? 'Задача'}
