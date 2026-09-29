@@ -20,6 +20,7 @@ import { PairBoard, PairInvite } from './pair-board';
 import { boardTypeName } from './domain';
 import { EntryGuide, GroupSetup, type EntryPath } from './bot-entry';
 import { McpConnections } from './mcp-connections';
+import { Autosave, type SaveState } from './autosave';
 
 type TaskView = 'list' | 'kanban';
 type FilterChoice = 'project' | 'assignee' | 'status' | 'priority' | 'deadline';
@@ -110,6 +111,8 @@ function App() {
   // Debounce timers for settings autosave (issue #129); declared before any early return
   // so the hook order stays stable across screens.
   const scheduleTimer = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const publicationSaves = useRef<Record<string, { autosave: Autosave<Schedule>; draft: Schedule; valid: boolean }>>({});
+  const [publicationStates, setPublicationStates] = useState<Record<string, { state: SaveState; error: string }>>({});
   const [createUncertain, setCreateUncertain] = useState(false);
   const [createReset, setCreateReset] = useState(0);
   const [projectCreatePending, setProjectCreatePending] = useState(false);
@@ -749,19 +752,47 @@ function App() {
     onUrlAttachment={(url) => collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/attachments`, json('POST', { kind: 'url', url }))}
     onFileAttachment={(file) => { const data = new FormData(); data.append('file', file); return collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/attachments/file`, { method: 'POST', body: data }); }}
   />;
-  const saveSchedule = async (schedule: Schedule, previewOnly = false) => {
+  const previewSchedule = async (schedule: Schedule) => {
     if (!board) return;
-    const result = await api<Schedule | {messages: string[]}>(`/api/boards/${board.id}/publications/${schedule.kind}${previewOnly ? '/preview' : ''}`, json(previewOnly ? 'POST' : 'PUT', schedule));
-    if ('messages' in result) setPreview(result.messages.join('\n\n———\n\n')); else setSchedules((items) => items.map((item) => item.kind === result.kind ? result : item));
+    const result = await api<{messages: string[]}>(`/api/boards/${board.id}/publications/${schedule.kind}/preview`, json('POST', schedule));
+    setPreview(result.messages.join('\n\n———\n\n'));
   };
-  // Autosave for existing editing surfaces (issue #129): debounced PUT/PATCH, immediate on
-  // blur; validation errors stay in the field and the server value is not lost.
-  const autoSaveSchedule = (kind: string, next: Schedule) => {
-    const valid = next.enabled && Array.isArray(next.weekdays) && next.weekdays.length && next.weekdays.every((day) => Number.isInteger(day) && day >= 1 && day <= 7)
-      && /^([01]\d|2[0-3]):[0-5]\d$/.test(next.local_time) && next.timezone && next.included_statuses.length > 0;
-    if (scheduleTimer.current[kind]) clearTimeout(scheduleTimer.current[kind]);
-    if (!valid) return;
-    scheduleTimer.current[kind] = setTimeout(() => { void saveSchedule(next).catch((error: Error) => setMessage(error.message)); }, 700);
+  const publicationKey = (kind: string) => JSON.stringify([userId, board?.id, kind]);
+  const autoSaveSchedule = (next: Schedule, delay = 700) => {
+    if (!board || board.status !== 'active') return;
+    const boardId = board.id;
+    const key = publicationKey(next.kind);
+    setSchedules((items) => items.map((item) => item.kind === next.kind ? next : item));
+    let valid = next.weekdays.length > 0 && next.weekdays.every((day) => Number.isInteger(day) && day >= 1 && day <= 7)
+      && /^([01]\d|2[0-3]):[0-5]\d$/.test(next.local_time) && Boolean(next.timezone) && next.included_statuses.length > 0;
+    try { new Intl.DateTimeFormat('ru', { timeZone: next.timezone }); } catch { valid = false; }
+    // One queue per user/board/kind: late responses cannot overwrite a newer draft or another board.
+    let entry = publicationSaves.current[key];
+    if (!entry) {
+      const autosave = new Autosave<Schedule>({
+        key: `publication:${key}`,
+        send: async (sent) => {
+          const version = boardLoadVersion.current;
+          const saved = await api<Schedule>(`/api/boards/${boardId}/publications/${sent.kind}`, json('PUT', sent));
+          if (entry.draft === sent && activeBoardId.current === boardId && version === boardLoadVersion.current) {
+            setSchedules((items) => items.map((item) => item.kind === saved.kind ? saved : item));
+          }
+        },
+        onState: (state) => setPublicationStates((current) => ({ ...current, [key]: {
+          state: entry.valid ? state : 'error', error: entry.valid ? '' : 'Проверьте дни, время, часовой пояс и статусы.'
+        } })),
+        onError: (error) => setPublicationStates((current) => ({ ...current, [key]: {
+          state: 'error', error: error instanceof Error ? error.message : 'Ошибка сохранения'
+        } }))
+      });
+      entry = publicationSaves.current[key] = { autosave, draft: next, valid };
+    }
+    entry.draft = next; entry.valid = valid;
+    entry.autosave.setPaused(!valid);
+    setPublicationStates((current) => ({ ...current, [key]: {
+      state: valid ? 'pending' : 'error', error: valid ? '' : 'Проверьте дни, время, часовой пояс и статусы.'
+    } }));
+    entry.autosave.schedule(next, valid ? delay : null);
   };
   const autoSaveProject = (item: Project, name: string) => {
     const trimmed = name.trim();
@@ -772,7 +803,21 @@ function App() {
         .then((ok) => { if (ok) setProjects((current) => current.map((project) => project.id === item.id ? { ...project, name: trimmed } : project)); });
     }, 700);
   };
-  const publicationSettings = board?.type === 'chat' && schedules.length ? <Disclosure label="Публикации в чат"><div className="publications">{schedules.map((schedule) => <fieldset key={schedule.kind}><legend>{schedule.kind === 'daily' ? 'План дня' : 'Недельная сводка'}</legend><label><input type="checkbox" checked={schedule.enabled} onChange={(event) => { const next = {...schedule, enabled: event.target.checked}; setSchedules((items) => items.map((item) => item.kind === schedule.kind ? next : item)); autoSaveSchedule(schedule.kind, next); }}/> Включена</label><label>Дни (1–7)<input value={schedule.weekdays.join(',')} onChange={(event) => { const weekdays = event.target.value.split(',').map(Number).filter(Boolean); const next = {...schedule, weekdays}; setSchedules((items) => items.map((item) => item.kind === schedule.kind ? {...item, weekdays} : item)); if (!weekdays.length || weekdays.some((day) => !Number.isInteger(day) || day < 1 || day > 7)) return; autoSaveSchedule(schedule.kind, next); }}/></label><label>Время<input type="time" value={schedule.local_time} onChange={(event) => { const next = {...schedule, local_time: event.target.value}; setSchedules((items) => items.map((item) => item.kind === schedule.kind ? next : item)); autoSaveSchedule(schedule.kind, next); }}/></label><label>Часовой пояс<input value={schedule.timezone} onChange={(event) => { const next = {...schedule, timezone: event.target.value}; setSchedules((items) => items.map((item) => item.kind === schedule.kind ? next : item)); autoSaveSchedule(schedule.kind, next); }}/></label><div className="status-options">{Object.entries(statusDisplayName).map(([status, name]) => <label key={status}><input type="checkbox" checked={schedule.included_statuses.includes(status as TaskStatus)} onChange={(event) => { const included_statuses = event.target.checked ? [...schedule.included_statuses, status as TaskStatus] : schedule.included_statuses.filter((value) => value !== status); const next = {...schedule, included_statuses}; setSchedules((items) => items.map((item) => item.kind === schedule.kind ? next : item)); if (!included_statuses.length) return; autoSaveSchedule(schedule.kind, next); }}/> {name}</label>)}</div><div className="actions"><button className="secondary" onClick={() => void action(() => saveSchedule(schedule, true), 'Предпросмотр готов', false)}>Предпросмотр</button></div></fieldset>)}{preview && <pre>{preview}</pre>}</div></Disclosure> : null;
+  const publicationSettings = board?.type === 'chat' && schedules.length ? <Disclosure label="Публикации в чат"><div className="publications">{schedules.map((schedule) => {
+    const key = publicationKey(schedule.kind);
+    const save = publicationStates[key];
+    return <fieldset key={key}><legend>{schedule.kind === 'daily' ? 'План дня' : 'Недельная сводка'}</legend>
+      <label><input type="checkbox" checked={schedule.enabled} onChange={(event) => autoSaveSchedule({ ...schedule, enabled: event.target.checked }, 0)}/> Включена</label>
+      {save && <p className="detail-save-state" role="status" data-state={save.state}>{({ idle: '', pending: 'Ожидает отправки', saving: 'Сохраняется…', saved: 'Сохранено', error: 'Не сохранено' })[save.state]}</p>}
+      {save?.error && <p role="alert">{save.error}</p>}
+      {save?.state === 'error' && publicationSaves.current[key]?.valid && <button className="secondary" onClick={() => void publicationSaves.current[key].autosave.flush()}>Повторить</button>}
+      <label>Дни (1–7)<input value={schedule.weekdays.join(',')} onChange={(event) => autoSaveSchedule({ ...schedule, weekdays: event.target.value === '' ? [] : event.target.value.split(',').map(Number) })}/></label>
+      <label>Время<input type="time" value={schedule.local_time} onChange={(event) => autoSaveSchedule({ ...schedule, local_time: event.target.value })}/></label>
+      <label>Часовой пояс<input value={schedule.timezone} onChange={(event) => autoSaveSchedule({ ...schedule, timezone: event.target.value })}/></label>
+      <div className="status-options">{Object.entries(statusDisplayName).map(([status, name]) => <label key={status}><input type="checkbox" checked={schedule.included_statuses.includes(status as TaskStatus)} onChange={(event) => autoSaveSchedule({ ...schedule, included_statuses: event.target.checked ? [...schedule.included_statuses, status as TaskStatus] : schedule.included_statuses.filter((value) => value !== status) })}/> {name}</label>)}</div>
+      <div className="actions"><button className="secondary" onClick={() => void action(() => previewSchedule(schedule), 'Предпросмотр готов', false)}>Предпросмотр</button></div>
+    </fieldset>;
+  })}{preview && <pre>{preview}</pre>}</div></Disclosure> : null;
 
   const frequencyOptions = [{ value: 'daily', label: 'Ежедневно' }, { value: 'weekdays', label: 'По будням' }, { value: 'weekly', label: 'Еженедельно' }, { value: 'monthly', label: 'Ежемесячно' }];
   const projectOptions = [{ value: '', label: 'Без проекта' }, ...projects.filter((item) => !item.archived_at).map((item) => ({ value: item.id, label: item.name }))];
