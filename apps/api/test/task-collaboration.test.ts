@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { buildApp } from '../src/app.js';
 import type { Config } from '../src/config.js';
-import { addChecklistItem, addTaskAttachment, addTaskComment, addTaskFileAttachment, claimAssignmentNotification, createDatabase, createTask, finishAssignmentNotification, incompleteChecklistCount, pendingNotificationForTask, taskAttachmentFile, taskCollaboration, tasksForAssignee, tasksForBoard, updateChecklistItem, updateTask } from '../src/db.js';
+import { addChecklistItem, addTaskAttachment, addTaskComment, addTaskFileAttachment, claimAssignmentNotification, createDatabase, createTask, deleteChecklistItem, finishAssignmentNotification, incompleteChecklistCount, login, pendingNotificationForTask, taskAttachmentFile, taskCollaboration, tasksForAssignee, tasksForBoard, updateChecklistItem, updateTask } from '../src/db.js';
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url) throw new Error('TEST_DATABASE_URL is required');
@@ -112,4 +112,76 @@ test('task collaboration enforces access, immutable audit and notification idemp
   await db.query('DELETE FROM users WHERE id = ANY($1)', [users]);
   await app.close();
   await db.end();
+});
+
+test('checklist mutations invalidate completion approval without weakening REST permissions or version guards', async () => {
+  const db = createDatabase(url!);
+  const stamp = randomBytes(6).readUIntBE(0, 6);
+  const sessionSecret = 'isolated-checklist-session-secret';
+  const owner = await login(db, { id: stamp, first_name: 'Checklist owner' }, 3600, sessionSecret);
+  const outsider = await login(db, { id: stamp + 1, first_name: 'Other board' }, 3600, sessionSecret);
+  const boardId = (await db.query('SELECT id FROM boards WHERE owner_user_id=$1', [owner.userId])).rows[0].id;
+  const config: Config = { botToken: 'test', databaseUrl: url!, sessionSecret, initDataMaxAgeSeconds: 60, sessionMaxAgeSeconds: 3600,
+    host: '127.0.0.1', port: 0, production: false, webhookSecret: 'isolated-checklist-webhook', publicUrl: 'https://example.test', botUsername: 'test_bot' };
+  const app = buildApp(config, db);
+  try {
+    const task = await createTask(db, owner.userId, boardId, { title: 'Approval target' });
+    assert.ok(task);
+    const path = `/api/boards/${boardId}/tasks/${task.id}`;
+    const read = async () => (await db.query('SELECT status, title, revision::text AS version FROM tasks WHERE id=$1', [task.id])).rows[0];
+    const patch = (payload: Record<string, unknown>, token = owner.token) => app.inject({ method: 'PATCH', url: path, cookies: { session: token }, payload });
+    const firstVersion = (await read()).version;
+    const item = await addChecklistItem(db, owner.userId, boardId, task.id, 'Review');
+    let version = (await read()).version;
+    assert.notEqual(version, firstVersion);
+    const refusal = await patch({ status: 'done', title: 'Not written', expectedVersion: version });
+    assert.equal(refusal.statusCode, 409);
+    assert.equal(refusal.json().incompleteChecklist, 1);
+    assert.deepEqual(await read(), { status: 'todo', title: 'Approval target', version });
+    for (const mutate of [
+      () => updateChecklistItem(db, owner.userId, boardId, task.id, item.id, { text: 'Updated review' }),
+      () => updateChecklistItem(db, owner.userId, boardId, task.id, item.id, { completed: true }),
+      () => updateChecklistItem(db, owner.userId, boardId, task.id, item.id, { completed: false }),
+      () => deleteChecklistItem(db, owner.userId, boardId, task.id, item.id)
+    ]) {
+      await mutate();
+      const stale = await patch({ status: 'done', confirmIncompleteChecklist: true, expectedVersion: version });
+      assert.equal(stale.statusCode, 409);
+      assert.equal(stale.json().error, 'version conflict');
+      assert.equal((await read()).status, 'todo');
+      assert.notEqual((await read()).version, version);
+      version = (await read()).version;
+    }
+    assert.equal((await patch({ status: 'done', expectedVersion: version })).statusCode, 200, 'empty checklist needs no confirmation');
+    await addChecklistItem(db, owner.userId, boardId, task.id, 'Still incomplete');
+    version = (await read()).version;
+    assert.equal((await patch({ title: 'Done text edit', expectedVersion: version })).statusCode, 200, 'text edit does not confirm done again');
+    await updateTask(db, owner.userId, boardId, task.id, { status: 'todo' });
+    version = (await read()).version;
+    assert.equal((await patch({ status: 'done', confirmIncompleteChecklist: true, expectedVersion: version }, outsider.token)).statusCode, 403);
+    assert.equal(await addChecklistItem(db, outsider.userId, boardId, task.id, 'Forbidden'), null);
+    assert.equal((await read()).version, version, 'denied mutation does not alter revision');
+    for (const status of ['frozen', 'archived']) {
+      await db.query('UPDATE boards SET status=$2 WHERE id=$1', [boardId, status]);
+      assert.equal((await patch({ status: 'done', confirmIncompleteChecklist: true, expectedVersion: version })).statusCode, 403);
+      assert.equal(await addChecklistItem(db, owner.userId, boardId, task.id, 'Forbidden'), null);
+    }
+    await db.query("UPDATE boards SET status='active' WHERE id=$1", [boardId]);
+    await db.query('UPDATE tasks SET archived_at=now() WHERE id=$1', [task.id]);
+    assert.equal((await patch({ status: 'done', confirmIncompleteChecklist: true })).statusCode, 403);
+    await db.query('UPDATE tasks SET archived_at=NULL WHERE id=$1', [task.id]);
+    version = (await read()).version;
+    const racing = await Promise.all([patch({ status: 'done', confirmIncompleteChecklist: true, expectedVersion: version }), patch({ title: 'Racing edit', expectedVersion: version })]);
+    assert.deepEqual(racing.map((response) => response.statusCode).sort(), [200, 409]);
+    version = (await read()).version;
+    assert.equal((await patch({ status: 'done', confirmIncompleteChecklist: true, expectedVersion: version })).statusCode, 200);
+    assert.equal(await incompleteChecklistCount(db, owner.userId, boardId, task.id), 1, 'confirmation never ticks items');
+  } finally {
+    await app.close();
+    for (const user of [owner, outsider]) {
+      await db.query('DELETE FROM boards WHERE owner_user_id=$1', [user.userId]);
+      await db.query('DELETE FROM users WHERE id=$1', [user.userId]);
+    }
+    await db.end();
+  }
 });

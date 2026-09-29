@@ -36,6 +36,15 @@ import {
   type Task
 } from '../src/tasks.js';
 
+test('API checklist conflicts validate the count rather than matching error text', () => {
+  assert.equal(new ApiError('incomplete checklist confirmation required', 409, { incompleteChecklist: 2 }).incompleteChecklist, 2);
+  assert.equal(new ApiError('version conflict', 409, { task: { version: '2' } }).incompleteChecklist, undefined);
+  for (const count of [undefined, null, '2', 0, -1, 1.5, NaN, Infinity]) {
+    assert.equal(new ApiError('invalid', 409, { incompleteChecklist: count }).incompleteChecklist, undefined);
+  }
+  assert.equal(new ApiError('forbidden', 403, { incompleteChecklist: 1 }).incompleteChecklist, undefined);
+});
+
 test('backlog eligibility excludes assigned, archived and all other statuses; list keeps intentional duplicates', () => {
   for (const status of ['todo', 'in_progress', 'waiting', 'done'] as const) {
     assert.equal(isBacklogTask({ status }), status === 'todo');
@@ -334,6 +343,10 @@ test('three-way draft merge preserves independent edits, detects conflicts and k
   assert.deepEqual(group.conflicts, ['status', 'blockerTaskId', 'waitReason', 'waitCheckAt']);
   assert.equal(group.draft.status, 'waiting');
   assert.equal(group.draft.waitReason, 'Local reason');
+  const completed = { ...waiting, status: 'done' as const };
+  const confirmed = { ...completed, waitReason: '', waitCheckAt: '' };
+  assert.deepEqual(mergeTaskDraft(waiting, completed, confirmed), { draft: confirmed, conflicts: [] }, 'lost completion response accepts server-cleared waiting fields');
+  assert.ok(mergeTaskDraft(waiting, completed, { ...confirmed, status: 'in_progress' }).conflicts.includes('status'), 'different status still conflicts');
   const due = { ...base.due, mode: 'date' as const, date: '2026-09-29', timezone: 'UTC' };
   const dated = { ...base, due };
   assert.deepEqual(mergeTaskDraft(dated, { ...dated, due: { ...due, time: '15:00' } }, { ...dated, title: 'Remote' }).conflicts, []);

@@ -394,11 +394,11 @@ function App() {
     if (check && !waitCheckAt) { setMessage('Дата проверки: YYYY-MM-DD'); return; }
     const previous = tasks;
     try {
-      const update = async (confirmIncompleteChecklist = false) => { await api(`/api/boards/${task.board_id}/tasks/${task.id}`, json('PATCH', { status, blockerTaskId, waitReason, waitCheckAt, confirmIncompleteChecklist })); };
+      const update = async (confirmIncompleteChecklist = false) => { await api(`/api/boards/${task.board_id}/tasks/${task.id}`, json('PATCH', { status, blockerTaskId, waitReason, waitCheckAt, expectedVersion: task.version, confirmIncompleteChecklist })); };
       await optimisticUpdate(previous, previous.map((item) => item.id === task.id ? { ...item, status } : item), setTasks, async () => {
         try { await update(); }
         catch (error) {
-          if (!(error instanceof ApiError) || error.status !== 409 || error.message !== 'incomplete checklist confirmation required'
+          if (!(error instanceof ApiError) || error.incompleteChecklist === undefined
             || !window.confirm('В чек-листе остались незавершённые пункты. Всё равно закрыть задачу?')) throw error;
           await update(true);
         }

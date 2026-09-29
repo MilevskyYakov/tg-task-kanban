@@ -540,6 +540,8 @@ export async function addChecklistItem(db: Database, userId: string, boardId: st
       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`, [randomUUID(), boardId, taskId, userId, text, position]);
     await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, after_data)
       VALUES ($1, $2, $3, $4, 'checklist_added', $5)`, [randomUUID(), boardId, taskId, userId, result.rows[0]]);
+    // Checklist changes invalidate completion approval under the same board lock.
+    await client.query('UPDATE tasks SET updated_at = now() WHERE id = $1 AND board_id = $2', [taskId, boardId]);
     if (!transaction) await client.query('COMMIT'); return result.rows[0];
   } catch (error) { if (!transaction) await client.query('ROLLBACK'); throw error; } finally { if (!transaction) client.release(); }
 }
@@ -567,6 +569,7 @@ export async function updateChecklistItem(db: Database, userId: string, boardId:
       WHERE id = $1 AND task_id = $2 AND board_id = $3 RETURNING *`, [itemId, taskId, boardId, userId, input.text ?? null, position, input.completed ?? null]);
     await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, before_data, after_data)
       VALUES ($1, $2, $3, $4, 'checklist_updated', $5, $6)`, [randomUUID(), boardId, taskId, userId, item, result.rows[0]]);
+    await client.query('UPDATE tasks SET updated_at = now() WHERE id = $1 AND board_id = $2', [taskId, boardId]);
     if (!transaction) await client.query('COMMIT'); return result.rows[0];
   } catch (error) { if (!transaction) await client.query('ROLLBACK'); throw error; } finally { if (!transaction) client.release(); }
 }
@@ -583,6 +586,7 @@ export async function deleteChecklistItem(db: Database, userId: string, boardId:
     await client.query('UPDATE task_checklist_items SET position = position - 1 WHERE task_id = $1 AND position > $2', [taskId, result.rows[0].position]);
     await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, before_data)
       VALUES ($1, $2, $3, $4, 'checklist_deleted', $5)`, [randomUUID(), boardId, taskId, userId, result.rows[0]]);
+    await client.query('UPDATE tasks SET updated_at = now() WHERE id = $1 AND board_id = $2', [taskId, boardId]);
     if (!transaction) await client.query('COMMIT'); return true;
   } catch (error) { if (!transaction) await client.query('ROLLBACK'); throw error; } finally { if (!transaction) client.release(); }
 }
