@@ -620,14 +620,153 @@ test('version conflict shows both versions and keeps the local edit on «реш�
   });
   await flushAutosave(page);
   await expect(page.getByRole('dialog', { name: 'Конфликт изменений' })).toBeVisible();
-  await page.getByRole('radio', { name: 'Решить позже' }).isVisible();
+  await expect(page.getByRole('dialog', { name: 'Конфликт изменений' })).toContainText('Моя версия названия');
+  await expect(page.getByRole('dialog', { name: 'Конфликт изменений' })).toContainText('Чужая версия названия');
   // Close via «Решить позже»: the local edit stays in the field, nothing is overwritten.
   await page.getByRole('button', { name: 'Решить позже' }).click();
   await expect(title).toHaveValue('Моя версия названия');
-  // Choosing the server version replaces the draft with the confirmed object.
+  // Leaving a deferred conflict preserves the input without an automatic overwrite.
   await page.route(`**/api/boards/${board.id}/tasks/${task.id}`, (route) => route.fallback());
   await page.getByRole('button', { name: 'Назад к задачам' }).click();
 });
+
+for (const keepLocal of [true, false]) {
+  test(`conflict resolution preserves independent fields and clears rejected storage: local=${keepLocal}`, async ({ page }) => {
+    const requests = await openDetails(page, 390);
+    let server = { ...task, title: 'Серверное название', priority: 'urgent', version: '2' };
+    await page.route('**/api/boards/board-1/tasks/task-1', async (route) => {
+      if (route.request().method() !== 'PATCH') return route.fulfill({ json: server });
+      const input = route.request().postDataJSON();
+      requests.push(input);
+      if (input.expectedVersion !== server.version) return route.fulfill({ status: 409, json: { error: 'version conflict', task: server } });
+      server = { ...server, ...input, version: String(Number(server.version) + 1) };
+      await route.fulfill({ json: server });
+    });
+    await page.locator('.detail-description-actions').getByRole('button', { name: 'Изменить' }).click();
+    await page.getByRole('textbox', { name: 'Описание', exact: true }).fill('Независимое локальное описание');
+    await page.getByRole('textbox', { name: 'Название задачи' }).fill('Локальное название');
+    const dialog = page.getByRole('dialog', { name: 'Конфликт изменений' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('Локальное название');
+    await expect(dialog).toContainText('Серверное название');
+    await expect(dialog.getByRole('button', { name: 'Моя правка поверх серверной', exact: true })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(dialog.getByRole('button', { name: 'Оставить серверную версию', exact: true })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(dialog.getByRole('button', { name: 'Решить позже' })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(dialog.getByRole('button', { name: 'Моя правка поверх серверной', exact: true })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: 'Разрешить конфликт', exact: true }).click();
+    await dialog.getByRole('button', { name: keepLocal ? 'Моя правка поверх серверной' : 'Оставить серверную версию', exact: true }).click();
+    await expect(page.locator('.detail-save-state')).toHaveText('Сохранено');
+    expect(server.title).toBe(keepLocal ? 'Локальное название' : 'Серверное название');
+    expect(server.description).toBe('Независимое локальное описание');
+    expect(server.priority).toBe('urgent');
+    expect(requests[1].expectedVersion).toBe('2');
+    expect(requests[1]).not.toHaveProperty('priority');
+    if (!keepLocal) expect(requests[1]).not.toHaveProperty('title');
+    await expect.poll(() => page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith('tasks.draft.') || key.startsWith('tasks.autosave.')))).toEqual([]);
+    await page.getByRole('textbox', { name: 'Название задачи' }).fill('Следующая правка');
+    await expect(page.locator('.detail-save-state')).toHaveText('Сохранено');
+    expect(requests[2].expectedVersion).toBe('3');
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await page.getByRole('button', { name: 'Назад к задачам' }).click();
+    await page.waitForTimeout(1000);
+    expect(requests).toHaveLength(3);
+  });
+}
+
+test('unversioned legacy draft requires explicit choice even after repeated reloads', async ({ page }) => {
+  const requests = await openDetails(page, 390);
+  await page.getByRole('textbox', { name: 'Название задачи' }).fill('Legacy local title');
+  await page.evaluate(() => {
+    const key = 'tasks.draft.v1.["user-2","board-1","task-1"]';
+    const stored = JSON.parse(localStorage.getItem(key)!);
+    delete stored.base;
+    delete stored.serverVersion;
+    localStorage.setItem(key, JSON.stringify(stored));
+  });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await page.reload();
+    await page.getByRole('button').filter({ hasText: task.title }).first().click();
+    await expect(page.getByRole('dialog', { name: 'Конфликт изменений' })).toContainText('Legacy local title');
+    await page.getByRole('button', { name: 'Решить позже' }).click();
+    await page.waitForTimeout(1000);
+    expect(requests).toHaveLength(0);
+  }
+  await page.getByRole('button', { name: 'Разрешить конфликт', exact: true }).click();
+  await page.getByRole('button', { name: 'Оставить серверную версию', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Название задачи' })).toHaveValue(task.title);
+  expect(requests).toHaveLength(0);
+});
+
+test('server choice with no remaining patch updates parent and does not replay on reopen', async ({ page }) => {
+  const requests = await openDetails(page, 390);
+  await page.route('**/api/boards/board-1/tasks/task-1', async (route) => {
+    if (route.request().method() !== 'PATCH') return route.fallback();
+    requests.push(route.request().postDataJSON());
+    await route.fulfill({ status: 409, json: { error: 'version conflict', task: { ...task, title: 'Server accepted', version: '2' } } });
+  });
+  await page.getByRole('textbox', { name: 'Название задачи' }).fill('Rejected local');
+  await page.getByRole('button', { name: 'Оставить серверную версию', exact: true }).click();
+  await expect(page.locator('.detail-save-state')).toHaveText('Сохранено');
+  await expect(page.getByRole('textbox', { name: 'Название задачи' })).toHaveValue('Server accepted');
+  await expect.poll(() => page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith('tasks.draft.') || key.startsWith('tasks.autosave.')))).toEqual([]);
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await page.getByRole('button', { name: 'Назад к задачам' }).click();
+  await page.getByRole('button').filter({ hasText: 'Server accepted' }).first().click();
+  await expect(page.getByRole('textbox', { name: 'Название задачи' })).toHaveValue('Server accepted');
+  await page.waitForTimeout(1000);
+  expect(requests).toHaveLength(1);
+});
+
+test('resolution uses single-flight queue and preserves newer typing while the response is pending', async ({ page }) => {
+  const requests = await openDetails(page, 390);
+  let server = { ...task, title: 'Remote title', version: '2' };
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/api/boards/board-1/tasks/task-1', async (route) => {
+    if (route.request().method() !== 'PATCH') return route.fulfill({ json: server });
+    const input = route.request().postDataJSON();
+    requests.push(input);
+    if (input.expectedVersion !== server.version) return route.fulfill({ status: 409, json: { error: 'version conflict', task: server } });
+    if (requests.length === 2) await gate;
+    server = { ...server, title: input.title, version: String(Number(server.version) + 1) };
+    await route.fulfill({ json: server });
+  });
+  const title = page.getByRole('textbox', { name: 'Название задачи' });
+  await title.fill('Chosen local title');
+  await page.getByRole('button', { name: 'Моя правка поверх серверной', exact: true }).click();
+  await expect.poll(() => requests.length).toBe(2);
+  await title.fill('Newer typing');
+  await title.blur();
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await page.waitForTimeout(100);
+  expect(requests).toHaveLength(2);
+  release();
+  await expect(page.locator('.detail-save-state')).toHaveText('Сохранено');
+  await expect(title).toHaveValue('Newer typing');
+  expect(server.title).toBe('Newer typing');
+  expect(requests.map((input) => input.expectedVersion)).toEqual(['1', '2', '3']);
+});
+
+for (const error of [{ error: 'checklist confirmation required', incompleteChecklist: 2 }, { error: 'task blocker would create dependency cycle' }]) {
+  test(`non-version 409 remains its own error: ${error.error}`, async ({ page }) => {
+    const requests = await openDetails(page, 390);
+    await page.route('**/api/boards/board-1/tasks/task-1', async (route) => {
+      if (route.request().method() !== 'PATCH') return route.fallback();
+      requests.push(route.request().postDataJSON());
+      await route.fulfill({ status: 409, json: error });
+    });
+    await page.getByRole('textbox', { name: 'Название задачи' }).fill('Rejected edit');
+    await expect(page.getByRole('alert')).toHaveText(error.error);
+    await expect(page.getByRole('dialog', { name: 'Конфликт изменений' })).toHaveCount(0);
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await page.waitForTimeout(1000);
+    expect(requests).toHaveLength(1);
+  });
+}
 
 test('GitHub issue stays compact, opens safely, and autosaves edits', async ({ page }) => {
   const requests = await openDetails(page, 390, { taskOverrides: { issue_url: 'https://github.com/owner/repo/issues/7' } });

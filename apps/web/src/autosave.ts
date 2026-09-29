@@ -44,6 +44,7 @@ export class Autosave<P extends Record<string, unknown>> {
   private revision = 0;
   private state: SaveState = 'idle';
   private stopped = false;
+  private paused = false;
 
   constructor(private readonly deps: AutosaveDeps<P>) {}
 
@@ -71,14 +72,14 @@ export class Autosave<P extends Record<string, unknown>> {
     }
     this.queued = pending;
     if (!writeQueued(this.deps.key, { patch, at: Date.now() })) this.deps.onOfflineQueued?.(patch);
-    if (delayMs !== null) this.timer = setTimeout(() => void this.flush(), delayMs);
+    if (delayMs !== null && !this.paused) this.timer = setTimeout(() => void this.flush(), delayMs);
     this.setState('pending');
   }
 
   // Send immediately (chosen values, blur, screen exit). Never drops a newer edit.
   async flush(): Promise<void> {
     if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }
-    if (this.stopped) return;
+    if (this.stopped || this.paused) return;
     if (this.inFlight) {
       const succeeded = await this.inFlight;
       if (succeeded && this.queued) await this.flush();
@@ -140,6 +141,11 @@ export class Autosave<P extends Record<string, unknown>> {
 
   clearStorage() {
     writeQueued(this.deps.key, null);
+  }
+
+  setPaused(paused: boolean) {
+    this.paused = paused;
+    if (paused && this.timer) { clearTimeout(this.timer); this.timer = undefined; }
   }
 
   stop() {

@@ -224,6 +224,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .sheet-options small { color: var(--text-muted); font-weight: 400; }
 .manage-boards { width: 100%; }
 .choice-list, .quick-filters { display: grid; gap: 4px; margin-top: 18px; }
+.detail-conflict-values dd { margin: 4px 0 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.detail-conflict-values dt { font-weight: 700; }
 .choice-row { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 8px 12px; background: transparent; color: var(--text); text-align: left; }
 .choice-row > span:last-child, .choice-row strong, .choice-row small { display: block; min-width: 0; }
 .choice-row strong { font-size: 1rem; }
