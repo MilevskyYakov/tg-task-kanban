@@ -15,7 +15,7 @@ import { BoardAccessError, changePairInvite, createPairBoard, previewPairInvite,
 import { sendBotEntry, sendGroupWelcome } from './bot-entry.js';
 import { taskInput } from './task-input.js';
 import { recurrenceInput } from './recurrence-input.js';
-import { ChecklistConfirmationError } from './db.js';
+import { ChecklistConfirmationError, SettingsConflictError } from './db.js';
 import { registerMcp } from './mcp.js';
 
 type ChatMemberUpdate = {
@@ -37,6 +37,7 @@ export function buildApp(config: Config, db: Database) {
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof BoardAccessError) return reply.code(error.status).send({ error: error.message });
     if (error instanceof ChecklistConfirmationError) return reply.code(409).send({ error: error.message, incompleteChecklist: error.count });
+    if (error instanceof SettingsConflictError) return reply.code(409).send({ error: error.message, current: error.current });
     if (request.url.startsWith('/mcp') || request.url.startsWith('/api/mcp-connections')) {
       request.log.error({ code: (error as {code?: string}).code }, 'MCP request failed');
       return reply.code((error as {statusCode?: number}).statusCode ?? 500).send({ error: 'Не удалось выполнить действие' });
@@ -152,23 +153,27 @@ export function buildApp(config: Config, db: Database) {
     if (!await isChatAdmin(config.botToken, board.telegram_chat_id, user.telegram_id)) return reply.code(403).send({ error: 'Telegram chat admin required' });
     return { revoked: await revokeInvites(db, user.id, request.params.id) };
   });
-  app.patch<{Params: {id: string}, Body: {name?: string}}>('/api/boards/:id', async (request, reply) => {
+  const validNameExpected = (expected: unknown) => expected === undefined || Boolean(expected && typeof expected === 'object'
+    && Object.keys(expected).length === 1 && typeof (expected as {name?: unknown}).name === 'string');
+  app.patch<{Params: {id: string}, Body: {name?: string; expected?: {name: string}}}>('/api/boards/:id', async (request, reply) => {
     const user = await sessionUser(db, request.cookies.session, config.sessionSecret);
     if (!user) return reply.code(401).send({ error: 'authentication required' });
-    const name = request.body?.name?.trim();
+    const name = typeof request.body?.name === 'string' ? request.body.name.trim() : undefined;
     if (!name || name.length > 120) return reply.code(400).send({ error: 'name must contain 1-120 characters' });
+    if (!validNameExpected(request.body.expected)) return reply.code(400).send({ error: 'invalid expected name' });
     const board = await boardForUser(db, user.id, request.params.id);
     if (board?.type === 'chat' && !await isChatAdmin(config.botToken, board.telegram_chat_id, user.telegram_id)) return reply.code(403).send({ error: 'Telegram chat admin required' });
-    const renamed = await renameBoard(db, user.id, request.params.id, name);
+    const renamed = await renameBoard(db, user.id, request.params.id, name, request.body.expected);
     return renamed ?? reply.code(404).send({ error: 'board not found' });
   });
 
-  const scheduleInput = (body: Omit<PublicationSchedule, 'kind'> | undefined) => {
-    if (!body || typeof body.enabled !== 'boolean') return 'enabled must be boolean';
-    if (!Array.isArray(body.weekdays) || !body.weekdays.length || body.weekdays.some((day) => !Number.isInteger(day) || day < 1 || day > 7)) return 'invalid weekdays';
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(body.local_time)) return 'invalid local time';
-    if (!validPublicationTimezone(body.timezone)) return 'invalid timezone';
-    if (!Array.isArray(body.included_statuses) || body.included_statuses.some((status) => !['todo', 'in_progress', 'waiting', 'done'].includes(status))) return 'invalid statuses';
+  const scheduleInput = (body: Partial<Omit<PublicationSchedule, 'kind'>> | undefined, partial = false) => {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return 'invalid schedule';
+    if ((!partial || 'enabled' in body) && typeof body.enabled !== 'boolean') return 'enabled must be boolean';
+    if ((!partial || 'weekdays' in body) && (!Array.isArray(body.weekdays) || !body.weekdays.length || body.weekdays.some((day) => !Number.isInteger(day) || day < 1 || day > 7))) return 'invalid weekdays';
+    if ((!partial || 'local_time' in body) && (typeof body.local_time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(body.local_time))) return 'invalid local time';
+    if ((!partial || 'timezone' in body) && (typeof body.timezone !== 'string' || !body.timezone || !validPublicationTimezone(body.timezone))) return 'invalid timezone';
+    if ((!partial || 'included_statuses' in body) && (!Array.isArray(body.included_statuses) || body.included_statuses.some((status) => !['todo', 'in_progress', 'waiting', 'done'].includes(status)))) return 'invalid statuses';
     return body;
   };
   app.get<{Params: {id: string}}>('/api/boards/:id/publications', async (request, reply) => {
@@ -176,15 +181,22 @@ export function buildApp(config: Config, db: Database) {
     const board = await boardForUser(db, id, request.params.id);
     return board?.type === 'chat' ? { schedules: await schedulesForBoard(db, id, request.params.id) } : reply.code(404).send({ error: 'chat board not found' });
   });
-  app.put<{Params: {id: string; kind: PublicationKind}, Body: Omit<PublicationSchedule, 'kind'>}>('/api/boards/:id/publications/:kind', async (request, reply) => {
+  app.put<{Params: {id: string; kind: PublicationKind}, Body: Partial<Omit<PublicationSchedule, 'kind'>> & {expected?: Record<string, unknown>}}>('/api/boards/:id/publications/:kind', async (request, reply) => {
     const user = await sessionUser(db, request.cookies.session, config.sessionSecret);
     if (!user) return reply.code(401).send({ error: 'authentication required' });
     const board = await boardForUser(db, user.id, request.params.id);
     if (!board || board.type !== 'chat' || !['daily', 'weekly'].includes(request.params.kind)) return reply.code(404).send({ error: 'publication not found' });
     if (board.status !== 'active') return reply.code(403).send({ error: 'board is read-only' });
     if (!await isChatAdmin(config.botToken, board.telegram_chat_id, user.telegram_id)) return reply.code(403).send({ error: 'Telegram chat admin required' });
-    const input = scheduleInput(request.body); if (typeof input === 'string') return reply.code(400).send({ error: input });
-    return await updateSchedule(db, board.id, request.params.kind, input) ?? reply.code(403).send({ error: 'publication is not writable' });
+    const { expected, ...changes } = request.body ?? {};
+    const fields = ['enabled','weekdays','local_time','timezone','included_statuses'];
+    if (expected !== undefined && (!expected || typeof expected !== 'object' || Array.isArray(expected)
+      || !Object.keys(changes).length || Object.keys(changes).some((key) => !fields.includes(key))
+      || JSON.stringify(Object.keys(expected).sort()) !== JSON.stringify(Object.keys(changes).sort())
+      || typeof scheduleInput(expected, true) === 'string')) return reply.code(400).send({ error: 'invalid expected schedule' });
+    if (expected !== undefined && Array.isArray(changes.included_statuses) && !changes.included_statuses.length) return reply.code(400).send({ error: 'invalid statuses' });
+    const input = scheduleInput(changes, expected !== undefined); if (typeof input === 'string') return reply.code(400).send({ error: input });
+    return await updateSchedule(db, board.id, request.params.kind, input, expected, user.id) ?? reply.code(403).send({ error: 'publication is not writable' });
   });
   app.post<{Params: {id: string; kind: PublicationKind}, Body: Omit<PublicationSchedule, 'kind'>}>('/api/boards/:id/publications/:kind/preview', async (request, reply) => {
     const user = await sessionUser(db, request.cookies.session, config.sessionSecret);
@@ -193,7 +205,7 @@ export function buildApp(config: Config, db: Database) {
     if (!board || board.type !== 'chat' || !['daily', 'weekly'].includes(request.params.kind)) return reply.code(404).send({ error: 'publication not found' });
     if (!await isChatAdmin(config.botToken, board.telegram_chat_id, user.telegram_id)) return reply.code(403).send({ error: 'Telegram chat admin required' });
     const input = scheduleInput(request.body); if (typeof input === 'string') return reply.code(400).send({ error: input });
-    return { messages: await renderPublication(db, board.id, request.params.kind, input.included_statuses, config.botUsername, input.timezone) };
+    return { messages: await renderPublication(db, board.id, request.params.kind, input.included_statuses!, config.botUsername, input.timezone!) };
   });
 
   app.get('/api/tasks/mine', async (request, reply) => {
@@ -226,14 +238,15 @@ export function buildApp(config: Config, db: Database) {
     const project = await createProject(db, id, request.params.id, name);
     return project ?? reply.code(404).send({ error: 'board not found' });
   });
-  app.patch<{Params: {id: string; projectId: string}, Body: {name?: string; archived?: boolean}}>('/api/boards/:id/projects/:projectId', async (request, reply) => {
+  app.patch<{Params: {id: string; projectId: string}, Body: {name?: string; archived?: boolean; expected?: {name: string}}}>('/api/boards/:id/projects/:projectId', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
-    const name = request.body?.name?.trim();
+    const name = typeof request.body?.name === 'string' ? request.body.name.trim() : undefined;
     if (request.body?.name !== undefined && (!name || name.length > 120)) return reply.code(400).send({ error: 'name must contain 1-120 characters' });
+    if (!validNameExpected(request.body?.expected) || (request.body?.expected !== undefined && (!name || request.body.archived !== undefined))) return reply.code(400).send({ error: 'invalid expected name' });
     if (request.body?.archived !== undefined && typeof request.body.archived !== 'boolean') return reply.code(400).send({ error: 'archived must be boolean' });
     if (name === undefined && request.body?.archived === undefined) return reply.code(400).send({ error: 'project change is required' });
     let project;
-    try { project = await updateProject(db, id, request.params.id, request.params.projectId, { name, archived: request.body.archived }); }
+    try { project = await updateProject(db, id, request.params.id, request.params.projectId, { name, archived: request.body.archived, expected: request.body.expected }); }
     catch (error) {
       if (error instanceof ProjectConflictError) return reply.code(409).send({ error: error.message });
       throw error;

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Database, TaskStatus } from './db.js';
+import { checkSettingsExpected, withBoardLock } from './db.js';
 import { escapeHtml, telegramCall } from './telegram.js';
 
 export type PublicationKind = 'daily' | 'weekly';
@@ -41,14 +42,25 @@ export async function schedulesForBoard(db: Database, userId: string, boardId: s
   return result.rows;
 }
 
-export async function updateSchedule(db: Database, boardId: string, kind: PublicationKind, input: Omit<PublicationSchedule, 'kind'>) {
-  const result = await db.query<PublicationSchedule>(`UPDATE publication_schedules SET enabled = $3, weekdays = $4,
-      local_time = $5, timezone = $6, included_statuses = $7, updated_at = now()
-    WHERE board_id = $1 AND kind = $2 AND EXISTS (SELECT 1 FROM boards WHERE id = $1 AND status = 'active')
-    RETURNING kind, enabled, weekdays,
-      to_char(local_time, 'HH24:MI') AS local_time, timezone, included_statuses`,
-    [boardId, kind, input.enabled, input.weekdays, input.local_time, input.timezone, input.included_statuses]);
-  return result.rows[0] ?? null;
+export async function updateSchedule(db: Database, boardId: string, kind: PublicationKind, input: Partial<Omit<PublicationSchedule, 'kind'>>, expected?: Record<string, unknown>, userId?: string) {
+  return withBoardLock(db, boardId, async (client) => {
+    const current = await client.query<PublicationSchedule>(`SELECT s.kind, s.enabled, s.weekdays,
+        to_char(s.local_time, 'HH24:MI') AS local_time, s.timezone, s.included_statuses
+      FROM publication_schedules s JOIN boards b ON b.id = s.board_id
+      WHERE s.board_id = $1 AND s.kind = $2 AND b.status = 'active'
+        AND ($3::bigint IS NULL OR EXISTS (SELECT 1 FROM memberships WHERE board_id = b.id AND user_id = $3))
+      FOR UPDATE OF s, b`, [boardId, kind, userId ?? null]);
+    if (!current.rows[0]) return null;
+    checkSettingsExpected(current.rows[0], expected);
+    const next = { ...current.rows[0], ...input };
+    const result = await client.query<PublicationSchedule>(`UPDATE publication_schedules SET enabled = $3, weekdays = $4,
+        local_time = $5, timezone = $6, included_statuses = $7, updated_at = now()
+      WHERE board_id = $1 AND kind = $2 AND EXISTS (SELECT 1 FROM boards WHERE id = $1 AND status = 'active')
+      RETURNING kind, enabled, weekdays,
+        to_char(local_time, 'HH24:MI') AS local_time, timezone, included_statuses`,
+      [boardId, kind, next.enabled, next.weekdays, next.local_time, next.timezone, next.included_statuses]);
+    return result.rows[0] ?? null;
+  });
 }
 
 async function reportTasks(db: Database, boardId: string, kind: PublicationKind, statuses: string[], timezone: string, now: Date) {

@@ -20,7 +20,7 @@ import { PairBoard, PairInvite } from './pair-board';
 import { boardTypeName } from './domain';
 import { EntryGuide, GroupSetup, type EntryPath } from './bot-entry';
 import { McpConnections } from './mcp-connections';
-import { Autosave, type SaveState } from './autosave';
+import { NameSetting, PublicationSetting, useSettingsEdits } from './settings-editor';
 
 type TaskView = 'list' | 'kanban';
 type FilterChoice = 'project' | 'assignee' | 'status' | 'priority' | 'deadline';
@@ -67,6 +67,8 @@ function App() {
   const [taskLinkError, setTaskLinkError] = useState<403 | 404>();
   const [showArchive, setShowArchive] = useState(false);
   const [userId, setUserId] = useState('');
+  const settingsEdits = useSettingsEdits(userId);
+  const [settingsLoadedFor, setSettingsLoadedFor] = useState('');
   const [taskView, setTaskView] = useState<TaskView>(storedTaskView.view);
   const [grouping, setGrouping] = useState(storedTaskView.grouping);
   const [kanbanStatus, setKanbanStatus] = useState(storedTaskView.kanbanStatus);
@@ -108,11 +110,7 @@ function App() {
   const [claimingTask, setClaimingTask] = useState<Task>();
   const [claimingRow, setClaimingRow] = useState<string>();
   const backlogClaimLock = useRef(false);
-  // Debounce timers for settings autosave (issue #129); declared before any early return
-  // so the hook order stays stable across screens.
-  const scheduleTimer = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const publicationSaves = useRef<Record<string, { autosave: Autosave<Schedule>; draft: Schedule; valid: boolean }>>({});
-  const [publicationStates, setPublicationStates] = useState<Record<string, { state: SaveState; error: string }>>({});
+
   const [createUncertain, setCreateUncertain] = useState(false);
   const [createReset, setCreateReset] = useState(0);
   const [projectCreatePending, setProjectCreatePending] = useState(false);
@@ -156,6 +154,7 @@ function App() {
     ]);
     if (version !== boardLoadVersion.current || activeBoardId.current !== id) return false;
     setTasks(taskData.tasks); setProjects(projectData.projects); setMembers(memberData.members); setSchedules(publicationData.schedules); setRecurrences(recurrenceData.recurrences);
+    setSettingsLoadedFor(id);
     return true;
   };
   const loadTaskDetails = async (task: Task) => {
@@ -329,18 +328,7 @@ function App() {
     try { await run(); if (reload && board) await loadBoard(board.id); setMessage(success); return true; }
     catch (error) { setMessage(error instanceof Error ? error.message : 'Ошибка'); return false; }
   };
-  const saveBoardName = async (rawName: string) => {
-    if (!board) return;
-    const name = rawName.trim();
-    if (!name || name === board.name || name.length > 120) return;
-    const path = board.status === 'draft' ? `/api/boards/${board.id}/activate` : `/api/boards/${board.id}`;
-    const method = board.status === 'draft' ? 'POST' : 'PATCH';
-    const ok = await action(() => api(path, json(method, {name})), board.status === 'draft' ? 'Доска активирована' : '', false);
-    if (ok) {
-      setBoards((items) => items.map((item) => item.id === board.id ? { ...item, name } : item));
-      await loadBoards();
-    }
-  };
+
   const activate = () => { if (board) navigate({ screen: 'settings-workspace', boardId: board.id }); };
   const create = async (another = false) => {
     if (createLock.current) return;
@@ -485,10 +473,7 @@ function App() {
   };
   const editProject = async (item: Project) => {
     if (!board) { return; }
-    const name = window.prompt('Название проекта', item.name)?.trim();
-    if (!name || name === item.name) return;
-    const ok = await action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {name})), '', false);
-    if (ok) setProjects((current) => current.map((project) => project.id === item.id ? { ...project, name } : project));
+    navigate({ screen: 'settings-workspace', boardId: board.id });
   };
   const addRecurrence = async (event: React.FormEvent<HTMLFormElement> | React.MouseEvent<HTMLButtonElement>) => {
     if (!board) return;
@@ -757,67 +742,11 @@ function App() {
     const result = await api<{messages: string[]}>(`/api/boards/${board.id}/publications/${schedule.kind}/preview`, json('POST', schedule));
     setPreview(result.messages.join('\n\n———\n\n'));
   };
-  const publicationKey = (kind: string) => JSON.stringify([userId, board?.id, kind]);
-  const autoSaveSchedule = (next: Schedule, delay = 700) => {
-    if (!board || board.status !== 'active') return;
-    const boardId = board.id;
-    const key = publicationKey(next.kind);
-    setSchedules((items) => items.map((item) => item.kind === next.kind ? next : item));
-    let valid = next.weekdays.length > 0 && next.weekdays.every((day) => Number.isInteger(day) && day >= 1 && day <= 7)
-      && /^([01]\d|2[0-3]):[0-5]\d$/.test(next.local_time) && Boolean(next.timezone) && next.included_statuses.length > 0;
-    try { new Intl.DateTimeFormat('ru', { timeZone: next.timezone }); } catch { valid = false; }
-    // One queue per user/board/kind: late responses cannot overwrite a newer draft or another board.
-    let entry = publicationSaves.current[key];
-    if (!entry) {
-      const autosave = new Autosave<Schedule>({
-        key: `publication:${key}`,
-        send: async (sent) => {
-          const version = boardLoadVersion.current;
-          const saved = await api<Schedule>(`/api/boards/${boardId}/publications/${sent.kind}`, json('PUT', sent));
-          if (entry.draft === sent && activeBoardId.current === boardId && version === boardLoadVersion.current) {
-            setSchedules((items) => items.map((item) => item.kind === saved.kind ? saved : item));
-          }
-        },
-        onState: (state) => setPublicationStates((current) => ({ ...current, [key]: {
-          state: entry.valid ? state : 'error', error: entry.valid ? '' : 'Проверьте дни, время, часовой пояс и статусы.'
-        } })),
-        onError: (error) => setPublicationStates((current) => ({ ...current, [key]: {
-          state: 'error', error: error instanceof Error ? error.message : 'Ошибка сохранения'
-        } }))
-      });
-      entry = publicationSaves.current[key] = { autosave, draft: next, valid };
-    }
-    entry.draft = next; entry.valid = valid;
-    entry.autosave.setPaused(!valid);
-    setPublicationStates((current) => ({ ...current, [key]: {
-      state: valid ? 'pending' : 'error', error: valid ? '' : 'Проверьте дни, время, часовой пояс и статусы.'
-    } }));
-    entry.autosave.schedule(next, valid ? delay : null);
-  };
-  const autoSaveProject = (item: Project, name: string) => {
-    const trimmed = name.trim();
-    if (!trimmed || trimmed === item.name || trimmed.length > 120) return;
-    if (scheduleTimer.current[item.id]) clearTimeout(scheduleTimer.current[item.id]);
-    scheduleTimer.current[item.id] = setTimeout(() => {
-      void action(() => api(`/api/boards/${board!.id}/projects/${item.id}`, json('PATCH', {name: trimmed})), '', false)
-        .then((ok) => { if (ok) setProjects((current) => current.map((project) => project.id === item.id ? { ...project, name: trimmed } : project)); });
-    }, 700);
-  };
-  const publicationSettings = board?.type === 'chat' && schedules.length ? <Disclosure label="Публикации в чат"><div className="publications">{schedules.map((schedule) => {
-    const key = publicationKey(schedule.kind);
-    const save = publicationStates[key];
-    return <fieldset key={key}><legend>{schedule.kind === 'daily' ? 'План дня' : 'Недельная сводка'}</legend>
-      <label><input type="checkbox" checked={schedule.enabled} onChange={(event) => autoSaveSchedule({ ...schedule, enabled: event.target.checked }, 0)}/> Включена</label>
-      {save && <p className="detail-save-state" role="status" data-state={save.state}>{({ idle: '', pending: 'Ожидает отправки', saving: 'Сохраняется…', saved: 'Сохранено', error: 'Не сохранено' })[save.state]}</p>}
-      {save?.error && <p role="alert">{save.error}</p>}
-      {save?.state === 'error' && publicationSaves.current[key]?.valid && <button className="secondary" onClick={() => void publicationSaves.current[key].autosave.flush()}>Повторить</button>}
-      <label>Дни (1–7)<input value={schedule.weekdays.join(',')} onChange={(event) => autoSaveSchedule({ ...schedule, weekdays: event.target.value === '' ? [] : event.target.value.split(',').map(Number) })}/></label>
-      <label>Время<input type="time" value={schedule.local_time} onChange={(event) => autoSaveSchedule({ ...schedule, local_time: event.target.value })}/></label>
-      <label>Часовой пояс<input value={schedule.timezone} onChange={(event) => autoSaveSchedule({ ...schedule, timezone: event.target.value })}/></label>
-      <div className="status-options">{Object.entries(statusDisplayName).map(([status, name]) => <label key={status}><input type="checkbox" checked={schedule.included_statuses.includes(status as TaskStatus)} onChange={(event) => autoSaveSchedule({ ...schedule, included_statuses: event.target.checked ? [...schedule.included_statuses, status as TaskStatus] : schedule.included_statuses.filter((value) => value !== status) })}/> {name}</label>)}</div>
-      <div className="actions"><button className="secondary" onClick={() => void action(() => previewSchedule(schedule), 'Предпросмотр готов', false)}>Предпросмотр</button></div>
-    </fieldset>;
-  })}{preview && <pre>{preview}</pre>}</div></Disclosure> : null;
+  const publicationSettings = board?.type === 'chat' && board.status === 'active' && settingsLoadedFor === board.id && schedules.length ? <Disclosure label="Публикации в чат"><div className="publications">{schedules.map((schedule) =>
+    <PublicationSetting key={`${userId}:${board.id}:${schedule.kind}`} edits={settingsEdits} userId={userId} board={board} schedule={schedule}
+      onConfirmed={(saved) => { if ('kind' in saved && activeBoardId.current === board.id) setSchedules((items) => items.map((item) => item.kind === saved.kind ? saved : item)); }}
+      onPreview={(value) => void action(() => previewSchedule(value), 'Предпросмотр готов', false)}/>
+  )}{preview && <pre>{preview}</pre>}</div></Disclosure> : null;
 
   const frequencyOptions = [{ value: 'daily', label: 'Ежедневно' }, { value: 'weekdays', label: 'По будням' }, { value: 'weekly', label: 'Еженедельно' }, { value: 'monthly', label: 'Ежемесячно' }];
   const projectOptions = [{ value: '', label: 'Без проекта' }, ...projects.filter((item) => !item.archived_at).map((item) => ({ value: item.id, label: item.name }))];
@@ -839,8 +768,10 @@ function App() {
     <button className="back settings-back" onClick={() => navigate({ screen: 'settings' })}><Icon name="back"/>Настройки</button>
     {board?.type === 'pair' && <ActionRow label="Доступ" value={board.status === 'archived' ? 'Доска в архиве' : 'Доска на двоих'} onClick={() => setPairFlow({ board })}/>}
     {!board ? settingsBoardList('settings-workspace') : <fieldset className="settings-groups readonly-fields" disabled={board.status === 'archived' || board.status === 'frozen'}>
-      <section className="settings-group"><h2>Доска</h2>{(board.status === 'draft' || board.role === 'owner' || board.role === 'admin') ? <div className="settings-form inline-form"><label>Название<input name="name" defaultValue={board.name} maxLength={120} required onBlur={(event) => void saveBoardName(event.target.value)}/></label></div> : <p>{board.name}</p>}<small>{board.type === 'chat' ? 'Права администратора Telegram проверяются при изменении чат-доски.' : board.type === 'pair' ? 'Приглашениями и архивом управляет владелец.' : 'Личное рабочее пространство.'}</small></section>
-      <section className="settings-group"><h2>Проекты</h2>{projects.filter((item) => !item.archived_at).map((item) => <div className="settings-form inline-form" key={item.id}><input aria-label={`Название проекта ${item.name}`} name="name" defaultValue={item.name} maxLength={120} required onBlur={(event) => autoSaveProject(item, event.target.value)}/><button className="secondary" type="button" onClick={() => void action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: true})), 'Проект архивирован')}>В архив</button></div>)}<form className="settings-form inline-form" onSubmit={(event) => void addProject(event)}><input aria-label="Название нового проекта" name="name" placeholder="Новый проект" maxLength={120} required/><button disabled={projectCreatePending}>{projectCreatePending ? 'Добавляем…' : 'Добавить'}</button></form></section>
+      <section className="settings-group"><h2>Доска</h2>{(board.role === 'owner' || board.role === 'admin') ? <NameSetting key={`${userId}:${board.id}`} edits={settingsEdits} userId={userId} board={board}
+        onConfirmed={(saved) => { if ('id' in saved) setBoards((items) => items.map((item) => item.id === saved.id ? { ...item, ...saved } : item)); }}/> : <p>{board.name}</p>}<small>{board.type === 'chat' ? 'Права администратора Telegram проверяются при изменении чат-доски.' : board.type === 'pair' ? 'Приглашениями и архивом управляет владелец.' : 'Личное рабочее пространство.'}</small></section>
+      <section className="settings-group"><h2>Проекты</h2>{settingsLoadedFor === board.id && projects.filter((item) => !item.archived_at).map((item) => <NameSetting key={`${userId}:${board.id}:${item.id}`} edits={settingsEdits} userId={userId} board={board} project={item}
+        onConfirmed={(saved) => { if ('id' in saved && activeBoardId.current === board.id) setProjects((items) => items.map((value) => value.id === saved.id ? saved : value)); }}><button className="secondary" type="button" onClick={() => void action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: true})), 'Проект архивирован')}>В архив</button></NameSetting>)}<form className="settings-form inline-form" onSubmit={(event) => void addProject(event)}><input aria-label="Название нового проекта" name="name" placeholder="Новый проект" maxLength={120} required/><button disabled={projectCreatePending}>{projectCreatePending ? 'Добавляем…' : 'Добавить'}</button></form></section>
       <section className="settings-group"><h2>Участники</h2><div className="member-list">{members.map((member) => <div key={member.id}><Avatar initials={initials(member.first_name)} label={member.first_name}/><span><strong>{member.first_name}</strong><small>{member.username ? `@${member.username}` : 'Telegram'}</small></span></div>)}</div></section>
     </fieldset>}
   </SettingsScreen>;
