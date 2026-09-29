@@ -120,22 +120,26 @@ for (const scenario of ['daily', 'weekly', 'failure', 'failure latest', 'invalid
           await field.fill(value);
           await enabled.uncheck();
           await page.waitForTimeout(850);
-          expect(writes).toHaveLength(0);
+          expect(writes.at(-1)?.input).toMatchObject({ enabled: false });
+          expect(writes.every((write) => !((label === 'Дни (1–7)' ? 'weekdays' : label === 'Время' ? 'local_time' : 'timezone') in write.input))).toBe(true);
           await expect(status).toContainText('Не сохранено');
-          expect((await readback()).enabled).toBe(true);
+          expect((await readback()).enabled).toBe(false);
           await enabled.check();
           await field.fill(before);
+          await expect(status).toHaveText('Сохранено');
         }
-        // Invalid input cancels an already debounced valid edit.
+        // Invalid fields stay local; independent valid changes still save (#147).
+        const beforeInvalid = writes.length;
         await editor.getByLabel('Часовой пояс', { exact: true }).fill('UTC');
         await editor.getByLabel('Дни (1–7)', { exact: true }).fill('');
         await page.waitForTimeout(850);
-        expect(writes).toHaveLength(0);
+        expect(writes.slice(beforeInvalid).every((write) => !('weekdays' in write.input))).toBe(true);
+        expect((await readback()).timezone).toBe('UTC');
         await editor.getByLabel('Дни (1–7)', { exact: true }).fill('1,2,3,4,5');
         const selected = editor.locator('.status-options input:checked');
         while (await selected.count()) await selected.first().uncheck();
         await page.waitForTimeout(850);
-        expect(writes).toHaveLength(0);
+        expect(writes.every((write) => !('included_statuses' in write.input) || write.input.included_statuses.length > 0)).toBe(true);
         await expect(status).toHaveText('Не сохранено');
         await editor.getByRole('checkbox', { name: 'Новая', exact: true }).check();
         await enabled.uncheck();
@@ -176,15 +180,15 @@ for (const scenario of ['daily', 'weekly', 'failure', 'failure latest', 'invalid
         if (scenario === 'failure latest') {
           fail = true;
           release!(); delay = undefined;
-          await expect(status).toHaveText('Не сохранено');
+          // GET confirmed the latest revert already matches the server. No redundant PUT.
+          await expect(status).toHaveText('Сохранено');
           await expect(enabled).toBeChecked();
           expect(writes).toHaveLength(1);
           fail = false;
-          await editor.getByRole('button', { name: 'Повторить' }).click();
         }
         release!(); delay = undefined;
         await expect(status).toHaveText('Сохранено');
-        expect(writes.map((write) => write.input.enabled)).toEqual([false, true]);
+        expect(writes.map((write) => write.input.enabled)).toEqual(scenario === 'failure latest' ? [false] : [false, true]);
         expect(maxConcurrent).toBe(1);
         expect((await readback()).enabled).toBe(true);
         await enabled.uncheck();

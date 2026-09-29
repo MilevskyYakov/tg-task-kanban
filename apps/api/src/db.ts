@@ -16,6 +16,12 @@ export class TaskVersionConflictError extends TaskConflictError {
 }
 export class TaskActionError extends Error {}
 export class ProjectConflictError extends Error {}
+export class SettingsConflictError extends Error {
+  constructor(readonly current: Record<string, unknown>) { super('settings conflict'); }
+}
+export function checkSettingsExpected(current: Record<string, unknown>, expected?: Record<string, unknown>) {
+  if (expected && Object.keys(expected).some((key) => JSON.stringify(current[key]) !== JSON.stringify(expected[key]))) throw new SettingsConflictError(current);
+}
 const tokenHash = (token: string, secret: string) => createHash('sha256').update(`${secret}:${token}`).digest('hex');
 const linkHash = (token: string) => createHash('sha256').update(token).digest('hex');
 
@@ -103,10 +109,16 @@ export async function saveTaskFilterState(db: Database, userId: string, boardId:
   return result.rows[0]?.filters ?? null;
 }
 
-export async function renameBoard(db: Database, userId: string, boardId: string, name: string) {
+export async function renameBoard(db: Database, userId: string, boardId: string, name: string, expected?: {name: string}) {
   return withBoardLock(db, boardId, async (client) => {
+    const current = await client.query(`SELECT b.id, b.type, b.name FROM boards b JOIN memberships m ON m.board_id=b.id
+      WHERE b.id=$1 AND m.user_id=$2 AND m.role IN ('owner','admin') AND b.status IN ('active','draft')
+      AND (b.type <> 'pair' OR (b.owner_user_id=$2 AND b.status='active')) FOR UPDATE OF b`, [boardId, userId]);
+    if (!current.rows[0]) return null;
+    checkSettingsExpected(current.rows[0], expected);
     const result = await client.query(`UPDATE boards b SET name = $3 FROM memberships m
       WHERE b.id = $1 AND m.board_id = b.id AND m.user_id = $2 AND m.role IN ('owner', 'admin')
+        AND b.status IN ('active','draft')
         AND (b.type <> 'pair' OR (b.owner_user_id = $2 AND b.status = 'active')) RETURNING b.id, b.type, b.name`,
       [boardId, userId, name]);
     return result.rows[0] ?? null;
@@ -244,9 +256,16 @@ export async function createProject(db: Database, userId: string, boardId: strin
   return transaction ? run(transaction) : withBoardLock(db, boardId, run);
 }
 
-export async function updateProject(db: Database, userId: string, boardId: string, projectId: string, input: {name?: string; archived?: boolean}, transaction?: pg.PoolClient) {
+export async function updateProject(db: Database, userId: string, boardId: string, projectId: string, input: {name?: string; archived?: boolean; expected?: {name: string}}, transaction?: pg.PoolClient) {
   const run = async (client: pg.PoolClient) => {
     try {
+      if (input.expected) {
+        const current = await client.query(`SELECT p.id,p.name,p.archived_at FROM projects p
+          JOIN boards b ON b.id=p.board_id JOIN memberships m ON m.board_id=b.id
+          WHERE p.id=$1 AND p.board_id=$2 AND m.user_id=$3 AND b.status='active' AND p.archived_at IS NULL FOR UPDATE OF p,b`, [projectId, boardId, userId]);
+        if (!current.rows[0]) return null;
+        checkSettingsExpected(current.rows[0], input.expected);
+      }
       const result = await client.query(`UPDATE projects p SET name = COALESCE($4, p.name),
           archived_at = CASE WHEN $5::boolean IS NULL THEN p.archived_at WHEN $5 THEN now() ELSE NULL END
         FROM boards b, memberships m WHERE p.id = $1 AND p.board_id = $2 AND b.id = p.board_id

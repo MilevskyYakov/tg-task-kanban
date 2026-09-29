@@ -389,6 +389,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .settings-form > .action-row { padding-inline: 0; }
 .settings-choice-sheet .sheet-close { width: 100%; margin-top: 20px; }
 .publications { display: grid; gap: 12px; padding-top: 8px; }
+.settings-groups, .settings-groups > *, .settings-form > *, .publications, .publications fieldset, .publications label { min-width: 0; }
+.publications legend, .settings-feedback, .settings-form > button { max-width: 100%; overflow-wrap: anywhere; }
+.publications input, .settings-form input { min-width: 0; max-width: 100%; }
+.publications .status-options { grid-template-columns: repeat(2, minmax(0, 1fr)); overflow-wrap: anywhere; }
+.settings-feedback button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.settings-name-editor input, .publications input { scroll-margin-block: 100px 160px; }
 
 .task-details { display: block; min-height: 100vh; min-height: 100dvh; padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(94px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left)); background: var(--surface); }
 .task-details-bar { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; margin-bottom: 20px; }
