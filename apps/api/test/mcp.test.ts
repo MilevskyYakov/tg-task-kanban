@@ -363,6 +363,29 @@ test('MCP real HTTP/SDK and isolated DB: permissions, retries, grants and revoca
     const base=await call(writer,'create_task',{boardId:shared,requestId:randomUUID(),title:'Dependency'});
     const dependent=await call(writer,'create_task',{boardId:shared,requestId:randomUUID(),title:'Waiting',assigneeUserId:owner.userId,status:'waiting',blocker:{kind:'task',taskId:base.task.id}});
     assert.equal(dependent.ok,true);
+    const checkAt = '2030-01-02T12:34:56.789Z';
+    const partial = await call(writer,'create_task',{boardId:shared,requestId:randomUUID(),title:'Partial waiting',status:'waiting',
+      blocker:{kind:'external',reason:'Vendor',checkAt},deadline:{kind:'datetime',at:checkAt}});
+    let partialTask = partial.task;
+    const partialChange = async (changes: Record<string, unknown>) => {
+      const result = await call(writer,'update_task',{boardId:shared,taskId:partialTask.id,requestId:randomUUID(),expectedVersion:partialTask.version,changes});
+      if (result.ok) partialTask = result.task;
+      return result;
+    };
+    for (const changes of [{title:'Independent MCP title'}, {status:'waiting'}, {blocker:{kind:'external',reason:'Changed vendor',checkAt}}]) {
+      assert.equal((await partialChange(changes)).ok,true);
+      const stored = (await db.query('SELECT wait_reason, wait_check_at, deadline FROM tasks WHERE id=$1',[partialTask.id])).rows[0];
+      assert.equal(stored.wait_check_at.toISOString(),checkAt);
+      assert.equal(stored.deadline.toISOString(),checkAt);
+    }
+    assert.equal((await partialChange({blocker:{kind:'task',taskId:base.task.id}})).ok,true);
+    assert.equal((await call(writer,'get_task',{boardId:shared,taskId:partialTask.id})).blocker.taskId,base.task.id);
+    assert.equal((await partialChange({blocker:{kind:'task',taskId:partialTask.id}})).error.code,'INVALID_ARGUMENT');
+    assert.equal((await partialChange({blocker:{kind:'external',reason:'Final vendor',checkAt}})).ok,true);
+    assert.equal((await partialChange({status:'in_progress'})).ok,true);
+    assert.equal((await partialChange({status:'waiting'})).error.code,'INVALID_ARGUMENT');
+    const clearedBlocker = (await db.query('SELECT blocked_by_task_id, wait_reason, wait_check_at FROM tasks WHERE id=$1',[partialTask.id])).rows[0];
+    assert.deepEqual(clearedBlocker,{blocked_by_task_id:null,wait_reason:null,wait_check_at:null});
     assert.equal((await call(writer,'update_task',{boardId:shared,taskId:base.task.id,requestId:randomUUID(),expectedVersion:base.task.version,changes:{status:'waiting',blocker:{kind:'task',taskId:dependent.task.id}}})).error.code,'INVALID_ARGUMENT');
     const originalFetch=globalThis.fetch; let notifications=0;
     globalThis.fetch=(async (input,init)=>{

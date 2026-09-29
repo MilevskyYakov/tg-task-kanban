@@ -13,7 +13,7 @@ export const canonicalIssueUrl = (value: string | null | undefined): string | nu
   return url.length > 500 ? 'invalid issue url' : url;
 };
 
-export const taskInput = (body: TaskInput | undefined, partial = false): TaskInput | string => {
+export const taskInput = (body: TaskInput | undefined, partial = false, { deferBlockerValidation = false } = {}): TaskInput | string => {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'invalid task';
   for (const key of ['title', 'description', 'waitReason', 'deadline', 'deadlineDate', 'deadlineTimezone', 'waitCheckAt', 'projectId', 'assigneeUserId', 'blockerTaskId'] as const) {
     if (body[key] !== undefined && body[key] !== null && typeof body[key] !== 'string') return `invalid ${key}`;
@@ -39,8 +39,9 @@ export const taskInput = (body: TaskInput | undefined, partial = false): TaskInp
   if (body.deadlineTimezone != null && body.deadlineDate == null) return 'deadline timezone requires date';
   if ((body.deadlineDate === null) !== (body.deadlineTimezone === null) && (body.deadlineDate === null || body.deadlineTimezone === null)) return 'clear deadline date and timezone together';
   if (body?.blockerTaskId !== undefined && body.blockerTaskId !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.blockerTaskId)) return 'invalid blocker task id';
-  if (body?.status === 'waiting' && Number(Boolean(body.blockerTaskId)) + Number(Boolean(body.waitReason?.trim())) !== 1) return 'choose one blocker task or external reason';
-  if ((body?.waitReason || body?.waitCheckAt || body?.blockerTaskId) && body.status !== 'waiting') return 'blocker fields require waiting status';
+  // A PATCH may omit unchanged members. Validate the effective group under the DB lock.
+  if (!(partial && deferBlockerValidation) && body?.status === 'waiting' && Number(Boolean(body.blockerTaskId)) + Number(Boolean(body.waitReason?.trim())) !== 1) return 'choose one blocker task or external reason';
+  if ((body?.waitReason || body?.waitCheckAt || body?.blockerTaskId) && body.status !== 'waiting' && (!(partial && deferBlockerValidation) || body.status !== undefined)) return 'blocker fields require waiting status';
   for (const value of [body.deadline, body.waitCheckAt]) if (value != null && (!/^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)$/.test(value)
     || !validDate(value.slice(0, 10)) || Number.isNaN(Date.parse(value)))) return 'invalid date';
   if (body.waitReason != null && body.waitReason.length > 1000) return 'wait reason too long';

@@ -53,17 +53,16 @@ export function taskDraft(task: Task): TaskDraft {
 // Build a minimal patch: only fields that actually changed against `base` (issue #129).
 // Unrelated fields of other collaborators survive; sending no diff yields an empty patch.
 export function taskPatch(draft: TaskDraft, base: TaskDraft) {
-  if (!draft.title.trim()) throw new Error('Название задачи обязательно');
-  const deadline = deadlinePatch(draft.due);
-  const waitCheckAt = draft.waitCheckAt ? dateInputToIso(draft.waitCheckAt) : null;
-  if (draft.waitCheckAt && !waitCheckAt) throw new Error('Укажите корректную дату проверки');
-  if (draft.status === 'waiting' && !draft.blockerTaskId && !draft.waitReason.trim()) throw new Error('Укажите задачу-блокер или внешнюю причину');
-  const issueUrl = draft.issueUrl.trim() || null;
-  if (issueUrl && !/^(https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[1-9][0-9]*|[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#[1-9][0-9]*)$/.test(issueUrl)) throw new Error('Ссылка на issue: https://github.com/owner/repo/issues/N или owner/repo#N');
+  const errors: Partial<Record<keyof TaskDraft, string>> = {};
   const patch: Record<string, unknown> = {};
-  if (draft.title.trim() !== base.title.trim()) patch.title = draft.title.trim();
+  if (!draft.title.trim()) errors.title = 'Название задачи обязательно';
+  else if (draft.title.trim().length > 200) errors.title = 'Название длиннее 200 символов';
+  else if (draft.title.trim() !== base.title.trim()) patch.title = draft.title.trim();
+  const issueUrl = draft.issueUrl.trim() || null;
+  const issueHref = issueUrl ? githubIssueHref(issueUrl) : undefined;
+  if (issueUrl && (!issueHref || issueHref.length > 500)) errors.issueUrl = 'Ссылка на issue: https://github.com/owner/repo/issues/N или owner/repo#N';
+  else if (!sameDraftField(draft, base, 'issueUrl')) patch.issueUrl = issueUrl;
   if (draft.description !== base.description) patch.description = draft.description.trim() ? draft.description : null;
-  if (draft.status !== base.status) patch.status = draft.status;
   if (draft.priority !== base.priority) patch.priority = draft.priority;
   if (draft.projectId !== base.projectId) patch.projectId = draft.projectId || null;
   if (draft.assigneeUserId !== base.assigneeUserId) {
@@ -75,16 +74,25 @@ export function taskPatch(draft: TaskDraft, base: TaskDraft) {
     || (draft.due.mode === 'date' && (draft.due.date !== base.due.date || draft.due.timezone !== base.due.timezone))
     || (draft.due.mode === 'datetime' && (draft.due.date !== base.due.date || draft.due.time !== base.due.time));
   if (deadlineChanged) {
-    patch.deadline = deadline.deadline;
-    patch.deadlineDate = deadline.deadlineDate;
-    patch.deadlineTimezone = deadline.deadlineTimezone;
+    try { Object.assign(patch, deadlinePatch(draft.due)); }
+    catch (caught) { errors.due = (caught as Error).message; }
   }
-  if (draft.issueUrl.trim() !== base.issueUrl.trim() && issueUrl !== base.issueUrl.trim()) patch.issueUrl = issueUrl;
-  // Blocker group edits as one consistent unit (waiting + reason/blocker + check date).
-  if (draft.status === 'waiting' && (draft.blockerTaskId !== base.blockerTaskId || draft.waitReason !== base.waitReason || draft.waitCheckAt !== base.waitCheckAt)) {
-    patch.blockerTaskId = draft.blockerTaskId || null;
-    patch.waitReason = draft.blockerTaskId ? null : draft.waitReason.trim();
-    patch.waitCheckAt = waitCheckAt;
+  if (draft.status === 'waiting') {
+    const waitCheckAt = draft.waitCheckAt ? dateInputToIso(draft.waitCheckAt) : null;
+    if (!draft.blockerTaskId && !draft.waitReason.trim()) errors.waitReason = 'Укажите задачу-блокер или внешнюю причину';
+    else if (!draft.blockerTaskId && draft.waitReason.length > 1000) errors.waitReason = 'Причина длиннее 1000 символов';
+    if (draft.waitCheckAt && !waitCheckAt) errors.waitCheckAt = 'Укажите корректную дату проверки';
+    if (!errors.waitReason && !errors.waitCheckAt) {
+      if (draft.status !== base.status) patch.status = draft.status;
+      if (draft.status !== base.status || draft.blockerTaskId !== base.blockerTaskId || draft.waitReason !== base.waitReason) {
+        patch.blockerTaskId = draft.blockerTaskId || null;
+        patch.waitReason = draft.blockerTaskId ? null : draft.waitReason.trim();
+      }
+      // Do not round a stored timestamp to midnight when only the reason changes.
+      if (draft.status !== base.status || draft.waitCheckAt !== base.waitCheckAt) patch.waitCheckAt = waitCheckAt;
+    }
+  } else if (draft.status !== base.status) {
+    patch.status = draft.status;
   }
   // Leaving waiting clears the group on the server but only when the status change itself is in flight.
   if (draft.status !== base.status && base.status === 'waiting') {
@@ -92,7 +100,7 @@ export function taskPatch(draft: TaskDraft, base: TaskDraft) {
     patch.waitReason = null;
     patch.waitCheckAt = null;
   }
-  return patch;
+  return { patch, errors };
 }
 
 type Props = {
@@ -119,13 +127,6 @@ type Props = {
 
 const saveStateLabels: Record<SaveState, string> = {
   idle: '', pending: 'Ожидает отправки', saving: 'Сохраняется…', saved: 'Сохранено', error: 'Не сохранено. Проверьте связь и подождите или повторите выход.'
-};
-
-// An incomplete field (empty title, half-typed link) stays a local draft: the invalid
-// diff is simply not scheduled and the last saved value is untouched (issue #129).
-const safePatch = (draft: TaskDraft, base: TaskDraft): Record<string, unknown> => {
-  try { return taskPatch(draft, base); }
-  catch { return {}; }
 };
 
 const draftGroups: (keyof TaskDraft)[][] = [
@@ -207,11 +208,6 @@ const clearTaskDraft = (key: string) => {
   catch { return false; }
 };
 
-const validPatch = (draft: TaskDraft, base: TaskDraft): Record<string, unknown> | null => {
-  try { return taskPatch(draft, base); }
-  catch { return null; }
-};
-
 export function TaskDetails({ task, userId, collaboration, projects, members, candidateTasks, boardName, onBack, onClaim, onSave, onConfirmed, onArchive, onChecklistAdd, onChecklistUpdate, onChecklistDelete, onComment, onUrlAttachment, onFileAttachment, readOnly = false }: Props) {
   const initialBase = taskDraft(task);
   const localDraftKey = taskDraftStorageKey(userId, task.board_id, task.id);
@@ -239,7 +235,6 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
   const [conflictOpen, setConflictOpen] = useState(false);
   const [storageWarning, setStorageWarning] = useState(initialDraft.warning);
   const retryOnReconnect = useRef(true);
-  const localDraftPending = useRef(false);
   const descriptionEditor = useRef<HTMLTextAreaElement>(null);
   const draftRef = useRef(draft);
   draftRef.current = draft;
@@ -247,6 +242,13 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
   const confirmed = useRef(onConfirmed);
   confirmed.current = onConfirmed;
   const persistDraft = () => setStorageWarning(!writeTaskDraft(localDraftKey, draftRef.current, baseRef.current, unversionedRef.current ? undefined : versionRef.current));
+  const preparePatch = (next: TaskDraft, keepDraft = false) => {
+    const { patch, errors } = taskPatch(next, baseRef.current);
+    // Before acknowledgement, even a revert to the base must survive an in-flight write.
+    if (!keepDraft && !Object.keys(errors).length && !Object.keys(patch).length) setStorageWarning(!clearTaskDraft(localDraftKey));
+    else persistDraft();
+    return patch;
+  };
   const replaceDraft = (next: TaskDraft) => { draftRef.current = next; setDraft(next); };
   const acceptServer = (server: Task, next: TaskDraft) => {
     baseRef.current = taskDraft(server);
@@ -279,16 +281,17 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
   autosave = useMemo(() => new Autosave<Record<string, unknown>>({
     key: JSON.stringify([userId, task.board_id, task.id]),
     send: async (patch) => {
-      const sentDraft = draftRef.current;
+      const sentDraft = { ...draftRef.current };
+      const { errors } = taskPatch(sentDraft, baseRef.current);
+      // A successful partial PATCH acknowledges only valid groups, not invalid input.
+      for (const group of draftGroups) if (group.some((key) => errors[key])) {
+        for (const key of group) Object.assign(sentDraft, { [key]: baseRef.current[key] });
+      }
       try {
         const saved = await sendPatch.current(patch);
         acceptServer(saved, mergeTaskDraft(sentDraft, draftRef.current, taskDraft(saved)).draft);
         setError('');
-        const currentPatch = validPatch(draftRef.current, baseRef.current);
-        localDraftPending.current = currentPatch === null;
-        if (currentPatch && !Object.keys(currentPatch).length) setStorageWarning(!clearTaskDraft(localDraftKey));
-        else persistDraft();
-        autosave.schedule(currentPatch ?? {}, 0);
+        autosave.schedule(preparePatch(draftRef.current), 0);
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : 'Ошибка сохранения');
         if (caught instanceof ApiError && caught.status === 409 && caught.data.error === 'version conflict') {
@@ -297,11 +300,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
             const merged = mergeTaskDraft(baseRef.current, draftRef.current, taskDraft(server));
             if (!merged.conflicts.length) {
               acceptServer(server, merged.draft);
-              const latest = validPatch(merged.draft, baseRef.current);
-              localDraftPending.current = latest === null;
-              if (latest && !Object.keys(latest).length) setStorageWarning(!clearTaskDraft(localDraftKey));
-              else persistDraft();
-              autosave.schedule(latest ?? {}, 0);
+              autosave.schedule(preparePatch(merged.draft), 0);
               setError('');
               return;
             }
@@ -317,16 +316,13 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
               throw caught;
             }
             acceptServer(current, merged.draft);
-            persistDraft();
-            const latest = validPatch(draftRef.current, baseRef.current);
-            if (latest && !Object.keys(latest).length) {
-              localDraftPending.current = false;
-              setStorageWarning(!clearTaskDraft(localDraftKey));
+            const latest = preparePatch(draftRef.current);
+            if (!Object.keys(latest).length) {
               autosave.schedule({}, null);
               setError('');
               return;
             }
-            if (latest) autosave.schedule(latest, null);
+            autosave.schedule(latest, null);
           } catch (refreshError) {
             if (refreshError instanceof ApiError && refreshError.status >= 400 && refreshError.status < 500) retryOnReconnect.current = false;
             /* Keep the original save error and queued draft. */
@@ -335,7 +331,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
         throw caught;
       }
     },
-    onState: (state) => setSaveState(state === 'saved' && (localDraftPending.current || conflictRef.current) ? 'pending' : state)
+    onState: setSaveState
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [userId, task.board_id, task.id]);
   useEffect(() => () => autosave.stop(), [autosave]);
@@ -348,11 +344,8 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
       if (fields.length) { showConflict(task, fields); setSaveState('pending'); return; }
     }
     acceptServer(task, merged.draft);
-    const patch = validPatch(draftRef.current, baseRef.current);
-    if (!patch) { localDraftPending.current = true; setSaveState('pending'); return; }
+    const patch = preparePatch(draftRef.current);
     if (!Object.keys(patch).length) {
-      localDraftPending.current = false;
-      setStorageWarning(!clearTaskDraft(localDraftKey));
       setSaveState('saved');
       return;
     }
@@ -365,14 +358,11 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
       conflictRef.current = { ...conflictRef.current, fields: mergeTaskDraft(baseRef.current, nextDraft, taskDraft(conflictRef.current.serverTask)).conflicts };
       setConflict(conflictRef.current);
     }
-    persistDraft();
-    const patch = validPatch(nextDraft, baseRef.current);
-    localDraftPending.current = patch === null;
-    autosave.schedule(patch ?? {});
+    autosave.schedule(preparePatch(nextDraft, true));
   };
   const flushNow = async () => {
     if (!savable || conflictRef.current) return;
-    autosave.schedule(safePatch(draftRef.current, baseRef.current), 0);
+    autosave.schedule(preparePatch(draftRef.current, true), 0);
     await autosave.flush();
   };
   useLayoutEffect(() => {
@@ -426,6 +416,8 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
   } satisfies Record<DetailChoice, { title: string; current: string; options: { value: string; label: string; restriction?: string | null }[] }>;
   const issueUrl = draft.issueUrl.trim();
   const issueHref = githubIssueHref(issueUrl);
+  const fieldErrors = taskPatch(draft, baseRef.current).errors;
+  const displayedSaveState = saveState === 'saved' && (Object.keys(fieldErrors).length || conflict) ? 'pending' : saveState;
   const conflictLabels: Partial<Record<keyof TaskDraft, string>> = {
     title: 'Название', description: 'Описание', status: 'Статус', projectId: 'Проект', assigneeUserId: 'Исполнитель',
     due: 'Срок', priority: 'Приоритет', blockerTaskId: 'Задача-блокер', issueUrl: 'GitHub issue', waitReason: 'Внешняя причина', waitCheckAt: 'Дата проверки'
@@ -458,11 +450,11 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     <header className="task-details-bar"><button className="detail-icon" aria-label="Назад к задачам" onClick={leave}><Icon name="back"/></button><span><i/> {boardName}</span><div className="detail-menu-wrap"><button className="detail-icon" aria-label="Другие действия" aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)}><Icon name="more"/></button>{menuOpen && <div className="detail-menu">{task.recurrence_template_id && <p>Повторяющаяся задача</p>}{savable && <label className="checkbox"><input type="checkbox" checked={draft.future} onChange={(event) => set('future', event.target.checked)}/> Изменить этот и будущие повторы</label>}<button type="button" aria-expanded={historyOpen} onClick={() => setHistoryOpen((value) => !value)}>История <Icon name="chevron"/></button>{historyOpen && <div className="detail-history">{collaboration.timeline.map((item) => <p key={item.id}>{item.actor_name} · {item.action}<small>{new Date(item.created_at).toLocaleString('ru-RU')}</small></p>)}</div>}<div className="detail-danger-zone"><button type="button" className="danger" disabled={busy || readOnly} onClick={() => { void flushNow(); void run(onArchive); }}>Архивировать задачу</button></div></div>}</div></header>
 
     {readOnly && <p className="notice">Доска доступна только для чтения.</p>}
-    {savable && <p className="detail-save-state" role="status" data-state={saveState}>{saveStateLabels[saveState]}</p>}
+    {savable && <p className="detail-save-state" role="status" data-state={displayedSaveState}>{saveStateLabels[displayedSaveState]}</p>}
     {storageWarning && <p className="detail-error" role="alert">Локальная копия недоступна или повреждена: несохранённые правки могут потеряться при закрытии приложения.</p>}
     <form onSubmit={(event) => event.preventDefault()}>
       <fieldset className="readonly-fields detail-surface" disabled={readOnly}>
-        <div className="detail-heading"><div className="detail-title"><textarea aria-label="Название задачи" maxLength={200} value={draft.title} onChange={(event) => set('title', event.target.value)} onBlur={() => void flushNow()}/></div>
+        <div className="detail-heading"><div className="detail-title"><textarea aria-label="Название задачи" aria-invalid={Boolean(fieldErrors.title)} aria-describedby={fieldErrors.title ? 'detail-title-error' : undefined} maxLength={200} value={draft.title} onChange={(event) => set('title', event.target.value)} onBlur={() => void flushNow()}/>{fieldErrors.title && <p id="detail-title-error" className="detail-error" role="alert">{fieldErrors.title}</p>}</div>
         <div className="detail-status"><button type="button" className="detail-status-action" onClick={() => setChoice('status')}><span className="status-dot"/>{statusDisplayName[draft.status]}<Icon name="chevron"/></button>{collaboration.checklist.length > 0 && <span className="detail-progress"><span>{completed} из {collaboration.checklist.length} шагов</span><i aria-hidden="true"><i style={{ width: `${completed / collaboration.checklist.length * 100}%` }}/></i></span>}</div>
         </div><div className="detail-property-grid">
           <ActionRow label="Проект" value={projects.find((item) => item.id === draft.projectId)?.name ?? 'Без проекта'} onClick={() => setChoice('project')}/>
@@ -470,9 +462,10 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
           <DeadlineField value={draft.due} onChange={(value) => set('due', value)} showIcon={false}/>
           <ActionRow label="Приоритет" value={priorityDisplayName[draft.priority]} onClick={() => setChoice('priority')}/>
         </div>
+        {fieldErrors.due && <p className="detail-error" role="alert">{fieldErrors.due}</p>}
         <div className="detail-github">
           {issueUrlEditing ? <>
-            <label><span>Ссылка на GitHub issue</span><input maxLength={500} inputMode="url" placeholder="owner/repo#123 или https://github.com/owner/repo/issues/123" value={draft.issueUrl} onChange={(event) => set('issueUrl', event.target.value)}/></label>
+            <label><span>Ссылка на GitHub issue</span><input aria-invalid={Boolean(fieldErrors.issueUrl)} aria-describedby={fieldErrors.issueUrl ? 'detail-issue-error' : undefined} maxLength={500} inputMode="url" placeholder="owner/repo#123 или https://github.com/owner/repo/issues/123" value={draft.issueUrl} onChange={(event) => set('issueUrl', event.target.value)}/></label>
             <button type="button" className="detail-github-action" onClick={() => { setIssueUrlEditing(false); void flushNow(); }}>Готово</button>
             {issueUrl && <button type="button" className="detail-github-action" onClick={() => { setIssueUrlEditing(false); set('issueUrl', ''); void flushNow(); }}>Удалить</button>}
           </> : issueUrl ? <>
@@ -480,8 +473,15 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
             {issueHref ? <a className="detail-github-link" href={issueHref} target="_blank" rel="noopener noreferrer">{issueUrlShort(issueUrl)}<span>Открыть<Icon name="external"/></span></a> : <span className="detail-github-value">{issueUrlShort(issueUrl)}</span>}
             {!readOnly && <button type="button" className="detail-github-action" onClick={() => setIssueUrlEditing(true)}>Изменить</button>}
           </> : !readOnly && <button type="button" className="detail-github-action" onClick={() => setIssueUrlEditing(true)}>Добавить GitHub issue</button>}
+          {fieldErrors.issueUrl && <p id="detail-issue-error" className="detail-error" role="alert">{fieldErrors.issueUrl}</p>}
         </div>
-        {draft.status === 'waiting' && <div className="blocker-fields"><ActionRow label="Задача-блокер" value={candidateTasks.find((item) => item.id === draft.blockerTaskId)?.title ?? 'Внешняя причина'} onClick={() => setChoice('blocker')}/>{!draft.blockerTaskId && <label>Внешняя причина<input maxLength={1000} value={draft.waitReason} onChange={(event) => set('waitReason', event.target.value)}/></label>}<label>Дата проверки<input type="date" value={draft.waitCheckAt} onChange={(event) => set('waitCheckAt', event.target.value)}/></label></div>}
+        {draft.status === 'waiting' && <div className="blocker-fields">
+          <ActionRow label="Задача-блокер" value={candidateTasks.find((item) => item.id === draft.blockerTaskId)?.title ?? 'Внешняя причина'} onClick={() => setChoice('blocker')}/>
+          {!draft.blockerTaskId && <label>Внешняя причина<input aria-invalid={Boolean(fieldErrors.waitReason)} aria-describedby={fieldErrors.waitReason ? 'detail-reason-error' : undefined} maxLength={1000} value={draft.waitReason} onChange={(event) => set('waitReason', event.target.value)}/></label>}
+          {fieldErrors.waitReason && <p id="detail-reason-error" className="detail-error" role="alert">{fieldErrors.waitReason}</p>}
+          <label>Дата проверки<input type="date" aria-invalid={Boolean(fieldErrors.waitCheckAt)} aria-describedby={fieldErrors.waitCheckAt ? 'detail-check-error' : undefined} value={draft.waitCheckAt} onChange={(event) => set('waitCheckAt', event.target.value)}/></label>
+          {fieldErrors.waitCheckAt && <p id="detail-check-error" className="detail-error" role="alert">{fieldErrors.waitCheckAt}</p>}
+        </div>}
         {draft.assigneeUserId && draft.assigneeUserId !== task.assignee_user_id && <label className="checkbox"><input type="checkbox" checked={draft.notifyAssignee} onChange={(event) => set('notifyAssignee', event.target.checked)}/> Уведомить нового исполнителя</label>}
       </fieldset>
 
@@ -539,17 +539,15 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     setConflictOpen(false);
     setError('');
     retryOnReconnect.current = true;
-    const patch = validPatch(next, server);
-    localDraftPending.current = patch === null;
-    autosave.schedule(patch ?? {}, null);
+    const patch = preparePatch(next);
+    autosave.schedule(patch, null);
     autosave.setPaused(false);
-    if (patch && !Object.keys(patch).length) {
-      setStorageWarning(!clearTaskDraft(localDraftKey));
+    if (!Object.keys(patch).length) {
       setSaveState('saved');
     } else {
       persistDraft();
       setSaveState('pending');
-      if (patch) void autosave.flush();
+      void autosave.flush();
     }
   }
 }

@@ -3,10 +3,92 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { buildApp } from '../src/app.js';
 import type { Config } from '../src/config.js';
-import { createDatabase, createTask, pendingNotificationForTask, setTaskArchived, taskCollaboration, tasksForBoard, updateTask } from '../src/db.js';
+import { createDatabase, createTask, login, pendingNotificationForTask, setTaskArchived, taskCollaboration, taskForBoard, tasksForBoard, updateTask } from '../src/db.js';
+import { taskInput } from '../src/task-input.js';
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url) throw new Error('TEST_DATABASE_URL is required');
+
+test('partial blocker validation defers the effective group but keeps boundary validation', () => {
+  for (const input of [{ waitReason: 'New reason' }, { waitCheckAt: null }, { status: 'waiting' as const }]) {
+    assert.deepEqual(taskInput(input, true, { deferBlockerValidation: true }), input);
+  }
+  for (const input of [{ status: 'todo' as const, waitReason: 'Wrong status' }, { waitCheckAt: '2030-02-30T00:00:00Z' },
+    { blockerTaskId: 'not-a-uuid' }, { waitReason: 'x'.repeat(1001) }]) assert.equal(typeof taskInput(input, true, { deferBlockerValidation: true }), 'string');
+  assert.equal(typeof taskInput({ title: 'Missing reason', status: 'waiting' }), 'string');
+  assert.equal(typeof taskInput({ status: 'waiting' }, true), 'string', 'MCP keeps full blocker validation');
+});
+
+test('REST partial blocker edits validate locked state and preserve untouched values', async () => {
+  const db = createDatabase(url!);
+  const stamp = randomBytes(6).readUIntBE(0, 6);
+  const config: Config = { botToken: 'test', databaseUrl: url!, sessionSecret: 'isolated-partial-blocker-secret', initDataMaxAgeSeconds: 60,
+    sessionMaxAgeSeconds: 3600, host: '127.0.0.1', port: 0, production: false, webhookSecret: 'isolated-partial-blocker-webhook', publicUrl: 'https://example.test', botUsername: 'test_bot' };
+  const owner = await login(db, { id: stamp, first_name: 'Partial owner' }, 3600, config.sessionSecret);
+  const other = await login(db, { id: stamp + 1, first_name: 'Partial outsider' }, 3600, config.sessionSecret);
+  const boardId = (await db.query('SELECT id FROM boards WHERE owner_user_id=$1', [owner.userId])).rows[0].id;
+  const otherBoardId = (await db.query('SELECT id FROM boards WHERE owner_user_id=$1', [other.userId])).rows[0].id;
+  const app = buildApp(config, db);
+  try {
+    const exact = '2030-01-01T12:34:56.789Z';
+    const target = await createTask(db, owner.userId, boardId, { title: 'Partial target', status: 'waiting', waitReason: 'Vendor', waitCheckAt: exact,
+      deadlineDate: '2030-02-01', deadlineTimezone: 'Asia/Kathmandu', issueUrl: 'https://github.com/o/r/issues/9' });
+    const blocker = await createTask(db, owner.userId, boardId, { title: 'Blocker one' });
+    const nextBlocker = await createTask(db, owner.userId, boardId, { title: 'Blocker two' });
+    const foreign = await createTask(db, other.userId, otherBoardId, { title: 'Foreign blocker' });
+    const patch = (payload: object, id = target.id, person = owner) => app.inject({ method: 'PATCH', url: `/api/boards/${boardId}/tasks/${id}`, cookies: { session: person.token }, payload });
+    const read = () => taskForBoard(db, owner.userId, boardId, target.id);
+    for (const payload of [{ title: 'Renamed' }, { waitReason: 'New vendor' }, { status: 'waiting' }]) {
+      assert.equal((await patch(payload)).statusCode, 200);
+      const stored = await read();
+      assert.equal(stored.wait_check_at.toISOString(), exact);
+      assert.equal(stored.deadline_date, '2030-02-01');
+      assert.equal(stored.deadline_timezone, 'Asia/Kathmandu');
+      assert.equal(stored.issue_url, 'https://github.com/o/r/issues/9');
+    }
+    assert.equal((await read()).wait_reason, 'New vendor');
+    const before = await read();
+    for (const payload of [{ blockerTaskId: blocker.id }, { waitReason: '' }, { waitCheckAt: 'bad' }]) {
+      assert.notEqual((await patch(payload)).statusCode, 200, JSON.stringify(payload));
+      assert.equal((await read()).version, before.version, 'invalid group writes nothing');
+    }
+    assert.equal((await patch({ blockerTaskId: blocker.id, waitReason: null })).statusCode, 200);
+    assert.equal((await patch({ blockerTaskId: nextBlocker.id })).statusCode, 200);
+    assert.equal((await read()).blocked_by_task_id, nextBlocker.id);
+    assert.equal((await read()).wait_check_at.toISOString(), exact);
+    for (const id of [target.id, foreign.id]) assert.equal((await patch({ blockerTaskId: id })).statusCode, 409);
+    assert.equal((await patch({ status: 'waiting', blockerTaskId: target.id }, nextBlocker.id)).statusCode, 409, 'cycle rejected');
+    await setTaskArchived(db, owner.userId, boardId, blocker.id, true);
+    assert.equal((await patch({ blockerTaskId: blocker.id })).statusCode, 409);
+    await setTaskArchived(db, owner.userId, boardId, blocker.id, false);
+    await updateTask(db, owner.userId, boardId, blocker.id, { status: 'done' });
+    assert.equal((await patch({ blockerTaskId: blocker.id })).statusCode, 409);
+    assert.equal((await patch({ blockerTaskId: null, waitReason: 'External again' })).statusCode, 200);
+    assert.equal((await patch({ waitCheckAt: '2030-03-01T10:11:12.123Z' })).statusCode, 200);
+    assert.equal((await read()).wait_check_at.toISOString(), '2030-03-01T10:11:12.123Z');
+    assert.equal((await patch({ waitCheckAt: null })).statusCode, 200);
+    assert.equal((await read()).wait_check_at, null);
+    assert.equal((await patch({ status: 'in_progress' })).statusCode, 200);
+    assert.equal((await read()).wait_reason, null);
+    assert.equal((await read()).blocked_by_task_id, null);
+    for (const payload of [{ waitReason: 'No waiting status' }, { waitCheckAt: exact }, { status: 'waiting' }]) assert.notEqual((await patch(payload)).statusCode, 200);
+    assert.equal((await patch({ status: 'waiting', waitReason: 'Valid entry', expectedVersion: before.version })).statusCode, 409);
+    assert.equal((await patch({ status: 'waiting', waitReason: 'Valid entry' })).statusCode, 200);
+    assert.equal((await patch({ waitReason: 'Outsider' }, target.id, other)).statusCode, 403);
+    for (const status of ['frozen', 'archived']) {
+      await db.query('UPDATE boards SET status=$2 WHERE id=$1', [boardId, status]);
+      assert.equal((await patch({ waitReason: 'Read-only' })).statusCode, 403);
+    }
+    await db.query("UPDATE boards SET status='active' WHERE id=$1", [boardId]);
+    await setTaskArchived(db, owner.userId, boardId, target.id, true);
+    assert.equal((await patch({ waitReason: 'Archived task' })).statusCode, 403);
+  } finally {
+    await app.close();
+    await db.query('DELETE FROM boards WHERE owner_user_id=ANY($1)', [[owner.userId, other.userId]]);
+    await db.query('DELETE FROM users WHERE id=ANY($1)', [[owner.userId, other.userId]]);
+    await db.end();
+  }
+});
 
 test('structured task blockers stay board-scoped and unblock atomically', async () => {
   const db = createDatabase(url!);

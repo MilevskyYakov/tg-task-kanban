@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { nextOccurrence } from '../src/recurrence.js';
+import { recurrenceInput } from '../src/recurrence-input.js';
+
+test('partial task blocker validation does not enable blockers on recurrence templates', () => {
+  const rule = { frequency: 'daily' as const, localTime: '09:00', timezone: 'UTC', startAt: '2030-01-01T00:00:00Z' };
+  for (const input of [{ waitReason: 'Vendor' }, { waitCheckAt: '2030-01-01T00:00:00Z' }, { blockerTaskId: '00000000-0000-4000-8000-000000000001' }]) {
+    assert.equal(typeof recurrenceInput({ ...rule, ...input }, true), 'string');
+  }
+  assert.deepEqual(recurrenceInput({ ...rule, title: 'Renamed template' }, true), { ...rule, title: 'Renamed template' });
+});
 
 test('recurrence rules use local calendar and survive DST', () => {
   const base = { localTime: '09:00', timezone: 'Europe/Berlin', startAt: '2026-01-01T00:00:00Z' } as const;

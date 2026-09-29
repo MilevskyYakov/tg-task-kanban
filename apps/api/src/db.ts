@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import pg from 'pg';
 import type { TelegramUser } from './auth.js';
 import { nextOccurrence, type RecurrenceRule } from './recurrence.js';
+import { taskInput } from './task-input.js';
 
 const { Pool } = pg;
 export type Database = InstanceType<typeof Pool>;
@@ -408,7 +409,11 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
     }
     const blockerTaskId = status === 'waiting' ? (input.blockerTaskId === undefined ? task.blocked_by_task_id : input.blockerTaskId) : null;
     const waitReason = status === 'waiting' ? (input.waitReason === undefined ? task.wait_reason : input.waitReason) : null;
-    if (status === 'waiting' && Number(Boolean(blockerTaskId)) + Number(Boolean(waitReason?.trim())) !== 1) { if (!transaction) await client.query('ROLLBACK'); return null; }
+    const blockerGroup = taskInput({ title: task.title, status,
+      blockerTaskId: status === 'waiting' ? blockerTaskId : input.blockerTaskId,
+      waitReason: status === 'waiting' ? waitReason : input.waitReason,
+      waitCheckAt: input.waitCheckAt });
+    if (typeof blockerGroup === 'string') { if (!transaction) await client.query('ROLLBACK'); return null; }
     if (blockerTaskId && (blockerTaskId !== task.blocked_by_task_id || task.status !== 'waiting')) {
       if (blockerTaskId === taskId) throw new TaskConflictError('task cannot block itself');
       await assertBlockerAllowed(client, boardId, blockerTaskId);
