@@ -293,7 +293,7 @@ export function buildApp(config: Config, db: Database) {
   });
   app.patch<{Params: {id: string; taskId: string}, Querystring: {scope?: string}, Body: TaskPatchInput}>('/api/boards/:id/tasks/:taskId', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
-    const input = taskInput(request.body, true); if (typeof input === 'string') return reply.code(400).send({ error: input });
+    const input = taskInput(request.body, true, { deferBlockerValidation: true }); if (typeof input === 'string') return reply.code(400).send({ error: input });
     if (request.body?.expectedVersion !== undefined && (typeof request.body.expectedVersion !== 'string' || !revisionPattern.test(request.body.expectedVersion))) {
       return reply.code(400).send({ error: 'invalid expected version' });
     }

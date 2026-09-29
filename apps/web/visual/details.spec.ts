@@ -174,6 +174,75 @@ test('details autosaves a title edit without any save button and confirms on the
   expect(Object.keys(requests[0]).filter((key) => !['expectedVersion', 'confirmIncompleteChecklist'].includes(key))).toEqual(['title']);
 });
 
+for (const outcome of ['success', 'lost response', 'conflict', 'server choice'] as const) {
+  test(`invalid neighbor survives partial acknowledgement: ${outcome}`, async ({ page }) => {
+    const requests = await openDetails(page, 320);
+    const conflicting = outcome === 'conflict' || outcome === 'server choice';
+    let server = { ...task, ...(conflicting ? { title: 'Remote title', version: '2' } : {}) };
+    await page.route('**/api/boards/board-1/tasks/task-1', async (route) => {
+      if (route.request().method() !== 'PATCH') return route.fulfill({ json: server });
+      const input = route.request().postDataJSON();
+      requests.push(input);
+      if (input.expectedVersion !== server.version) return route.fulfill({ status: 409, json: { error: 'version conflict', task: server } });
+      server = { ...server, title: input.title ?? server.title, version: String(Number(server.version) + 1) };
+      if (outcome === 'lost response') return route.abort();
+      await route.fulfill({ json: server });
+    });
+    const issue = page.locator('.detail-github');
+    await issue.getByRole('button', { name: 'Добавить GitHub issue' }).click();
+    await issue.getByRole('textbox').fill('owner/');
+    await page.getByRole('textbox', { name: 'Название задачи' }).fill('Valid partial title');
+    if (conflicting) await page.getByRole('button', { name: outcome === 'server choice' ? 'Оставить серверную версию' : 'Моя правка поверх серверной', exact: true }).click();
+    await expect.poll(() => server.title).toBe(outcome === 'server choice' ? 'Remote title' : 'Valid partial title');
+    await expect(page.locator('.detail-save-state')).toHaveText('Ожидает отправки');
+    await expect(issue.getByRole('textbox')).toHaveValue('owner/');
+    await expect(issue.getByRole('alert')).toBeVisible();
+    if (outcome === 'success') {
+      await mkdir(evidence, { recursive: true });
+      for (const [width, height, textSize] of [[390, 844, 100], [320, 844, 100], [320, 520, 100], [1280, 900, 100], [320, 844, 200]]) {
+        await page.setViewportSize({ width, height });
+        await page.evaluate((size) => { document.documentElement.style.fontSize = `${size}%`; }, textSize);
+        await issue.getByRole('alert').scrollIntoViewIfNeeded();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        await page.screenshot({ path: `${evidence}/issue-144-invalid-link-${width}x${height}-${textSize}.png` });
+      }
+      await page.evaluate(() => { document.documentElement.style.fontSize = ''; });
+    }
+    expect(requests.every((input) => !('issueUrl' in input))).toBe(true);
+    await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('tasks.draft.v1.["user-2","board-1","task-1"]')!).draft.issueUrl)).toBe('owner/');
+    // Reverting the invalid field requires no request, but must clear the pending label.
+    const count = requests.length;
+    await issue.getByRole('textbox').fill('');
+    await expect(page.locator('.detail-save-state')).toHaveText('Сохранено');
+    await page.waitForTimeout(1000);
+    expect(requests).toHaveLength(count);
+  });
+}
+
+test('restored invalid deadline stays editable while an independent title saves', async ({ page }) => {
+  const requests = await openDetails(page, 390);
+  await page.getByRole('textbox', { name: 'Название задачи' }).fill('Independent restored title');
+  await page.evaluate(() => {
+    const key = 'tasks.draft.v1.["user-2","board-1","task-1"]';
+    const stored = JSON.parse(localStorage.getItem(key)!);
+    stored.draft.due = { ...stored.draft.due, mode: 'datetime', time: '' };
+    localStorage.setItem(key, JSON.stringify(stored));
+  });
+  await page.reload();
+  await page.getByRole('button').filter({ hasText: task.title }).first().click();
+  await expect(page.getByRole('alert')).toContainText('Укажите корректные дату и время');
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0].title).toBe('Independent restored title');
+  expect(requests[0]).not.toHaveProperty('deadline');
+  await expect(page.locator('.detail-save-state')).toHaveText('Ожидает отправки');
+  await page.getByRole('button', { name: /^Срок/ }).click();
+  await expect(page.getByLabel('Время срока')).toHaveValue('');
+  await page.getByLabel('Время срока').fill('12:34');
+  await page.getByRole('button', { name: 'Применить' }).click();
+  await flushAutosave(page);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
 test('details flushes the last edit when leaving the card immediately', async ({ page }) => {
   const requests = await openDetails(page, 390);
   const title = page.getByRole('textbox', { name: 'Название задачи' });
@@ -307,7 +376,7 @@ test('failed autosave queue write does not warn when durable draft storage succe
   await expect(page.locator('.detail-error')).toHaveCount(0);
 });
 
-test('details draft restores and persists through real API and database', async ({ page }) => {
+test('details draft and partial fields persist through real API and database', async ({ page }) => {
   const databaseUrl = process.env.TEST_DATABASE_URL;
   test.skip(!databaseUrl, 'TEST_DATABASE_URL required for API/DB verification');
   const db = createDatabase(databaseUrl!);
@@ -321,7 +390,10 @@ test('details draft restores and persists through real API and database', async 
   try {
     owner = await login(db, { id: stamp, first_name: 'Draft test' }, 3600, config.sessionSecret);
     boardId = (await db.query<{id: string}>("SELECT id FROM boards WHERE type = 'personal' AND owner_user_id = $1", [owner.userId])).rows[0].id;
-    const created = await createTask(db, owner.userId, boardId, { title: 'Server title before edit' });
+    const exact = '2030-01-02T12:34:56.789Z';
+    const created = await createTask(db, owner.userId, boardId, { title: 'Server title before edit', status: 'waiting', waitReason: 'Initial vendor', waitCheckAt: exact,
+      deadline: exact, issueUrl: 'https://github.com/o/r/issues/9' });
+    const blocker = await createTask(db, owner.userId, boardId, { title: 'Synthetic blocker' });
     if (!created) throw new Error('Could not create API/DB test task');
     app = buildApp(config, db);
     await page.addInitScript((id) => localStorage.setItem('tasks.globalBoardId', id), boardId);
@@ -352,6 +424,89 @@ test('details draft restores and persists through real API and database', async 
     await expect(page.locator('.detail-save-state')).toHaveText('Сохранено', { timeout: 10000 });
     const persisted = await db.query<{title: string}>('SELECT title FROM tasks WHERE id = $1 AND board_id = $2', [created.id, boardId]);
     expect(persisted.rows[0]?.title).toBe('Persisted through the API');
+    await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), draftKey)).toBeNull();
+    const read = async () => (await db.query('SELECT * FROM tasks WHERE id=$1', [created.id])).rows[0];
+    const issue = page.locator('.detail-github');
+    await issue.getByRole('button', { name: 'Изменить' }).click();
+    await issue.getByRole('textbox').fill('owner/');
+    await title.fill('Valid beside invalid link');
+    await page.locator('.detail-description-actions').getByRole('button', { name: 'Добавить описание' }).click();
+    await page.getByRole('textbox', { name: 'Описание', exact: true }).fill('Independent description');
+    await expect.poll(async () => (await read()).description).toBe('Independent description');
+    expect((await read()).title).toBe('Valid beside invalid link');
+    expect((await read()).issue_url).toBe('https://github.com/o/r/issues/9');
+    expect((await read()).wait_check_at.toISOString()).toBe(exact);
+    expect((await read()).deadline.toISOString()).toBe(exact);
+    await expect(issue.getByRole('alert')).toContainText('Ссылка на issue');
+    await expect(issue.getByRole('textbox')).toHaveValue('owner/');
+    await expect(page.locator('.detail-save-state')).toHaveText('Ожидает отправки');
+    await page.reload();
+    await expect(title).toHaveValue('Valid beside invalid link');
+    await expect(issue.getByRole('alert')).toBeVisible();
+    await issue.getByRole('button', { name: 'Изменить' }).click();
+    await expect(issue.getByRole('textbox')).toHaveValue('owner/');
+    await issue.getByRole('textbox').fill('o/r#9');
+    await issue.getByRole('button', { name: 'Готово' }).click();
+    await title.fill('');
+    await page.locator('.detail-description-actions').getByRole('button', { name: 'Изменить' }).click();
+    await page.getByRole('textbox', { name: 'Описание', exact: true }).fill('Description beside empty title');
+    await expect.poll(async () => (await read()).description).toBe('Description beside empty title');
+    expect((await read()).title).toBe('Valid beside invalid link');
+    await expect(title).toHaveValue('');
+    await expect(title).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.locator('#detail-title-error')).toBeVisible();
+    await page.setViewportSize({ width: 320, height: 520 });
+    await mkdir(evidence, { recursive: true });
+    await title.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `${evidence}/issue-144-invalid-title.png` });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.reload();
+    await expect(title).toHaveValue('');
+    await title.fill('Repaired title');
+    await flushAutosave(page);
+    await page.getByLabel('Внешняя причина', { exact: true }).fill('Changed vendor');
+    await flushAutosave(page);
+    expect((await read()).wait_reason).toBe('Changed vendor');
+    expect((await read()).wait_check_at.toISOString()).toBe(exact);
+    await page.getByLabel('Дата проверки', { exact: true }).fill('2030-04-05');
+    await flushAutosave(page);
+    expect((await read()).wait_check_at.toISOString()).toBe('2030-04-05T00:00:00.000Z');
+    await page.getByRole('button', { name: /^Задача-блокер/ }).click();
+    await page.getByRole('radio', { name: 'Synthetic blocker', exact: true }).click();
+    await flushAutosave(page);
+    expect((await read()).blocked_by_task_id).toBe(blocker.id);
+    expect((await read()).wait_reason).toBeNull();
+    await page.getByRole('button', { name: /^Задача-блокер/ }).click();
+    await page.getByRole('radio', { name: 'Внешняя причина', exact: true }).click();
+    await expect(page.locator('#detail-reason-error')).toBeVisible();
+    await title.fill('Independent beside incomplete blocker');
+    await expect.poll(async () => (await read()).title).toBe('Independent beside incomplete blocker');
+    expect((await read()).blocked_by_task_id).toBe(blocker.id);
+    await expect(page.getByLabel('Внешняя причина', { exact: true })).toHaveValue('');
+    await page.getByLabel('Внешняя причина', { exact: true }).fill('External again');
+    await flushAutosave(page);
+    expect((await read()).blocked_by_task_id).toBeNull();
+    expect((await read()).wait_reason).toBe('External again');
+    const chooseStatus = async (name: string) => {
+      await page.locator('.detail-status-action').click();
+      await page.getByRole('radio', { name, exact: true }).click();
+    };
+    await chooseStatus('В работе');
+    await flushAutosave(page);
+    expect((await read()).wait_reason).toBeNull();
+    expect((await read()).wait_check_at).toBeNull();
+    await chooseStatus('Блокер');
+    await expect(page.locator('#detail-reason-error')).toBeVisible();
+    await title.fill('Valid beside incomplete entry');
+    await expect.poll(async () => (await read()).title).toBe('Valid beside incomplete entry');
+    expect((await read()).status).toBe('in_progress');
+    await expect(page.locator('.detail-status-action')).toContainText('Блокер');
+    await page.getByLabel('Внешняя причина', { exact: true }).fill('Complete entry');
+    await flushAutosave(page);
+    expect((await read()).status).toBe('waiting');
+    expect((await read()).wait_reason).toBe('Complete entry');
+    expect((await read()).deadline.toISOString()).toBe(exact);
+    expect((await read()).issue_url).toBe('https://github.com/o/r/issues/9');
     await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), draftKey)).toBeNull();
   } finally {
     if (app) await app.close();
@@ -408,6 +563,31 @@ test('details serializes flushes and sends latest edit with confirmed version', 
   expect(requests.map(({ title: value, expectedVersion }) => [value, expectedVersion])).toEqual([['A', '1'], ['C', '2']]);
   expect(maxActive).toBe(1);
   expect(serverTask.title).toBe('C');
+});
+
+test('reverting to the base while a partial save is in flight keeps durable intent', async ({ page }) => {
+  const requests = await openDetails(page, 390);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let server = { ...task };
+  await page.route('**/api/boards/board-1/tasks/task-1', async (route) => {
+    if (route.request().method() !== 'PATCH') return route.fulfill({ json: server });
+    const input = route.request().postDataJSON();
+    requests.push(input);
+    if (requests.length === 1) await gate;
+    server = { ...server, title: input.title, version: String(Number(server.version) + 1) };
+    await route.fulfill({ json: server });
+  });
+  const title = page.getByRole('textbox', { name: 'Название задачи' });
+  await title.fill('In-flight title');
+  await title.blur();
+  await expect.poll(() => requests.length).toBe(1);
+  await title.fill(task.title);
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('tasks.draft.v1.["user-2","board-1","task-1"]')!).draft.title)).toBe(task.title);
+  release();
+  await expect(page.locator('.detail-save-state')).toHaveText('Сохранено');
+  expect(requests.map((input) => input.title)).toEqual(['In-flight title', task.title]);
+  expect(server.title).toBe(task.title);
 });
 
 test('details retries latest draft after an older save fails', async ({ page }) => {

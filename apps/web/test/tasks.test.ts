@@ -228,37 +228,56 @@ test('runClaim reloads list on success and keeps the row on claim errors', async
 test('task details patch sends only the changed fields and keeps blocker groups consistent', () => {
   const base = { ...taskDraft(tasks[0]), status: 'waiting' as const, waitReason: 'Ждём клиента', waitCheckAt: '2026-09-30' };
   // Nothing changed: empty patch, no request would be sent.
-  assert.deepEqual(taskPatch(base, base), {});
+  assert.deepEqual(taskPatch(base, base), { patch: {}, errors: {} });
   // Title edit of a waiting task must not clear waitCheckAt/waitReason (issue #129 root fix).
   const titleOnly = taskPatch({ ...base, title: 'Новое название' }, base);
-  assert.deepEqual(titleOnly, { title: 'Новое название' });
+  assert.deepEqual(titleOnly.patch, { title: 'Новое название' });
   // Description-only edit leaves status/assignee/deadline untouched.
   const descriptionOnly = taskPatch({ ...base, description: 'Детали' }, base);
-  assert.deepEqual(descriptionOnly, { description: 'Детали' });
+  assert.deepEqual(descriptionOnly.patch, { description: 'Детали' });
   // Blocker group is edited as one consistent unit.
   const newCheck = taskPatch({ ...base, waitCheckAt: '2026-10-05' }, base);
-  assert.deepEqual(newCheck, { blockerTaskId: null, waitReason: 'Ждём клиента', waitCheckAt: dateInputToIso('2026-10-05') });
+  assert.deepEqual(newCheck.patch, { waitCheckAt: dateInputToIso('2026-10-05') });
   // Leaving waiting clears the group together with the status change.
   const left = taskPatch({ ...base, status: 'in_progress' }, base);
-  assert.deepEqual(left, { status: 'in_progress', blockerTaskId: null, waitReason: null, waitCheckAt: null });
+  assert.deepEqual(left.patch, { status: 'in_progress', blockerTaskId: null, waitReason: null, waitCheckAt: null });
   // Assignee change carries the one-time notification choice.
   const reassigned = taskPatch({ ...base, assigneeUserId: 'u2', notifyAssignee: true }, base);
-  assert.deepEqual(reassigned, { assigneeUserId: 'u2', notifyAssignee: true });
+  assert.deepEqual(reassigned.patch, { assigneeUserId: 'u2', notifyAssignee: true });
   // Deadline edit moves all three deadline fields together.
   const moved = taskPatch({ ...base, due: { mode: 'date' as const, date: '2026-11-01', time: '', timezone: 'Europe/Moscow' } }, base);
-  assert.deepEqual(moved, { deadline: null, deadlineDate: '2026-11-01', deadlineTimezone: 'Europe/Moscow' });
-  // Incomplete values stay a local draft: invalid title throws, invalid diff not scheduled.
-  assert.throws(() => taskPatch({ ...base, title: '   ' }, base), /Название задачи обязательно/);
-  assert.throws(() => taskPatch({ ...base, waitReason: '' }, base), /задачу-блокер или внешнюю причину/);
-  assert.throws(() => taskPatch({ ...base, due: { ...base.due, date: '2026-02-30' } }, base), /корректный срок/);
-  assert.equal(taskPatch({ ...base, description: '  Первый абзац.\n\nВторой абзац.  ' }, base).description, '  Первый абзац.\n\nВторой абзац.  ', 'description whitespace and paragraphs survive editing');
-  assert.equal(taskPatch({ ...base, description: '   ' }, base).description, null, 'blank description clears the stored value');
-  assert.equal(taskPatch({ ...base, issueUrl: ' MilevskyYakov/tg-task-kanban#115 ' }, base).issueUrl, 'MilevskyYakov/tg-task-kanban#115', 'short issue form kept as typed');
-  assert.equal(taskPatch({ ...base, issueUrl: 'https://github.com/o/r/issues/9' }, base).issueUrl, 'https://github.com/o/r/issues/9');
-  assert.throws(() => taskPatch({ ...base, issueUrl: 'https://github.com/o/r/pulls/1' }, base), /Ссылка на issue/);
-  assert.throws(() => taskPatch({ ...base, issueUrl: 'gitlab.com/o/r/issues/1' }, base), /Ссылка на issue/);
+  assert.deepEqual(moved.patch, { deadline: null, deadlineDate: '2026-11-01', deadlineTimezone: 'Europe/Moscow' });
+  assert.match(taskPatch({ ...base, title: '   ' }, base).errors.title!, /Название задачи обязательно/);
+  assert.match(taskPatch({ ...base, waitReason: '' }, base).errors.waitReason!, /задачу-блокер или внешнюю причину/);
+  assert.match(taskPatch({ ...base, due: { ...base.due, date: '2026-02-30' } }, base).errors.due!, /корректный срок/);
+  assert.equal(taskPatch({ ...base, description: '  Первый абзац.\n\nВторой абзац.  ' }, base).patch.description, '  Первый абзац.\n\nВторой абзац.  ', 'description whitespace and paragraphs survive editing');
+  assert.equal(taskPatch({ ...base, description: '   ' }, base).patch.description, null, 'blank description clears the stored value');
+  assert.equal(taskPatch({ ...base, issueUrl: ' MilevskyYakov/tg-task-kanban#115 ' }, base).patch.issueUrl, 'MilevskyYakov/tg-task-kanban#115', 'short issue form kept as typed');
+  assert.equal(taskPatch({ ...base, issueUrl: 'https://github.com/o/r/issues/9' }, base).patch.issueUrl, 'https://github.com/o/r/issues/9');
+  assert.match(taskPatch({ ...base, issueUrl: 'https://github.com/o/r/pulls/1' }, base).errors.issueUrl!, /Ссылка на issue/);
+  assert.match(taskPatch({ ...base, issueUrl: 'gitlab.com/o/r/issues/1' }, base).errors.issueUrl!, /Ссылка на issue/);
   // Clearing the link sends an explicit null, not a missing field.
-  assert.deepEqual(taskPatch({ ...base, issueUrl: '' }, { ...base, issueUrl: 'https://github.com/o/r/issues/9' }), { issueUrl: null });
+  assert.deepEqual(taskPatch({ ...base, issueUrl: '' }, { ...base, issueUrl: 'https://github.com/o/r/issues/9' }).patch, { issueUrl: null });
+});
+
+test('partial task validation keeps independent edits and rejects whole invalid groups', () => {
+  const base = taskDraft({ ...tasks[0], priority: 'normal' });
+  const invalidLink = taskPatch({ ...base, title: 'Valid title', description: 'Valid description', issueUrl: 'owner/' }, base);
+  assert.deepEqual(invalidLink.patch, { title: 'Valid title', description: 'Valid description' });
+  assert.deepEqual(Object.keys(invalidLink.errors), ['issueUrl']);
+  const invalidTitle = taskPatch({ ...base, title: '', description: 'Valid description', priority: 'urgent' }, base);
+  assert.deepEqual(invalidTitle.patch, { description: 'Valid description', priority: 'urgent' });
+  assert.deepEqual(Object.keys(invalidTitle.errors), ['title']);
+  const incomplete = taskPatch({ ...base, title: 'Independent', status: 'waiting', waitCheckAt: '2030-02-30',
+    due: { ...base.due, mode: 'datetime', date: '2030-01-01', time: '' } }, base);
+  assert.deepEqual(incomplete.patch, { title: 'Independent' });
+  assert.deepEqual(Object.keys(incomplete.errors).sort(), ['due', 'waitCheckAt', 'waitReason']);
+  const waiting = { ...base, status: 'waiting' as const, waitReason: 'Vendor', waitCheckAt: '2030-01-01' };
+  assert.deepEqual(taskPatch(waiting, base).patch, { status: 'waiting', blockerTaskId: null, waitReason: 'Vendor', waitCheckAt: dateInputToIso('2030-01-01') });
+  assert.deepEqual(taskPatch({ ...waiting, waitReason: 'New reason' }, waiting).patch, { blockerTaskId: null, waitReason: 'New reason' });
+  assert.deepEqual(taskPatch({ ...waiting, waitCheckAt: '' }, waiting).patch, { waitCheckAt: null });
+  assert.deepEqual(taskPatch({ ...waiting, title: 'Valid', waitReason: '', waitCheckAt: '2030-01-02' }, waiting).patch, { title: 'Valid' });
+  assert.deepEqual(taskPatch({ ...base, issueUrl: 'o/r#9' }, { ...base, issueUrl: 'https://github.com/o/r/issues/9' }).patch, {});
 });
 
 test('task draft storage key isolates users, boards, and tasks', () => {
@@ -278,12 +297,12 @@ test('deadline modes round-trip without changing old timestamps, DST folds or da
       for (const deadline of ['2026-08-14T00:00:00.000Z', '2026-08-14T18:30:47.123Z', '2026-11-01T06:30:00.000Z']) {
         const baseWithDeadline = taskDraft({ ...tasks[0], deadline });
         const cleared = taskPatch({ ...baseWithDeadline, due: { ...baseWithDeadline.due, mode: 'none' as const, date: '', time: '' } }, baseWithDeadline);
-        assert.equal(cleared.deadline, null);
-        assert.deepEqual(taskPatch(baseWithDeadline, taskDraft({ ...tasks[0], deadline: undefined })), deadlinePatch(baseWithDeadline.due));
+        assert.equal(cleared.patch.deadline, null);
+        assert.deepEqual(taskPatch(baseWithDeadline, taskDraft({ ...tasks[0], deadline: undefined })).patch, deadlinePatch(baseWithDeadline.due));
       }
       const dateTask = { ...tasks[0], deadline: undefined, deadline_date: '2026-03-08', deadline_timezone: 'America/New_York' };
       const dateOnlyDraft = taskDraft(dateTask);
-      assert.deepEqual(taskPatch({ ...dateOnlyDraft, due: { ...dateOnlyDraft.due, time: '10:30' } }, dateOnlyDraft), {});
+      assert.deepEqual(taskPatch({ ...dateOnlyDraft, due: { ...dateOnlyDraft.due, time: '10:30' } }, dateOnlyDraft).patch, {});
       assert.deepEqual(deadlinePatch(deadlineDraft(dateTask)), { deadline: null, deadlineDate: '2026-03-08', deadlineTimezone: 'America/New_York' });
       assert.equal(isTaskOverdue(dateTask, new Date('2026-03-09T03:59:59.999Z')), false);
       assert.equal(isTaskOverdue(dateTask, new Date('2026-03-09T04:00:00.000Z')), true);

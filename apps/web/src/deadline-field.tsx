@@ -5,10 +5,11 @@ import { deadlineModeName, deadlinePatch, formatTaskDeadline, type DeadlineDraft
 export function DeadlineField({ value, onChange, disabled = false, showIcon = true }: { value: DeadlineDraft; onChange: (value: DeadlineDraft) => void; disabled?: boolean; showIcon?: boolean }) {
   const [draft, setDraft] = useState<DeadlineDraft>();
   const [error, setError] = useState('');
-  const label = value.mode === 'none' ? 'Без срока' : formatTaskDeadline({
-    deadline_date: value.mode === 'date' ? value.date : undefined,
-    deadline: value.mode === 'datetime' ? deadlinePatch(value).deadline ?? undefined : undefined
-  });
+  let label = 'Проверьте срок';
+  try {
+    const checked = deadlinePatch(value);
+    label = formatTaskDeadline({ deadline_date: checked.deadlineDate ?? undefined, deadline: checked.deadline ?? undefined });
+  } catch { /* Incomplete restored input stays editable, never crashes the card. */ }
   return <>
     <ActionRow label="Срок" value={label} icon={showIcon ? <Icon name="calendar"/> : undefined} disabled={disabled} onClick={() => { setDraft(value); setError(''); }}/>
     {draft && <Sheet className="task-sheet deadline-sheet" title="Срок задачи" onClose={() => setDraft(undefined)}>
