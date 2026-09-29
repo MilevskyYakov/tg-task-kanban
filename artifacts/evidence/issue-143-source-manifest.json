@@ -1,0 +1,40 @@
+{
+  "base_commit": "c34ea6adb35d237b72ad5b4178898404411d5be8",
+  "files": [
+    {
+      "path": "apps/web/src/autosave.ts",
+      "bytes": 5684,
+      "sha256": "429e09b9e643c5dafef29a77e7d683793529f348eba64d435ecdc6114e99ea4b"
+    },
+    {
+      "path": "apps/web/src/main.tsx",
+      "bytes": 98599,
+      "sha256": "8e444cd1c7e88c13e445437f7f49f1a86e99ba75c2aa7eb02109c455bd177f11"
+    },
+    {
+      "path": "apps/web/src/style.css",
+      "bytes": 76478,
+      "sha256": "e97d70e04e8d87adc598bd268f6763118dbe32359eb4f0cbb4770a52d7c66b27"
+    },
+    {
+      "path": "apps/web/src/task-details.tsx",
+      "bytes": 40157,
+      "sha256": "79a8eb4563a0e7e5cdafa34fc6168bce6e79d280d04a2ca5f36545a138d0ee53"
+    },
+    {
+      "path": "apps/web/test/tasks.test.ts",
+      "bytes": 27796,
+      "sha256": "408e0411c417b23e7c392981a3012ffd8201491a57ce61cbf2ae4c0b9ccc6dfe"
+    },
+    {
+      "path": "apps/web/visual/details.spec.ts",
+      "bytes": 56613,
+      "sha256": "1d8bed5f02faa425354222e5b600b3ff4b61012ee17eb17939419d9103718654"
+    },
+    {
+      "path": "apps/web/visual/conflicts.spec.ts",
+      "bytes": 11993,
+      "sha256": "f7ae4e029620c6540cd80514f66c8b850af6314e911fd63c2cbff48b6b2dc834"
+    }
+  ]
+}

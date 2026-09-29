@@ -717,6 +717,7 @@ function App() {
     onMine={() => { setBoardOverrideId(claimingTask.board_id); setNavigation({ screen: 'tasks' }); setClaimingTask(undefined); setOpenTask(undefined); setCollaboration(undefined); setBacklog(false); setTaskView('list'); setFilters({ ...defaultFilters, scope: 'mine' }); setTaskReload((value) => value + 1); }}
     onChanged={(changed) => setTasks((current) => changed ? current.map((item) => item.id === changed.id ? changed : item) : current.filter((item) => item.id !== claimingTask.id))}/></AppShell>;
   if (openTask && !collaboration) return <main className="task-details"><EnvironmentStatus/><button className="back" onClick={() => closeTaskDetails()}>← Задачи</button><Skeleton label="Загрузка задачи"/></main>;
+  const detailGeneration = taskScrollSequence.current;
   if (openTask && collaboration) return <TaskDetails
     key={`${userId}:${openTask.board_id}:${openTask.id}:${boards.find((item) => item.id === openTask.board_id)?.status}:${Boolean(openTask.archived_at)}`}
     task={openTask} userId={userId} collaboration={collaboration} projects={detailProjects} members={detailMembers}
@@ -725,14 +726,17 @@ function App() {
     candidateTasks={detailTasks.filter((item) => item.id !== openTask.id && item.status !== 'done' && !item.archived_at)}
     boardName={boards.find((item) => item.id === openTask.board_id)?.name ?? openTask.board_name ?? 'Задача'}
     onBack={() => closeTaskDetails()}
+    onConfirmed={(confirmed) => {
+      if (detailGeneration !== taskScrollSequence.current) return;
+      setTasks((current) => current.map((item) => item.id === confirmed.id ? confirmed : item));
+      setOpenTask((current) => current?.id === confirmed.id && current.board_id === confirmed.board_id ? confirmed : current);
+    }}
     onSave={async (patch, future, confirmIncompleteChecklist = false, expectedVersion) => {
       const query = future ? '?scope=future' : '';
       const saved = await api<Task & { notificationWarning?: string; seriesUpdateFailed?: boolean }>(`/api/boards/${openTask.board_id}/tasks/${openTask.id}${query}`, json('PATCH', { ...patch, expectedVersion: expectedVersion ?? openTask.version, confirmIncompleteChecklist }));
       // Server-confirmed object becomes the new baseline: no stale local merge, no full
       // board reload per keystroke batch (issue #129).
       const confirmed: Task = { ...saved, checklist_total: openTask.checklist_total, checklist_completed: openTask.checklist_completed };
-      setTasks((current) => current.map((item) => item.id === confirmed.id ? confirmed : item));
-      setOpenTask(confirmed);
       if (saved.seriesUpdateFailed) setMessage('Задачу сохранили, но серию изменить не удалось. Примените к серии ещё раз.');
       else if (saved.notificationWarning) setMessage(saved.notificationWarning);
       return confirmed;

@@ -7,7 +7,7 @@ import { Autosave } from '../src/autosave.js';
 import { runClaim } from '../src/claim-task.js';
 import { resolveThemeScheme } from '../src/environment.js';
 import { countLabel, initialNavigation, isSettingsNavigation, settingsSections } from '../src/navigation.js';
-import { taskDraft, taskDraftStorageKey, taskPatch } from '../src/task-details.js';
+import { mergeTaskDraft, taskDraft, taskDraftStorageKey, taskPatch } from '../src/task-details.js';
 import {
   activeFilterCount,
   dateInputToIso,
@@ -299,6 +299,28 @@ test('deadline modes round-trip without changing old timestamps, DST folds or da
   } finally { if (originalTZ === undefined) delete process.env.TZ; else process.env.TZ = originalTZ; }
 });
 
+test('three-way draft merge preserves independent edits, detects conflicts and keeps field groups atomic', () => {
+  const base = taskDraft(tasks[0]);
+  const local = { ...base, title: 'Local title', description: 'Local description' };
+  const server = { ...base, title: 'Remote title', priority: 'urgent' as const };
+  const merged = mergeTaskDraft(base, local, server);
+  assert.deepEqual(merged.conflicts, ['title']);
+  assert.equal(merged.draft.description, 'Local description');
+  assert.equal(merged.draft.priority, 'urgent');
+  assert.equal(merged.draft.title, 'Local title');
+  assert.deepEqual(mergeTaskDraft(base, local, { ...server, title: local.title }).conflicts, []);
+  assert.equal(mergeTaskDraft(base, { ...local, title: '' }, server).draft.title, '', 'invalid local input survives');
+  const waiting = { ...base, status: 'waiting' as const, waitReason: 'Local reason', waitCheckAt: '2026-09-29' };
+  const group = mergeTaskDraft(base, waiting, { ...base, status: 'done' });
+  assert.deepEqual(group.conflicts, ['status', 'blockerTaskId', 'waitReason', 'waitCheckAt']);
+  assert.equal(group.draft.status, 'waiting');
+  assert.equal(group.draft.waitReason, 'Local reason');
+  const due = { ...base.due, mode: 'date' as const, date: '2026-09-29', timezone: 'UTC' };
+  const dated = { ...base, due };
+  assert.deepEqual(mergeTaskDraft(dated, { ...dated, due: { ...due, time: '15:00' } }, { ...dated, title: 'Remote' }).conflicts, []);
+  assert.equal(mergeTaskDraft(dated, { ...dated, due: { ...due, date: '2026-09-30' } }, { ...dated, due: { ...due, timezone: 'Europe/Moscow' } }).conflicts[0], 'due');
+});
+
 function installMemoryStorage() {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
   const values = new Map<string, string>();
@@ -422,4 +444,25 @@ test('autosave cancels queued diff when latest draft returns to confirmed base',
 
   assert.deepEqual(sent, []);
   assert.equal(storage.values.has('tasks.autosave.autosave-cancel'), false);
+});
+
+test('paused conflict queue cannot flush on timer or reconnect and resolution replaces rejected patch', async (context) => {
+  const storage = installMemoryStorage();
+  const sent: Record<string, unknown>[] = [];
+  const autosave = new Autosave<Record<string, unknown>>({ key: 'conflict', send: async (patch) => { sent.push(patch); } });
+  context.after(() => { autosave.stop(); storage.restore(); });
+  autosave.schedule({ title: 'Rejected' }, 5);
+  autosave.setPaused(true);
+  autosave.schedule({ title: 'Latest local' }, 5);
+  await autosave.flush();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(sent, []);
+  autosave.schedule({}, null);
+  autosave.setPaused(false);
+  await autosave.flush();
+  assert.deepEqual(sent, []);
+  assert.equal(storage.values.has('tasks.autosave.conflict'), false);
+  autosave.schedule({ description: 'Independent edit' }, null);
+  await autosave.flush();
+  assert.deepEqual(sent, [{ description: 'Independent edit' }]);
 });
