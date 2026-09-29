@@ -2,6 +2,11 @@ export class ApiError extends Error {
   constructor(message: string, readonly status: number, readonly data: Record<string, unknown> = {}) {
     super(message);
   }
+
+  get incompleteChecklist(): number | undefined {
+    const count = this.data.incompleteChecklist;
+    return this.status === 409 && typeof count === 'number' && Number.isInteger(count) && count > 0 ? count : undefined;
+  }
 }
 
 export async function api<T>(path: string, options?: RequestInit): Promise<T> {

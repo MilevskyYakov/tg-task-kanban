@@ -134,6 +134,8 @@ const draftGroups: (keyof TaskDraft)[][] = [
   ['status', 'blockerTaskId', 'waitReason', 'waitCheckAt']
 ];
 const sameDraftField = (left: TaskDraft, right: TaskDraft, key: keyof TaskDraft) => {
+  // Leaving waiting clears these on the server; dormant draft values are not a conflict.
+  if (['blockerTaskId', 'waitReason', 'waitCheckAt'].includes(key) && left.status !== 'waiting' && right.status !== 'waiting') return true;
   if (key === 'due') {
     try { return JSON.stringify(deadlinePatch(left.due)) === JSON.stringify(deadlinePatch(right.due)); }
     catch { return JSON.stringify(left.due) === JSON.stringify(right.due); }
@@ -233,6 +235,9 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
   const [conflict, setConflict] = useState<{ serverTask: Task; fields: (keyof TaskDraft)[] }>();
   const conflictRef = useRef<typeof conflict>(undefined);
   const [conflictOpen, setConflictOpen] = useState(false);
+  const [checklistConfirmation, setChecklistConfirmation] = useState<{ count: number; version?: string }>();
+  const checklistConfirmationRef = useRef<typeof checklistConfirmation>(undefined);
+  const confirmedChecklistVersion = useRef<string | undefined>(undefined);
   const [storageWarning, setStorageWarning] = useState(initialDraft.warning);
   const retryOnReconnect = useRef(true);
   const descriptionEditor = useRef<HTMLTextAreaElement>(null);
@@ -267,8 +272,11 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
   };
   const sendPatch = useRef<(patch: Record<string, unknown>) => Promise<Task>>(async () => { throw new Error('not ready'); });
   sendPatch.current = async (patch) => {
+    // Approval belongs to one attempt against the version shown, never a retry/rebase.
+    const confirmChecklist = patch.status === 'done' && versionRef.current !== undefined && confirmedChecklistVersion.current === versionRef.current;
+    confirmedChecklistVersion.current = undefined;
     try {
-      const saved = await onSave(patch, draftRef.current.future, false, versionRef.current);
+      const saved = await onSave(patch, draftRef.current.future, confirmChecklist, versionRef.current);
       retryOnReconnect.current = true;
       return saved;
     } catch (caught) {
@@ -293,6 +301,16 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
         setError('');
         autosave.schedule(preparePatch(draftRef.current), 0);
       } catch (caught) {
+        if (caught instanceof ApiError && caught.incompleteChecklist !== undefined && patch.status === 'done') {
+          setError('');
+          if (draftRef.current.status === 'done') {
+            checklistConfirmationRef.current = { count: caught.incompleteChecklist, version: versionRef.current };
+            setChecklistConfirmation(checklistConfirmationRef.current);
+            autosave.setPaused(true);
+          }
+          autosave.schedule(preparePatch(draftRef.current), 0);
+          return;
+        }
         setError(caught instanceof Error ? caught.message : 'Ошибка сохранения');
         if (caught instanceof ApiError && caught.status === 409 && caught.data.error === 'version conflict') {
           const server = caught.data.task as Task | undefined;
@@ -353,7 +371,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
   }, [autosave, initialDraft, localDraftKey, savable]);
   const scheduleSave = (nextDraft: TaskDraft) => {
     if (!savable) return;
-    retryOnReconnect.current = !conflictRef.current;
+    retryOnReconnect.current = !conflictRef.current && !checklistConfirmationRef.current;
     if (conflictRef.current && !unversionedRef.current) {
       conflictRef.current = { ...conflictRef.current, fields: mergeTaskDraft(baseRef.current, nextDraft, taskDraft(conflictRef.current.serverTask)).conflicts };
       setConflict(conflictRef.current);
@@ -361,7 +379,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     autosave.schedule(preparePatch(nextDraft, true));
   };
   const flushNow = async () => {
-    if (!savable || conflictRef.current) return;
+    if (!savable || conflictRef.current || checklistConfirmationRef.current) return;
     autosave.schedule(preparePatch(draftRef.current, true), 0);
     await autosave.flush();
   };
@@ -394,7 +412,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     finally { setBusy(false); }
   };
   // Leaving the card must not lose the last edit: flush, then close (issue #129).
-  const leave = () => { void flushNow().finally(onBack); };
+  const leave = () => { void flushNow().finally(() => { if (!checklistConfirmationRef.current) onBack(); }); };
   const copyDescription = async () => {
     if (!draft.description.trim()) return;
     setDescriptionFeedback(undefined);
@@ -417,7 +435,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
   const issueUrl = draft.issueUrl.trim();
   const issueHref = githubIssueHref(issueUrl);
   const fieldErrors = taskPatch(draft, baseRef.current).errors;
-  const displayedSaveState = saveState === 'saved' && (Object.keys(fieldErrors).length || conflict) ? 'pending' : saveState;
+  const displayedSaveState = checklistConfirmation || (saveState === 'saved' && (Object.keys(fieldErrors).length || conflict)) ? 'pending' : saveState;
   const conflictLabels: Partial<Record<keyof TaskDraft, string>> = {
     title: 'Название', description: 'Описание', status: 'Статус', projectId: 'Проект', assigneeUserId: 'Исполнитель',
     due: 'Срок', priority: 'Приоритет', blockerTaskId: 'Задача-блокер', issueUrl: 'GitHub issue', waitReason: 'Внешняя причина', waitCheckAt: 'Дата проверки'
@@ -513,6 +531,13 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     {conflict && !conflictOpen && !readOnly && <button type="button" onClick={() => setConflictOpen(true)}>Разрешить конфликт</button>}
     {!readOnly && <div className="comment-composer"><input aria-label="Комментарий" maxLength={4000} value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Написать комментарий…"/><button className="attach" aria-label="Добавить ссылку" onClick={() => setShowAttachment((value) => !value)}><Icon name="attach"/></button><label className="attach attach-image" aria-label="Прикрепить изображение"><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void run(() => onFileAttachment(file), () => { event.target.value = ''; }); }}/><Icon name="image"/></label><button disabled={busy || !comment.trim()} aria-label="Отправить комментарий" onClick={() => void run(() => onComment(comment.trim()), () => setComment(''))}><Icon name="send"/></button></div>}
     {!readOnly && choiceSheet}
+    {checklistConfirmation && !readOnly && <Sheet className="task-sheet" title="Завершить задачу?" onClose={() => resolveChecklist(false)}>
+      <p>Незавершённых пунктов: {checklistConfirmation.count}. Завершить задачу, не отмечая эти пункты выполненными?</p>
+      <div className="choice-list">
+        <button type="button" className="secondary" onClick={() => resolveChecklist(false)}>Отмена</button>
+        <button type="button" onClick={() => resolveChecklist(true)}>Завершить</button>
+      </div>
+    </Sheet>}
     {conflict && conflictOpen && !readOnly && <Sheet className="task-sheet detail-conflict-sheet" title="Конфликт изменений" onClose={() => setConflictOpen(false)}>
       <p>Выберите значения конфликтующих полей. Независимые правки сохранятся.</p>
       {conflict.fields.filter((key) => !sameDraftField(draft, taskDraft(conflict.serverTask), key)).map((key) => <section className="detail-conflict-values" key={key} aria-label={conflictLabels[key]}>
@@ -526,6 +551,23 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     </Sheet>}
     {lightbox && <div className="lightbox" role="dialog" aria-modal="true" aria-label={lightbox.name ?? 'Просмотр изображения'} onClick={(event) => { if (event.target === event.currentTarget) setLightbox(undefined); }}><button type="button" className="lightbox-close" aria-label="Закрыть просмотр" onClick={() => setLightbox(undefined)}><Icon name="close"/></button><img src={`/api/boards/${task.board_id}/tasks/${task.id}/attachments/${lightbox.id}/file`} alt={lightbox.name ?? 'Изображение'}/></div>}
   </main>;
+
+  function resolveChecklist(complete: boolean) {
+    const pending = checklistConfirmationRef.current;
+    if (!pending || !savable) return;
+    if (complete) confirmedChecklistVersion.current = pending.version;
+    else {
+      // Decline only the completion group; keep independent and invalid local edits.
+      const { status, blockerTaskId, waitReason, waitCheckAt } = baseRef.current;
+      replaceDraft({ ...draftRef.current, status, blockerTaskId, waitReason, waitCheckAt });
+    }
+    checklistConfirmationRef.current = undefined;
+    setChecklistConfirmation(undefined);
+    setError('');
+    autosave.schedule(preparePatch(draftRef.current), null);
+    autosave.setPaused(false);
+    void autosave.flush();
+  }
 
   function resolveConflict(keepLocal: boolean) {
     const pending = conflictRef.current;

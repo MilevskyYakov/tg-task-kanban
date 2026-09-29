@@ -222,7 +222,13 @@ test('MCP real HTTP/SDK and isolated DB: permissions, retries, grants and revoca
     assert.equal((await call(writer,'update_task',completion)).error.code,'CHECKLIST_CONFIRMATION_REQUIRED');
     const rest = await app.inject({method:'PATCH',url:`/api/boards/${shared}/tasks/${taskId}`,cookies:{session:owner.token},payload:{status:'done'}});
     assert.equal(rest.statusCode,409); assert.equal(rest.json().incompleteChecklist,1);
-    assert.equal((await call(writer,'update_task',{...completion,requestId:randomUUID(),confirmIncompleteChecklist:true})).task.status,'done');
+    await call(writer,'add_checklist_item',{boardId:shared,taskId,requestId:randomUUID(),text:'Added during confirmation'});
+    assert.equal((await call(writer,'update_task',{...completion,requestId:randomUUID(),confirmIncompleteChecklist:true})).error.code,'VERSION_CONFLICT');
+    const freshCompletion = {...completion,requestId:randomUUID(),expectedVersion:(await call(writer,'get_task',{boardId:shared,taskId})).version,confirmIncompleteChecklist:true};
+    const completed = await call(writer,'update_task',freshCompletion);
+    assert.equal(completed.task.status,'done');
+    assert.equal((await call(writer,'update_task',freshCompletion)).replayed,true,'confirmed completion replay is idempotent');
+    assert.equal((await call(writer,'update_task',{...freshCompletion,requestId:randomUUID(),expectedVersion:completed.task.version,confirmIncompleteChecklist:false,changes:{title:'Text on done task'}})).task.status,'done');
     const otherTask = await createTask(db,other.userId,shared,{title:'Other owner',assigneeUserId:other.userId});
     const memberClose = await call(writer,'update_task',{boardId:shared,taskId:otherTask.id,requestId:randomUUID(),expectedVersion:String(otherTask.revision),changes:{status:'done'}});
     assert.equal(memberClose.ok,true,'writer connection closes a task it did not create');

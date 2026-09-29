@@ -931,6 +931,53 @@ test('resolution uses single-flight queue and preserves newer typing while the r
   expect(requests.map((input) => input.expectedVersion)).toEqual(['1', '2', '3']);
 });
 
+for (const complete of [true, false]) {
+  test(`checklist decision preserves newer text queued during the failed PATCH: ${complete}`, async ({ page }) => {
+    const requests = await openDetails(page, 390);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/api/boards/board-1/tasks/task-1', async (route) => {
+      if (route.request().method() !== 'PATCH' || requests.length) return route.fallback();
+      requests.push(route.request().postDataJSON());
+      await gate;
+      await route.fulfill({ status: 409, json: { error: 'incomplete checklist confirmation required', incompleteChecklist: 2 } });
+    });
+    await page.locator('.detail-status-action').click();
+    await page.getByRole('radio', { name: 'Готово', exact: true }).click();
+    await expect.poll(() => requests.length).toBe(1);
+    const title = page.getByRole('textbox', { name: 'Название задачи' });
+    await title.fill('Newer text during request');
+    release();
+    const dialog = page.getByRole('dialog', { name: 'Завершить задачу?' });
+    await dialog.getByRole('button', { name: complete ? 'Завершить' : 'Отмена', exact: true }).click();
+    await expect(page.locator('.detail-save-state')).toHaveText('Сохранено');
+    await expect(title).toHaveValue('Newer text during request');
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toMatchObject({ title: 'Newer text during request', expectedVersion: '1', confirmIncompleteChecklist: complete });
+    if (complete) expect(requests[1].status).toBe('done');
+    else expect(requests[1]).not.toHaveProperty('status');
+  });
+}
+
+test('exit flush keeps checklist confirmation visible and Escape cancels only completion', async ({ page }) => {
+  const requests = await openDetails(page, 390);
+  await page.route('**/api/boards/board-1/tasks/task-1', async (route) => {
+    if (route.request().method() !== 'PATCH') return route.fallback();
+    requests.push(route.request().postDataJSON());
+    await route.fulfill({ status: 409, json: { error: 'incomplete checklist confirmation required', incompleteChecklist: 2 } });
+  });
+  await page.locator('.detail-status-action').click();
+  await page.getByRole('radio', { name: 'Готово', exact: true }).click();
+  await page.getByRole('button', { name: 'Назад к задачам' }).click();
+  await expect(page.getByRole('dialog', { name: 'Завершить задачу?' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.detail-status-action')).toHaveText('В работе');
+  await expect(page.locator('.detail-save-state')).toHaveText('Сохранено');
+  await page.getByRole('button', { name: 'Назад к задачам' }).click();
+  await expect(page.getByRole('heading', { name: 'Детали задачи' })).toHaveCount(0);
+  expect(requests).toHaveLength(1);
+});
+
 for (const error of [{ error: 'checklist confirmation required', incompleteChecklist: 2 }, { error: 'task blocker would create dependency cycle' }]) {
   test(`non-version 409 remains its own error: ${error.error}`, async ({ page }) => {
     const requests = await openDetails(page, 390);

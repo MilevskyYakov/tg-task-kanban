@@ -1,0 +1,28 @@
+{
+  "baseCommit": "e761631dadc6c6b79e2634eb415323936a90aabd",
+  "branch": "MilevskyYakov/issue-145",
+  "sourceManifestSha256": "7e8381d2563d187f93a47be70dc370b1073909f84424a285ccb6c25dcaa5fd02",
+  "hashFormat": "SHA-256 of Python json.dumps(files, sort_keys=True).encode()",
+  "files": {
+    "apps/api/migrations/012_mcp.sql": "048177151fbeedc19e603117d02106fb5b794b756c3a8ff1ea7bc40f49ab456f",
+    "apps/api/package.json": "445bd4c16a53b679e33a7904234a39614bbf4edf50eb16aab697426284b01884",
+    "apps/api/src/db.ts": "625f57ccfb49e9a9c59bc43436cdca8e86ca496d268ae72242f7a83d70125357",
+    "apps/api/test/mcp.test.ts": "9f0c835a915bbfe752cc963a7b254117848cab19d3195e6ef498e6fcea253ff3",
+    "apps/api/test/task-collaboration.test.ts": "22fa07390a1fc19ada92b69c333e093bb3e20e5aab76d9f5c8283d7dac8dee29",
+    "apps/web/package.json": "929f261126bd05c5f8bff5b6f410a2ca75750bf1ddb74ebf55e885ffc6cb8f70",
+    "apps/web/playwright.config.ts": "8259bb6a2882a2b649c8dd90d548c0cfaa29fdb2c9d21d7750237018a6806b58",
+    "apps/web/src/api.ts": "4b8d1527b68410ca78d9b36d19634f061935f4f49edbd8655af84cefd3ce84eb",
+    "apps/web/src/main.tsx": "d5c3d9f0c27d9282ed9895f81d07b2730f80b7927ccdc0408126763ee02b5ad1",
+    "apps/web/src/task-details.tsx": "a67894f0f2d473975d4de7ec34b828a7240eddeb9b04742d398e113c211415c5",
+    "apps/web/test/tasks.test.ts": "15eeaa7498fab0af1d8ce1dc45658c4cd508c6a66d25f0d9ea4e085d461d0163",
+    "apps/web/visual/completion.spec.ts": "943753c7fe0bebd35b4c8ca30c002bf63a3443e40f7977e81ad59bc5d9d7cc19",
+    "apps/web/visual/details.spec.ts": "e5b13fe6321515668dc07e99c50c1c0b6f7fd593e26f88131a104fad9461656f",
+    "package-lock.json": "b8f0fb386fcaecf9d859f66c25d1958ffa0e645d9c895fe3f9a0a2ab4b69b2c1",
+    "package.json": "e323a437d9925eb88854393c6cf4d1dd826c11809edd146c1ba7756d67345a26"
+  },
+  "webBuild": {
+    "apps/web/dist/assets/index-DlejKOy6.js": "559532af01b8bc85fb1e1006e53141d819341588ecbc1d3b82a0d3504ab3e490",
+    "apps/web/dist/assets/index-BIL1vd8r.css": "c3281905731b15f665aae0f3e83e32f64f28332931c32deb32b40c30bf0a6028",
+    "apps/web/dist/index.html": "04d83d87eda8db26d55e6a11c98c6bc0853ac79000a804cd994648552de848bc"
+  }
+}
