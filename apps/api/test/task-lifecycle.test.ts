@@ -48,6 +48,12 @@ test('task lifecycle enforces tenant, role and transition rules', async () => {
   const auditRename = (await db.query(`SELECT before_data, after_data FROM task_audit_events WHERE task_id = $1 AND action = 'updated' ORDER BY created_at, id LIMIT 1`, [task.id])).rows[0];
   assert.equal(auditRename.before_data.title, 'Ship', 'audit keeps before-state');
   assert.equal(auditRename.after_data.title, 'Renamed by member', 'audit keeps after-state');
+  const beforeLatestSave = (await tasksForBoard(db, users[2], boardId)).find((item: { id: string; version?: string }) => item.id === task.id)!;
+  const sentA = await updateTask(db, users[2], boardId, task.id, { title: 'Earlier queued title', expectedVersion: beforeLatestSave.version! });
+  const sentB = await updateTask(db, users[2], boardId, task.id, { title: 'Latest queued title', expectedVersion: sentA!.version });
+  const storedLatest = (await tasksForBoard(db, users[2], boardId)).find((item: { id: string; title: string; version?: string }) => item.id === task.id)!;
+  assert.equal(storedLatest.title, 'Latest queued title', 'serialized versioned writes persist latest intent');
+  assert.equal(storedLatest.version, sentB!.version, 'each accepted write advances confirmed revision');
   assert.equal((await updateTask(db, users[2], boardId, task.id, { status: 'done' }))?.status, 'done', 'ordinary member closes task');
   assert.equal((await updateTask(db, users[2], boardId, task.id, { status: 'in_progress' }))?.status, 'in_progress', 'ordinary member reopens from done');
   assert.equal(await updateTask(db, users[1], boardId, task.id, { status: 'waiting', waitReason: null }), null, 'waiting requires reason');
