@@ -446,7 +446,7 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
     }
     const projectId = input.projectId === undefined ? task.project_id : input.projectId;
     const assigneeId = input.assigneeUserId === undefined ? task.assignee_user_id : input.assigneeUserId;
-    if (projectId && !(await client.query('SELECT 1 FROM projects WHERE id = $1 AND board_id = $2 AND archived_at IS NULL', [projectId, boardId])).rowCount) { if (!transaction) await client.query('ROLLBACK'); return null; }
+    if (projectId && !(await client.query('SELECT 1 FROM projects WHERE id = $1 AND board_id = $2 AND (archived_at IS NULL OR id = $3)', [projectId, boardId, task.project_id])).rowCount) { if (!transaction) await client.query('ROLLBACK'); return null; }
     if (assigneeId && !(await client.query('SELECT 1 FROM memberships WHERE board_id = $1 AND user_id = $2', [boardId, assigneeId])).rowCount) { if (!transaction) await client.query('ROLLBACK'); return null; }
     const waiting = status === 'waiting';
     const result = await client.query(`UPDATE tasks SET project_id = $3, assignee_user_id = $4, title = $5,
@@ -713,7 +713,7 @@ export async function updateRecurrence(db: Database, userId: string, boardId: st
     if (!row || (row.creator_user_id !== userId && row.assignee_user_id !== userId)) return null;
     const projectId = input.projectId === undefined ? row.project_id : input.projectId;
     const assigneeId = input.assigneeUserId === undefined ? row.assignee_user_id : input.assigneeUserId;
-    if (projectId && !(await client.query('SELECT 1 FROM projects WHERE id = $1 AND board_id = $2 AND archived_at IS NULL', [projectId, boardId])).rowCount) return null;
+    if (projectId && !(await client.query('SELECT 1 FROM projects WHERE id = $1 AND board_id = $2 AND (archived_at IS NULL OR id = $3)', [projectId, boardId, row.project_id])).rowCount) return null;
     if (assigneeId && !(await client.query('SELECT 1 FROM memberships WHERE board_id = $1 AND user_id = $2', [boardId, assigneeId])).rowCount) return null;
     const rule: RecurrenceRule = {
       frequency: input.frequency ?? row.frequency, weekdays: input.weekdays ?? row.weekdays,

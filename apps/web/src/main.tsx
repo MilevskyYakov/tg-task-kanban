@@ -161,7 +161,7 @@ function App() {
     const openedAt = ++taskScrollSequence.current;
     const [nextCollaboration, nextProjects, nextMembers, nextTasks] = await Promise.all([
       api<Collaboration>(`/api/boards/${task.board_id}/tasks/${task.id}/collaboration`),
-      api<{projects: Project[]}>(`/api/boards/${task.board_id}/projects`),
+      api<{projects: Project[]}>(`/api/boards/${task.board_id}/projects?archived=true`),
       api<{members: Member[]}>(`/api/boards/${task.board_id}/members`),
       api<{tasks: Task[]}>(`/api/boards/${task.board_id}/tasks`)
     ]);
@@ -422,7 +422,7 @@ function App() {
     try {
       const [nextCollaboration, nextProjects, nextMembers, nextTasks] = await Promise.all([
         api<Collaboration>(`/api/boards/${task.board_id}/tasks/${task.id}/collaboration`),
-        api<{projects: Project[]}>(`/api/boards/${task.board_id}/projects`),
+        api<{projects: Project[]}>(`/api/boards/${task.board_id}/projects?archived=true`),
         api<{members: Member[]}>(`/api/boards/${task.board_id}/members`),
         api<{tasks: Task[]}>(`/api/boards/${task.board_id}/tasks`)
       ]);
