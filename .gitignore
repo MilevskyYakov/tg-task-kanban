@@ -6,6 +6,7 @@ dist/
 .DS_Store
 artifacts/visual-evidence/
 artifacts/evidence/issue-147-runtime/
+artifacts/evidence/issue-148-runtime/
 playwright-report/
 test-results/
 

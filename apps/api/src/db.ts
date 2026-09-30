@@ -723,7 +723,9 @@ export async function updateRecurrence(db: Database, userId: string, boardId: st
     };
     const paused = input.paused === undefined ? Boolean(row.paused_at) : input.paused;
     const archived = input.archived === undefined ? Boolean(row.archived_at) : input.archived;
-    const next = paused || archived ? null : nextOccurrence(rule, new Date());
+    const scheduleChanged = ['frequency', 'weekdays', 'dayOfMonth', 'localTime', 'timezone', 'startAt', 'endAt', 'paused', 'archived']
+      .some((key) => input[key as keyof typeof input] !== undefined);
+    const next = scheduleChanged ? (paused || archived ? null : nextOccurrence(rule, new Date())) : row.next_occurrence_at;
     const result = await client.query(`UPDATE recurrence_templates SET project_id = $3, assignee_user_id = $4,
       title = $5, description = $6, priority = $7, frequency = $8, weekdays = $9, day_of_month = $10,
       local_time = $11, timezone = $12, starts_at = $13, ends_at = $14, next_occurrence_at = $15,
@@ -747,13 +749,16 @@ export async function updateRecurrence(db: Database, userId: string, boardId: st
 }
 
 export async function updateTaskAndFuture(db: Database, userId: string, boardId: string, taskId: string, input: TaskInput) {
-  const task = await updateTask(db, userId, boardId, taskId, input);
-  if (!task || !task.recurrence_template_id) return task;
-  const template = await updateRecurrence(db, userId, boardId, task.recurrence_template_id, input);
-  // Partial failure must not look like success: the instance is changed but the series is not,
-  // so surface the mismatch instead of a plain task object (issue #129).
-  if (!template) return { ...task, seriesUpdateFailed: true };
-  return task;
+  return withBoardLock(db, boardId, async (client) => {
+    const task = await updateTask(db, userId, boardId, taskId, input, client);
+    if (!task?.recurrence_template_id) throw new TaskActionError('task has no accessible recurrence template');
+    // Only the five shared fields belong to the series. Never forward task-only or extra request fields.
+    const { title, description, projectId, assigneeUserId, priority } = input;
+    const template = await updateRecurrence(db, userId, boardId, task.recurrence_template_id,
+      { title, description, projectId, assigneeUserId, priority }, client);
+    if (!template) throw new TaskActionError('recurrence action is not allowed');
+    return task;
+  });
 }
 
 export async function runRecurrenceScheduler(db: Database, now = new Date()) {

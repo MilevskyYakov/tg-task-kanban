@@ -725,8 +725,8 @@ function App() {
       // Server-confirmed object becomes the new baseline: no stale local merge, no full
       // board reload per keystroke batch (issue #129).
       const confirmed: Task = { ...saved, checklist_total: openTask.checklist_total, checklist_completed: openTask.checklist_completed };
-      if (saved.seriesUpdateFailed) setMessage('Задачу сохранили, но серию изменить не удалось. Примените к серии ещё раз.');
-      else if (saved.notificationWarning) setMessage(saved.notificationWarning);
+      if (saved.seriesUpdateFailed) throw new Error('Задачу сохранили, но серию изменить не удалось. Примените к серии ещё раз.');
+      if (saved.notificationWarning) setMessage(saved.notificationWarning);
       return confirmed;
     }}
     onArchive={async () => { await api(`/api/boards/${openTask.board_id}/tasks/${openTask.id}`, { method: 'DELETE' }); if (board) await loadBoard(board.id); else setTasks((current) => current.filter((item) => item.id !== openTask.id)); setOpenTask(undefined); setCollaboration(undefined); setMessage('Задача архивирована'); }}
