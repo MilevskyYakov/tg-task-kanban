@@ -27,7 +27,6 @@ export type TaskDraft = {
   issueUrl: string;
   waitReason: string;
   waitCheckAt: string;
-  future: boolean;
   notifyAssignee: boolean;
 };
 
@@ -45,7 +44,6 @@ export function taskDraft(task: Task): TaskDraft {
     waitReason: task.wait_reason ?? '',
     // Keep the stored date so editing a waiting task does not silently clear it (issue #129).
     waitCheckAt: task.wait_check_at ? task.wait_check_at.slice(0, 10) : '',
-    future: false,
     notifyAssignee: false
   };
 }
@@ -148,7 +146,7 @@ const sameDraftField = (left: TaskDraft, right: TaskDraft, key: keyof TaskDraft)
 // Three-way merge: a server-only change is never turned into a local PATCH.
 // Status/blocker and deadline stay indivisible, including incomplete local input.
 export function mergeTaskDraft(base: TaskDraft, local: TaskDraft, server: TaskDraft) {
-  const draft = { ...server, future: local.future, notifyAssignee: local.notifyAssignee };
+  const draft = { ...server, notifyAssignee: local.notifyAssignee };
   const conflicts: (keyof TaskDraft)[] = [];
   for (const group of draftGroups) {
     if (group.every((key) => sameDraftField(local, base, key))) continue;
@@ -189,7 +187,7 @@ const readTaskDraft = (key: string, base: TaskDraft, serverVersion: string | und
       || !isStoredTaskDraft((stored as { draft?: unknown }).draft)) throw new Error('Invalid saved draft');
     const saved = stored as { draft: TaskDraft; base?: unknown; serverVersion?: unknown };
     const versioned = isStoredTaskDraft(saved.base) && typeof saved.serverVersion === 'string' && /^[1-9]\d*$/.test(saved.serverVersion);
-    return { ...initial, draft: { ...saved.draft, future: false, notifyAssignee: false },
+    return { ...initial, draft: { ...saved.draft, notifyAssignee: false },
       base: versioned ? saved.base as TaskDraft : base, serverVersion: versioned ? saved.serverVersion as string : serverVersion,
       restored: true, unversioned: !versioned };
   } catch {
@@ -200,7 +198,7 @@ const readTaskDraft = (key: string, base: TaskDraft, serverVersion: string | und
 
 const writeTaskDraft = (key: string, draft: TaskDraft, base: TaskDraft, serverVersion: string | undefined) => {
   try {
-    localStorage.setItem(key, JSON.stringify({ version: 1, draft: { ...draft, future: false, notifyAssignee: false }, base, serverVersion }));
+    localStorage.setItem(key, JSON.stringify({ version: 1, draft: { ...draft, notifyAssignee: false }, base, serverVersion }));
     return true;
   } catch { return false; }
 };
@@ -231,6 +229,10 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
   const [historyOpen, setHistoryOpen] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [seriesConfirmation, setSeriesConfirmation] = useState<{ draft: TaskDraft; version: string }>();
+  const [seriesWorking, setSeriesWorking] = useState(false);
+  const seriesInFlight = useRef(false);
+  const [seriesResult, setSeriesResult] = useState<{ text: string; error: boolean }>();
   const [saveState, setSaveState] = useState<SaveState>(initialDraft.restored ? 'pending' : 'idle');
   const [conflict, setConflict] = useState<{ serverTask: Task; fields: (keyof TaskDraft)[] }>();
   const conflictRef = useRef<typeof conflict>(undefined);
@@ -276,7 +278,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     const confirmChecklist = patch.status === 'done' && versionRef.current !== undefined && confirmedChecklistVersion.current === versionRef.current;
     confirmedChecklistVersion.current = undefined;
     try {
-      const saved = await onSave(patch, draftRef.current.future, confirmChecklist, versionRef.current);
+      const saved = await onSave(patch, false, confirmChecklist, versionRef.current);
       retryOnReconnect.current = true;
       return saved;
     } catch (caught) {
@@ -383,6 +385,57 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     autosave.schedule(preparePatch(draftRef.current, true), 0);
     await autosave.flush();
   };
+  const openSeriesConfirmation = async () => {
+    if (!savable || !task.recurrence_template_id || seriesInFlight.current || seriesConfirmation) return;
+    seriesInFlight.current = true;
+    setSeriesWorking(true);
+    setSeriesResult(undefined);
+    try {
+      await flushNow();
+      const { patch, errors } = taskPatch(draftRef.current, baseRef.current);
+      if (Object.keys(patch).length || Object.keys(errors).length || conflictRef.current || checklistConfirmationRef.current || !versionRef.current) {
+        setSeriesResult({ text: 'Сначала сохраните правки задачи и разрешите ошибки или конфликт.', error: true });
+        return;
+      }
+      autosave.setPaused(true);
+      setSeriesConfirmation({ draft: baseRef.current, version: versionRef.current });
+    } finally { seriesInFlight.current = false; setSeriesWorking(false); }
+  };
+  const closeSeriesConfirmation = () => {
+    if (seriesInFlight.current) return;
+    setSeriesConfirmation(undefined);
+    autosave.setPaused(Boolean(conflictRef.current || checklistConfirmationRef.current));
+  };
+  const applyToFuture = async () => {
+    if (!savable || !seriesConfirmation || seriesInFlight.current) return;
+    seriesInFlight.current = true;
+    setSeriesWorking(true);
+    const sent = seriesConfirmation.draft;
+    try {
+      const saved = await onSave({ title: sent.title, description: sent.description || null, projectId: sent.projectId || null,
+        assigneeUserId: sent.assigneeUserId || null, priority: sent.priority }, true, false, seriesConfirmation.version);
+      acceptServer(saved, mergeTaskDraft(sent, draftRef.current, taskDraft(saved)).draft);
+      setSeriesResult({ text: 'Применено к будущим повторам', error: false });
+    } catch (caught) {
+      // A task reread can recover its revision, but never proves that the template was saved.
+      setSeriesResult({ text: `Применение к будущим повторам не подтверждено. ${caught instanceof Error ? caught.message : 'Ошибка'}. Проверьте значения и повторите действие.`, error: true });
+      try {
+        const current = caught instanceof ApiError && caught.status === 409 ? caught.data.task as Task | undefined
+          : await api<Task>(`/api/boards/${task.board_id}/tasks/${task.id}`);
+        if (current?.id === task.id && current.board_id === task.board_id && current.version) {
+          const merged = mergeTaskDraft(baseRef.current, draftRef.current, taskDraft(current));
+          if (merged.conflicts.length) showConflict(current, merged.conflicts);
+          else acceptServer(current, merged.draft);
+        }
+      } catch { /* Keep the explicit unknown result. No automatic series replay. */ }
+    } finally {
+      seriesInFlight.current = false;
+      setSeriesWorking(false);
+      setSeriesConfirmation(undefined);
+      autosave.schedule(preparePatch(draftRef.current), null);
+      autosave.setPaused(Boolean(conflictRef.current || checklistConfirmationRef.current));
+    }
+  };
   useLayoutEffect(() => {
     const editor = descriptionEditor.current;
     if (!editor) return;
@@ -397,6 +450,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     editor.setSelectionRange(editor.value.length, editor.value.length);
   }, [descriptionEditing]);
   const set = <K extends keyof TaskDraft>(key: K, value: TaskDraft[K]) => {
+    setSeriesResult((result) => result?.error ? result : undefined);
     const next = { ...draftRef.current, [key]: value };
     // Update the ref synchronously: a flush triggered right after (blur, «Готово»,
     // «Удалить») must read the new value, not the pre-render snapshot (issue #129).
@@ -465,10 +519,11 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
   return <main className={`task-details${descriptionEditing ? ' detail-description-editing' : ''}`}>
     <EnvironmentStatus/>
     <h1 className="visually-hidden">Детали задачи</h1>
-    <header className="task-details-bar"><button className="detail-icon" aria-label="Назад к задачам" onClick={leave}><Icon name="back"/></button><span><i/> {boardName}</span><div className="detail-menu-wrap"><button className="detail-icon" aria-label="Другие действия" aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)}><Icon name="more"/></button>{menuOpen && <div className="detail-menu">{task.recurrence_template_id && <p>Повторяющаяся задача</p>}{savable && <label className="checkbox"><input type="checkbox" checked={draft.future} onChange={(event) => set('future', event.target.checked)}/> Изменить этот и будущие повторы</label>}<button type="button" aria-expanded={historyOpen} onClick={() => setHistoryOpen((value) => !value)}>История <Icon name="chevron"/></button>{historyOpen && <div className="detail-history">{collaboration.timeline.map((item) => <p key={item.id}>{item.actor_name} · {item.action}<small>{new Date(item.created_at).toLocaleString('ru-RU')}</small></p>)}</div>}<div className="detail-danger-zone"><button type="button" className="danger" disabled={busy || readOnly} onClick={() => { void flushNow(); void run(onArchive); }}>Архивировать задачу</button></div></div>}</div></header>
+    <header className="task-details-bar"><button className="detail-icon" aria-label="Назад к задачам" onClick={leave}><Icon name="back"/></button><span><i/> {boardName}</span><div className="detail-menu-wrap"><button className="detail-icon" aria-label="Другие действия" aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)}><Icon name="more"/></button>{menuOpen && <div className="detail-menu">{task.recurrence_template_id && <p>Повторяющаяся задача</p>}{savable && task.recurrence_template_id && <button type="button" disabled={busy} aria-disabled={seriesWorking} onClick={() => void openSeriesConfirmation()}>Применить к будущим повторам</button>}<button type="button" aria-expanded={historyOpen} onClick={() => setHistoryOpen((value) => !value)}>История <Icon name="chevron"/></button>{historyOpen && <div className="detail-history">{collaboration.timeline.map((item) => <p key={item.id}>{item.actor_name} · {item.action}<small>{new Date(item.created_at).toLocaleString('ru-RU')}</small></p>)}</div>}<div className="detail-danger-zone"><button type="button" className="danger" disabled={busy || readOnly} onClick={() => { void flushNow(); void run(onArchive); }}>Архивировать задачу</button></div></div>}</div></header>
 
     {readOnly && <p className="notice">Доска доступна только для чтения.</p>}
     {savable && <p className="detail-save-state" role="status" data-state={displayedSaveState}>{saveStateLabels[displayedSaveState]}</p>}
+    {seriesResult && <p className={`detail-series-result ${seriesResult.error ? 'detail-error' : 'notice'}`} role={seriesResult.error ? 'alert' : 'status'}>{seriesResult.text}</p>}
     {storageWarning && <p className="detail-error" role="alert">Локальная копия недоступна или повреждена: несохранённые правки могут потеряться при закрытии приложения.</p>}
     <form onSubmit={(event) => event.preventDefault()}>
       <fieldset className="readonly-fields detail-surface" disabled={readOnly}>
@@ -531,6 +586,17 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     {conflict && !conflictOpen && !readOnly && <button type="button" onClick={() => setConflictOpen(true)}>Разрешить конфликт</button>}
     {!readOnly && <div className="comment-composer"><input aria-label="Комментарий" maxLength={4000} value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Написать комментарий…"/><button className="attach" aria-label="Добавить ссылку" onClick={() => setShowAttachment((value) => !value)}><Icon name="attach"/></button><label className="attach attach-image" aria-label="Прикрепить изображение"><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void run(() => onFileAttachment(file), () => { event.target.value = ''; }); }}/><Icon name="image"/></label><button disabled={busy || !comment.trim()} aria-label="Отправить комментарий" onClick={() => void run(() => onComment(comment.trim()), () => setComment(''))}><Icon name="send"/></button></div>}
     {!readOnly && choiceSheet}
+    {seriesConfirmation && !readOnly && <Sheet className="task-sheet" title="Будущие повторы" onClose={closeSeriesConfirmation}>
+      <p tabIndex={0}>В шаблон будут перенесены эти значения. Статус, блокер, срок и уже созданные задачи не изменятся.</p>
+      {(['title', 'description', 'projectId', 'assigneeUserId', 'priority'] as const).map((key) => <section className="detail-conflict-values" key={key}>
+        <h3>{conflictLabels[key]}</h3><dl><dd>{conflictValue(seriesConfirmation.draft, key)}</dd></dl>
+      </section>)}
+      {seriesWorking && <p role="status">Применяется…</p>}
+      <div className="choice-list">
+        <button type="button" className="secondary" disabled={seriesWorking} onClick={closeSeriesConfirmation}>Отмена</button>
+        <button type="button" disabled={seriesWorking} onClick={() => void applyToFuture()}>Применить</button>
+      </div>
+    </Sheet>}
     {checklistConfirmation && !readOnly && <Sheet className="task-sheet" title="Завершить задачу?" onClose={() => resolveChecklist(false)}>
       <p>Незавершённых пунктов: {checklistConfirmation.count}. Завершить задачу, не отмечая эти пункты выполненными?</p>
       <div className="choice-list">
