@@ -377,6 +377,8 @@ test('failed autosave queue write does not warn when durable draft storage succe
 });
 
 test('details draft and partial fields persist through real API and database', async ({ page }) => {
+  // This scenario includes multiple reloads and sequential debounced DB writes.
+  test.setTimeout(60_000);
   const databaseUrl = process.env.TEST_DATABASE_URL;
   test.skip(!databaseUrl, 'TEST_DATABASE_URL required for API/DB verification');
   const db = createDatabase(databaseUrl!);
@@ -1024,6 +1026,76 @@ test('GitHub issue stays compact, opens safely, and autosaves edits', async ({ p
   expect(requests[2].issueUrl).toBe('owner/added#9');
   await flushAutosave(page);
 });
+
+for (const outcome of ['success', 'failure', 'lost response', 'newer assignment', 'local conflict', 'server conflict'] as const) {
+  test(`assignment notification consent stays with its intended assignment: ${outcome}`, async ({ page }) => {
+    await mockDetails(page);
+    await page.route('**/api/boards/board-1/members', (route) => route.fulfill({ json: { members: [
+      { id: 'user-1', first_name: 'Яков' }, { id: 'user-2', first_name: 'Данил' }, { id: 'user-3', first_name: 'Влад' }
+    ] } }));
+    let server = { ...task };
+    const requests: Record<string, any>[] = [];
+    let release!: () => void;
+    const firstResponse = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/api/boards/board-1/tasks/task-1', async (route) => {
+      if (route.request().method() !== 'PATCH') return route.fulfill({ json: server });
+      const input = route.request().postDataJSON();
+      requests.push(input);
+      if (requests.length === 1) {
+        if (outcome === 'failure') return route.fulfill({ status: 500, json: { error: 'Synthetic save failure' } });
+        if (outcome.endsWith('conflict')) {
+          server = { ...server, assignee_user_id: 'user-3', version: '2' };
+          return route.fulfill({ status: 409, json: { error: 'version conflict', task: server } });
+        }
+        if (outcome === 'newer assignment') await firstResponse;
+      }
+      expect(input.expectedVersion).toBe(server.version);
+      server = { ...server, title: input.title ?? server.title, assignee_user_id: input.assigneeUserId ?? server.assignee_user_id, version: String(Number(server.version) + 1) };
+      if (outcome === 'lost response' && requests.length === 1) return route.abort();
+      await route.fulfill({ json: server });
+    });
+    const choose = async (name: string) => {
+      await page.getByRole('button', { name: /^Исполнитель/ }).click();
+      await page.getByRole('radio', { name, exact: true }).click();
+    };
+    try {
+      await page.goto('/');
+      await page.getByRole('button').filter({ hasText: task.title }).first().click();
+      await choose('Яков');
+      const notify = page.getByRole('checkbox', { name: 'Уведомить нового исполнителя' });
+      await expect(notify).not.toBeChecked();
+      await notify.check();
+      await expect.poll(() => requests.length).toBe(1);
+      expect(requests[0]).toMatchObject({ assigneeUserId: 'user-1', notifyAssignee: true });
+      if (outcome === 'failure') {
+        await expect(page.locator('.detail-save-state')).toContainText('Не сохранено');
+        await page.evaluate(() => window.dispatchEvent(new Event('online')));
+      } else if (outcome === 'newer assignment') {
+        await choose('Влад');
+        await expect(notify).not.toBeChecked();
+        // A late acknowledgement must not consume a newer, explicitly chosen opt-in.
+        await notify.check();
+        release();
+      } else if (outcome.endsWith('conflict')) {
+        await page.getByRole('button', { name: outcome === 'local conflict' ? 'Моя правка поверх серверной' : 'Оставить серверную версию', exact: true }).click();
+      }
+      await expect(page.locator('.detail-save-state')).toHaveText('Сохранено');
+      if (['failure', 'newer assignment', 'local conflict'].includes(outcome)) {
+        expect(requests).toHaveLength(2);
+        expect(requests[1]).toMatchObject({ assigneeUserId: outcome === 'newer assignment' ? 'user-3' : 'user-1', notifyAssignee: true });
+      } else expect(requests).toHaveLength(1);
+      const savedCount = requests.length;
+      await choose('Данил');
+      await expect(notify).not.toBeChecked();
+      await expect.poll(() => requests.length).toBe(savedCount + 1);
+      expect(requests.at(-1)).toMatchObject({ assigneeUserId: 'user-2', notifyAssignee: false });
+      await expect(page.locator('.detail-save-state')).toHaveText('Сохранено');
+      await page.getByRole('textbox', { name: 'Название задачи' }).fill('Independent later edit');
+      await flushAutosave(page);
+      expect(requests.at(-1)).not.toHaveProperty('notifyAssignee');
+    } finally { release(); }
+  });
+}
 
 test('compact property controls still open project, assignee, and priority sheets', async ({ page }) => {
   await openDetails(page, 390);

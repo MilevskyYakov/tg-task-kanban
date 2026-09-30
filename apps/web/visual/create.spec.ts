@@ -258,6 +258,25 @@ test('pending create locks input and reuses request id after a failed response',
   expect(payloads[1]).toEqual(payloads[0]);
 });
 
+test('create requires fresh notification consent when the assignee changes', async ({ page }) => {
+  const { requests } = await mockCreate(page);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Создать задачу' }).click();
+  await page.getByRole('textbox', { name: 'Что нужно сделать?' }).fill('Assignment consent');
+  await page.getByRole('button', { name: /^Исполнитель/ }).click();
+  await page.getByRole('radio', { name: 'Данил', exact: true }).click();
+  await page.getByRole('button', { name: 'Дополнительно' }).click();
+  const notify = page.getByRole('checkbox', { name: 'Уведомить исполнителя' });
+  await expect(notify).not.toBeChecked();
+  await notify.check();
+  await page.getByRole('button', { name: /^Исполнитель/ }).click();
+  await page.getByRole('radio', { name: 'Яков', exact: true }).click();
+  await expect(notify).not.toBeChecked();
+  await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0]).toMatchObject({ assigneeUserId: 'user-1', notifyAssignee: false });
+});
+
 test('series resets assignee, deadline and notification while keeping project and board', async ({ page }) => {
   const { requests } = await mockCreate(page);
   await page.goto('/');
