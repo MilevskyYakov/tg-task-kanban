@@ -198,26 +198,32 @@ async function runTool(db: Database, keyHash: string, name: ToolName, raw: unkno
     if (name === 'get_task_collaboration') {
       const exists = (await client.query('SELECT 1 FROM tasks WHERE id=$1 AND board_id=$2', [args.taskId, args.boardId])).rowCount;
       if (!exists) throw missing();
-      const data = await taskCollaboration(client as unknown as Database, connection.user_id, args.boardId, args.taskId);
+      const boundary = async (cursor: string | undefined, limit: number, tag: 'comment' | 'event') => {
+        if (!cursor) return { after: null, createdAt: null, limit };
+        let after: string;
+        try {
+          const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString());
+          if (parsed.tag !== tag || !uuid.safeParse(parsed.after).success) throw Error();
+          after = parsed.after;
+        } catch { throw new McpFailure('INVALID_CURSOR', 'Начните чтение заново'); }
+        // Resolve the existing ID-only cursor without losing PostgreSQL microseconds to JS Date.
+        const table = tag === 'comment' ? 'task_comments' : 'task_audit_events';
+        const anchor = (await client.query(`SELECT id, created_at::text AS "createdAt" FROM ${table}
+          WHERE id=$1 AND task_id=$2 AND board_id=$3 LIMIT 1`, [after, args.taskId, args.boardId])).rows[0];
+        if (!anchor || anchor.id !== after) throw new McpFailure('INVALID_CURSOR', 'Начните чтение заново');
+        return { after, createdAt: anchor.createdAt as string, limit };
+      };
+      const commentsPage = await boundary(args.commentCursor, args.commentLimit, 'comment');
+      const timelinePage = await boundary(args.timelineCursor, args.timelineLimit, 'event');
+      const data = await taskCollaboration(client, connection.user_id, args.boardId, args.taskId, {comments: commentsPage, timeline: timelinePage});
       if (!data) throw missing();
-      const paged = async (rows: Record<string, any>[], cursor: string | undefined, limit: number, tag: string) => {
-        let after: string | null = null;
-        if (cursor) {
-          try {
-            const parsed = JSON.parse(Buffer.from(String(cursor), 'base64url').toString());
-            if (parsed.tag !== tag || !uuid.safeParse(parsed.after).success) throw Error();
-            after = parsed.after;
-            const index = rows.findIndex((row) => row.id === after);
-            if (index < 0) throw new McpFailure('INVALID_CURSOR', 'Начните чтение заново');
-            rows = rows.slice(index + 1);
-          } catch (error) { if (error instanceof McpFailure) throw error; throw new McpFailure('INVALID_CURSOR', 'Начните чтение заново'); }
-        }
+      const paged = (rows: Record<string, any>[], limit: number, tag: string) => {
         const page = rows.slice(0, limit);
         const last = page.at(-1);
         return { items: page, nextCursor: rows.length > limit && last ? Buffer.from(JSON.stringify({tag, after: last.id})).toString('base64url') : null };
       };
-      const comments = await paged(data.comments, args.commentCursor, args.commentLimit, 'comment');
-      const timeline = await paged(data.timeline, args.timelineCursor, args.timelineLimit, 'event');
+      const comments = paged(data.comments, args.commentLimit, 'comment');
+      const timeline = paged(data.timeline, args.timelineLimit, 'event');
       const dto = { checklist: data.checklist.map((item: Record<string, any>) => ({ id: item.id, text: item.text, position: item.position, completed: item.completed_at !== null, completedByUserId: item.completed_by })), attachments: data.attachments.map(({telegram_file_id, ...rest}: Record<string, any>) => rest) };
       const timelineDto = timeline.items.map((event: Record<string, any>) => ({ id: event.id, action: event.action, actorName: event.actor_name, createdAt: event.created_at }));
       return { data: {comments: comments.items.map(({author_user_id, author_name, ...c}: Record<string, any>) => ({...c, authorUserId: author_user_id, authorName: author_name})), commentNextCursor: comments.nextCursor, checklist: dto.checklist, attachments: dto.attachments, timeline: timelineDto, timelineNextCursor: timeline.nextCursor}, notify: [] as string[] };
@@ -314,7 +320,7 @@ async function runTool(db: Database, keyHash: string, name: ToolName, raw: unkno
       const createdEntity = !previous;
       if (name === 'add_task_comment') return { data: {comment: createdEntity ? created : null, task: await getTask(client, a.boardId, taskId!), receipt: {requestId: args.requestId, version: revision}, replayed: Boolean(previous), warnings: previous?.warning ? [previous.warning] : []}, notify, connectionId: connection.id, requestId: args.requestId };
       if (name === 'add_checklist_item' || name === 'update_checklist_item' || name === 'delete_checklist_item' || name === 'add_task_attachment') {
-        const collaboration = await taskCollaboration(client as unknown as Database, connection.user_id, a.boardId, taskId!);
+        const collaboration = await taskCollaboration(client, connection.user_id, a.boardId, taskId!);
         return { data: {checklist: collaboration?.checklist.map((item: Record<string, any>) => ({ id: item.id, text: item.text, position: item.position, completed: item.completed_at !== null, completedByUserId: item.completed_by })), attachments: collaboration?.attachments.map(({telegram_file_id, ...rest}: Record<string, any>) => rest), replayed: Boolean(previous), warnings: previous?.warning ? [previous.warning] : [], receipt: {requestId: args.requestId, version: revision}}, notify, connectionId: connection.id, requestId: args.requestId };
       }
       if (name === 'create_project' || name === 'update_project') {

@@ -521,17 +521,25 @@ async function canReadTask(db: Database | pg.PoolClient, userId: string, boardId
   return result.rows[0] ?? null;
 }
 
-export async function taskCollaboration(db: Database, userId: string, boardId: string, taskId: string) {
+type CollaborationPage = { after: string | null; createdAt: string | null; limit: number };
+export async function taskCollaboration(db: Database | pg.PoolClient, userId: string, boardId: string, taskId: string,
+  pages?: { comments: CollaborationPage; timeline: CollaborationPage }) {
   if (!await canReadTask(db, userId, boardId, taskId)) return null;
   const [comments, checklist, attachments, timeline] = await Promise.all([
     db.query(`SELECT c.id, c.body, c.created_at, u.id AS author_user_id, u.first_name AS author_name
-      FROM task_comments c JOIN users u ON u.id = c.author_user_id WHERE c.task_id = $1 AND c.board_id = $2 ORDER BY c.created_at, c.id`, [taskId, boardId]),
+      FROM task_comments c JOIN users u ON u.id = c.author_user_id WHERE c.task_id = $1 AND c.board_id = $2
+      ${pages ? 'AND ($3::uuid IS NULL OR (c.created_at, c.id) > ($4::timestamptz, $3::uuid))' : ''}
+      ORDER BY c.created_at, c.id ${pages ? 'LIMIT $5' : ''}`,
+    pages ? [taskId, boardId, pages.comments.after, pages.comments.createdAt, pages.comments.limit + 1] : [taskId, boardId]),
     db.query(`SELECT id, text, position, completed_at, completed_by FROM task_checklist_items
       WHERE task_id = $1 AND board_id = $2 ORDER BY position`, [taskId, boardId]),
     db.query(`SELECT id, kind, url, telegram_file_id, file_name, mime_type, file_size, created_at
       FROM task_attachments WHERE task_id = $1 AND board_id = $2 ORDER BY created_at, id`, [taskId, boardId]),
-    db.query(`SELECT e.id, e.action, e.before_data, e.after_data, e.created_at, u.first_name AS actor_name
-      FROM task_audit_events e JOIN users u ON u.id = e.actor_user_id WHERE e.task_id = $1 AND e.board_id = $2 ORDER BY e.created_at, e.id`, [taskId, boardId])
+    db.query(`SELECT e.id, e.action, ${pages ? '' : 'e.before_data, e.after_data,'} e.created_at, u.first_name AS actor_name
+      FROM task_audit_events e JOIN users u ON u.id = e.actor_user_id WHERE e.task_id = $1 AND e.board_id = $2
+      ${pages ? 'AND ($3::uuid IS NULL OR (e.created_at, e.id) > ($4::timestamptz, $3::uuid))' : ''}
+      ORDER BY e.created_at, e.id ${pages ? 'LIMIT $5' : ''}`,
+    pages ? [taskId, boardId, pages.timeline.after, pages.timeline.createdAt, pages.timeline.limit + 1] : [taskId, boardId])
   ]);
   return { comments: comments.rows, checklist: checklist.rows, attachments: attachments.rows, timeline: timeline.rows };
 }
