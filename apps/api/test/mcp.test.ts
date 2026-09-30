@@ -5,10 +5,176 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { buildApp } from '../src/app.js';
 import type { Config } from '../src/config.js';
-import { addChecklistItem, createDatabase, createTask, login, updateTask } from '../src/db.js';
+import { addChecklistItem, addTaskAttachment, createDatabase, createTask, login, updateTask } from '../src/db.js';
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url) throw new Error('TEST_DATABASE_URL is required');
+
+test('MCP collaboration SQL pages bound history rows and columns while preserving cursors and access', async (t) => {
+  const db = createDatabase(url);
+  const queries: { text: string; rows: number; columns: string[]; values: any[] }[] = [];
+  let recording = false;
+  db.on('connect', (connection) => {
+    const query = connection.query.bind(connection) as (...args: any[]) => any;
+    t.mock.method(connection, 'query', (...args: any[]) => {
+      const result = query(...args);
+      if (recording && typeof args[0] === 'string' && /^\s*SELECT/i.test(args[0]) && result?.then) {
+        return result.then((result: any) => {
+          queries.push({ text: args[0], rows: result.rowCount, columns: result.fields.map((field: any) => field.name), values: args[1] ?? [] });
+          return result;
+        });
+      }
+      return result;
+    });
+  });
+  const stamp = randomBytes(6).readUIntBE(0, 6);
+  const config: Config = {botToken:'test',databaseUrl:url,sessionSecret:'isolated-pagination-secret',initDataMaxAgeSeconds:60,sessionMaxAgeSeconds:3600,host:'127.0.0.1',port:0,production:false,webhookSecret:'isolated-test',publicUrl:'http://127.0.0.1',botUsername:'test_bot'};
+  const owner = await login(db, {id:stamp,first_name:'Page owner'}, 3600, config.sessionSecret);
+  const other = await login(db, {id:stamp+1,first_name:'Page outsider'}, 3600, config.sessionSecret);
+  const boardId = (await db.query('SELECT id FROM boards WHERE owner_user_id=$1', [owner.userId])).rows[0].id;
+  const foreignBoard = (await db.query('SELECT id FROM boards WHERE owner_user_id=$1', [other.userId])).rows[0].id;
+  const app = buildApp(config, db);
+  const reader = new Client({name:'issue-150-pages',version:'1.0.0'});
+  try {
+    const task = await createTask(db, owner.userId, boardId, {title:'Large synthetic history',description:'a'.repeat(8000)});
+    await updateTask(db, owner.userId, boardId, task.id, {description:'b'.repeat(8000)});
+    const sibling = await createTask(db, owner.userId, boardId, {title:'Different task'});
+    const foreign = await createTask(db, other.userId, foreignBoard, {title:'Foreign task'});
+    const ids = Array.from({length:1024}, () => randomUUID());
+    // Identical timestamps and sub-millisecond differences exercise the complete SQL ordering key.
+    await db.query(`INSERT INTO task_comments (id,board_id,task_id,author_user_id,body,created_at)
+      SELECT id,$1,$2,$3,'Synthetic comment ' || n,'2030-01-01T00:00:00.123456Z'::timestamptz + (n % 3) * interval '1 microsecond'
+      FROM unnest($4::uuid[]) WITH ORDINALITY AS seed(id,n)`, [boardId,task.id,owner.userId,ids]);
+    await db.query(`INSERT INTO task_audit_events (id,board_id,task_id,actor_user_id,action,before_data,after_data,created_at)
+      SELECT id,$1,$2,$3,'updated',jsonb_build_object('description',repeat('a',8000)),jsonb_build_object('description',repeat('b',8000)),
+        '2030-01-01T00:00:00.123456Z'::timestamptz + (n % 3) * interval '1 microsecond'
+      FROM unnest($4::uuid[]) WITH ORDINALITY AS seed(id,n)`, [boardId,task.id,owner.userId,ids]);
+    const item = await addChecklistItem(db, owner.userId, boardId, task.id, 'Keep full checklist');
+    await addTaskAttachment(db, owner.userId, boardId, task.id, {kind:'telegram',telegramFileId:'synthetic-private-id',telegramFileUniqueId:'synthetic-unique-id',fileName:'synthetic.pdf'});
+    const origin = await app.listen({host:'127.0.0.1',port:0}); config.publicUrl = origin;
+    const issued = await app.inject({method:'POST',url:'/api/mcp-connections',cookies:{session:owner.token},headers:{origin,host:new URL(origin).host},
+      payload:{requestId:randomUUID(),name:'Page reader',mode:'read',boardIds:[boardId]}});
+    assert.equal(issued.statusCode,201);
+    await reader.connect(new StreamableHTTPClientTransport(new URL(origin+'/mcp'), {requestInit:{headers:{Authorization:'Bearer '+issued.json().key}}}));
+    const call = async (args: Record<string, unknown> = {}, name = 'get_task_collaboration') => {
+      queries.length = 0;
+      recording = true;
+      try {
+        const result = await reader.callTool({name,arguments:{boardId,taskId:task.id,...args}});
+        return result.structuredContent as any;
+      } finally { recording = false; }
+    };
+    const checkBounds = (commentLimit: number, timelineLimit: number) => {
+      for (const [table, limit, columns] of [
+        ['task_comments',commentLimit,['id','body','created_at','author_user_id','author_name']],
+        ['task_audit_events',timelineLimit,['id','action','created_at','actor_name']]
+      ] as const) {
+        const reads = queries.filter((query) => query.text.includes(table));
+        assert.ok(reads.length >= 1 && reads.length <= 2, 'one page and at most one anchor lookup per stream');
+        for (const read of reads) {
+          assert.ok(read.rows <= limit + 1, `${table}: selected ${read.rows} rows for limit ${limit}`);
+          assert.ok(!read.columns.includes('before_data') && !read.columns.includes('after_data'), 'SQL must not select audit snapshots');
+          assert.match(read.text, /LIMIT\s+(?:\$\d+|1)\b/i, 'each history read is bounded in SQL');
+          if (read.columns.includes('body') || read.columns.includes('action')) {
+            assert.deepEqual([...read.columns].sort(), [...columns].sort());
+            assert.equal(read.values.at(-1),limit+1,'one lookahead row, never the whole history');
+          } else assert.ok(read.rows <= 1, 'cursor anchor lookup is singular');
+        }
+      }
+    };
+    const first = await call({commentLimit:37,timelineLimit:41});
+    assert.equal(first.ok,true);
+    assert.equal(first.comments.length,37);
+    assert.equal(first.timeline.length,41);
+    checkBounds(37,41);
+    t.diagnostic(JSON.stringify({firstPage:queries.filter(query => /task_comments|task_audit_events/.test(query.text)).map(({rows,columns}) => ({rows,columns}))}));
+    assert.deepEqual(first.checklist, [{id:item.id,text:'Keep full checklist',position:0,completed:false,completedByUserId:null}]);
+    assert.equal(first.attachments.length,1);
+    assert.equal(first.attachments[0].file_name,'synthetic.pdf');
+    assert.doesNotMatch(JSON.stringify(first), /telegram_file|synthetic-private-id|before_data|after_data|actor_user_id|mcp_connection_id|mcp_request_id/);
+    const expected = async (table: 'task_comments' | 'task_audit_events') => (await db.query(`SELECT id FROM ${table} WHERE task_id=$1 ORDER BY created_at,id`,[task.id])).rows.map(row => row.id);
+    const comments = first.comments.map((row: any) => row.id);
+    const events = first.timeline.map((row: any) => row.id);
+    let commentCursor = first.commentNextCursor, timelineCursor = first.timelineNextCursor;
+    let requests = 1;
+    while (commentCursor || timelineCursor) {
+      assert.ok(requests++ < 40,'continuation must terminate');
+      // Exhausted streams are ignored; omitting a cursor still means start at the beginning.
+      const page = await call({commentLimit:37,timelineLimit:41,...(commentCursor ? {commentCursor} : {}),...(timelineCursor ? {timelineCursor} : {})});
+      assert.equal(page.ok,true);
+      checkBounds(37,41);
+      if (commentCursor) { comments.push(...page.comments.map((row: any) => row.id)); commentCursor = page.commentNextCursor; }
+      if (timelineCursor) { events.push(...page.timeline.map((row: any) => row.id)); timelineCursor = page.timelineNextCursor; }
+    }
+    assert.deepEqual(comments,await expected('task_comments'));
+    assert.deepEqual(events,await expected('task_audit_events'));
+    assert.equal(new Set(comments).size,1024);
+    assert.equal(new Set(events).size,events.length);
+    t.diagnostic(JSON.stringify({readback:{comments:comments.length,events:events.length,requests}}));
+    assert.equal((await call()).comments.length,50);
+    assert.equal((await call()).timeline.length,50);
+    const maximum = await call({commentLimit:100,timelineLimit:100});
+    assert.equal(maximum.comments.length,100); assert.equal(maximum.timeline.length,100); checkBounds(100,100);
+    const cursor = (tag: string, after: unknown) => Buffer.from(JSON.stringify({tag,after})).toString('base64url');
+    for (const args of [
+      {commentCursor:'not-json'}, {timelineCursor:'not-json'}, {commentCursor:cursor('event',comments[0])},
+      {timelineCursor:cursor('comment',events[0])}, {commentCursor:cursor('comment','bad-id')},
+      {timelineCursor:cursor('event',randomUUID())}, {commentCursor:cursor('comment',randomUUID())},
+      {taskId:sibling.id,commentCursor:first.commentNextCursor}, {taskId:sibling.id,timelineCursor:first.timelineNextCursor},
+      {commentCursor:cursor('comment',comments[0].toUpperCase())}
+    ]) assert.equal((await call(args)).error.code,'INVALID_CURSOR',JSON.stringify(args));
+    for (const args of [{commentLimit:0},{commentLimit:101},{timelineLimit:0},{timelineLimit:101},{commentLimit:1.5},{commentCursor:'x'.repeat(2049)}]) {
+      assert.equal((await call(args)).error.code,'INVALID_ARGUMENT');
+    }
+    const empty = await call({taskId:sibling.id});
+    assert.deepEqual(empty.comments,[]); assert.equal(empty.commentNextCursor,null);
+    assert.equal((await call({taskId:foreign.id})).error.code,'NOT_FOUND');
+    assert.equal((await call({boardId:foreignBoard,taskId:foreign.id})).error.code,'NOT_FOUND');
+    assert.equal((await call({taskId:randomUUID(),commentCursor:'bad'})).error.code,'NOT_FOUND','task access is checked before cursor parsing');
+    assert.equal((await call({requestId:randomUUID(),body:'Denied'},'add_task_comment')).error.code,'READ_ONLY');
+    // Existing cursor encoding and changed page sizes remain compatible, with live keyset semantics.
+    const lastComment = comments.at(-1), lastEvent = events.at(-1);
+    const appended = randomUUID();
+    await db.query(`INSERT INTO task_comments (id,board_id,task_id,author_user_id,body,created_at) VALUES ($1,$2,$3,$4,'Appended','2031-01-01')`,[appended,boardId,task.id,owner.userId]);
+    await db.query(`INSERT INTO task_audit_events (id,board_id,task_id,actor_user_id,action,created_at) VALUES ($1,$2,$3,$4,'updated','2031-01-01')`,[appended,boardId,task.id,owner.userId]);
+    const late = randomUUID();
+    await db.query(`INSERT INTO task_comments (id,board_id,task_id,author_user_id,body,created_at) VALUES ($1,$2,$3,$4,'Before boundary','2020-01-01')`,[late,boardId,task.id,owner.userId]);
+    const tail = await call({commentLimit:1,timelineLimit:1,commentCursor:cursor('comment',lastComment),timelineCursor:cursor('event',lastEvent)});
+    assert.deepEqual(tail.comments.map((row: any) => row.id),[appended]);
+    assert.deepEqual(tail.timeline.map((row: any) => row.id),[appended]);
+    assert.equal(tail.commentNextCursor,null); assert.equal(tail.timelineNextCursor,null); checkBounds(1,1);
+    const end = await call({commentCursor:cursor('comment',appended),timelineCursor:cursor('event',appended)});
+    assert.deepEqual(end.comments,[]); assert.deepEqual(end.timeline,[]);
+    assert.equal(end.commentNextCursor,null); assert.equal(end.timelineNextCursor,null);
+    await db.query('DELETE FROM task_comments WHERE id=$1',[appended]);
+    assert.equal((await call({commentCursor:cursor('comment',appended)})).error.code,'INVALID_CURSOR');
+    await assert.rejects(db.query("UPDATE task_audit_events SET action='forged' WHERE id=$1",[appended]),/append-only/);
+    const rest = await app.inject({method:'GET',url:`/api/boards/${boardId}/tasks/${task.id}/collaboration`,cookies:{session:owner.token}});
+    assert.equal(rest.statusCode,200);
+    assert.equal(rest.json().comments.length,1025,'REST remains unpaginated');
+    assert.ok(rest.json().timeline.some((event: any) => event.before_data?.description?.length === 8000 && event.after_data?.description?.length === 8000),'REST keeps full snapshots');
+    assert.equal(rest.json().attachments[0].telegram_file_id,'synthetic-private-id');
+    assert.equal((await app.inject({method:'GET',url:`/api/boards/${boardId}/tasks/${task.id}/collaboration`,cookies:{session:other.token}})).statusCode,404);
+    await db.query('UPDATE tasks SET archived_at=now() WHERE id=$1',[task.id]);
+    for (const status of ['active','frozen','archived']) {
+      await db.query('UPDATE boards SET status=$2 WHERE id=$1',[boardId,status]);
+      assert.equal((await call({commentLimit:1,timelineLimit:1})).ok,true,'read-only states preserve reads');
+      checkBounds(1,1);
+    }
+    await db.query('DELETE FROM mcp_board_grants WHERE connection_id=$1 AND board_id=$2',[issued.json().connection.id,boardId]);
+    assert.equal((await call({commentCursor:first.commentNextCursor})).error.code,'NOT_FOUND','grants are rechecked for continuation');
+    await db.query('INSERT INTO mcp_board_grants (connection_id,user_id,board_id) VALUES ($1,$2,$3)',[issued.json().connection.id,owner.userId,boardId]);
+    await db.query('DELETE FROM memberships WHERE board_id=$1 AND user_id=$2',[boardId,owner.userId]);
+    assert.equal((await call({commentCursor:first.commentNextCursor})).error.code,'NOT_FOUND','membership is rechecked for continuation');
+  } finally {
+    await reader.close(); await app.close();
+    for (const user of [owner,other]) {
+      await db.query('DELETE FROM boards WHERE owner_user_id=$1',[user.userId]);
+      await db.query('DELETE FROM users WHERE id=$1',[user.userId]);
+    }
+    await db.end();
+  }
+});
 
 test('MCP real HTTP/SDK and isolated DB: permissions, retries, grants and revocation', async () => {
   const db = createDatabase(url);
