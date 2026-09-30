@@ -8,7 +8,7 @@ import type { Config } from '../../api/src/config';
 
 const evidence = fileURLToPath(new URL('../../../artifacts/visual-evidence/', import.meta.url));
 const surfaces = ['board', 'project', 'publication'] as const;
-const scenarios = ['success', 'reload before debounce', 'reload in flight', 'offline reopen', 'offline conflict', 'local conflict', 'server conflict', 'choice race conflict', 'independent fields', 'raw input', 'lost response', 'lost response newer', 'uncertain revert', 'invalid', 'duplicate', 'storage failure', 'corrupt storage', 'late response', 'access loss', '401', '404', 'frozen', 'archived', 'membership revoked', 'user isolation'] as const;
+const scenarios = ['success', 'reload before debounce', 'reload in flight', 'offline reopen', 'reconnect during failure', 'reconnect during denial', 'offline conflict', 'local conflict', 'server conflict', 'choice race conflict', 'independent fields', 'raw input', 'lost response', 'lost response newer', 'uncertain revert', 'invalid', 'duplicate', 'storage failure', 'corrupt storage', 'late response', 'access loss', '401', '404', 'frozen', 'archived', 'membership revoked', 'user isolation'] as const;
 for (const surface of surfaces) for (const scenario of scenarios) {
   if ((scenario === 'independent fields' && surface !== 'publication') || (scenario === 'raw input' && surface === 'publication')) continue;
   if (scenario === 'duplicate' && surface !== 'project') continue;
@@ -86,8 +86,17 @@ for (const surface of surfaces) for (const scenario of scenarios) {
         if (write) {
           writes.push(write); maxConcurrent = Math.max(maxConcurrent, ++concurrent);
           if (delay) await delay;
-          if (fail) { concurrent--; return route.abort('internetdisconnected'); }
-          if (denied) { concurrent--; return route.fulfill({ status: denied, json: { error: 'Synthetic access denied' } }); }
+          if (fail) {
+            if (scenario === 'reconnect during failure') {
+              await page.evaluate(() => window.dispatchEvent(new Event('online')));
+              fail = false;
+            }
+            concurrent--; return route.abort('internetdisconnected');
+          }
+          if (denied) {
+            if (scenario === 'reconnect during denial') await page.evaluate(() => window.dispatchEvent(new Event('online')));
+            concurrent--; return route.fulfill({ status: denied, json: { error: 'Synthetic access denied' } });
+          }
         }
         const response = await app.inject({ method: request.method() as 'GET' | 'PUT' | 'PATCH', url: url.pathname + url.search,
           cookies: { session: currentUser.token }, payload: request.postData() ? request.postDataJSON() : undefined });
@@ -156,6 +165,28 @@ for (const surface of surfaces) for (const scenario of scenarios) {
         await expect(input).toHaveValue(latest);
         await expect(status).toHaveText('Сохранено');
         expect((await readback())[field]).toBe(latest);
+      } else if (scenario === 'reconnect during failure') {
+        fail = true;
+        await input.fill(latest);
+        await expect(status).toHaveText('Сохранено');
+        await mkdir(evidence, { recursive: true });
+        await status.scrollIntoViewIfNeeded();
+        await page.screenshot({ path: `${evidence}/issue147-${surface}-reconnect-saved.png` });
+        expect((await readback())[field]).toBe(latest);
+        expect(writes).toHaveLength(2);
+        expect(maxConcurrent).toBe(1);
+      } else if (scenario === 'reconnect during denial') {
+        denied = 403;
+        await input.fill(latest);
+        await expect(status).toHaveText('Не сохранено');
+        await page.waitForTimeout(850);
+        expect(writes).toHaveLength(1);
+        expect((await readback())[field]).toBe(initial);
+        denied = 0;
+        await editor.getByRole('button', { name: 'Повторить' }).click();
+        await expect(status).toHaveText('Сохранено');
+        expect((await readback())[field]).toBe(latest);
+        expect(writes).toHaveLength(2);
       } else if (scenario === 'offline reopen' || scenario === 'user isolation') {
         fail = true;
         await input.fill(latest);
@@ -271,12 +302,20 @@ for (const surface of surfaces) for (const scenario of scenarios) {
         await input.fill(latest);
         await expect(status).toHaveText('Сохранено');
       } else if (scenario === 'corrupt storage') {
-        await page.evaluate((key) => localStorage.setItem(key, '{broken'), storageKey);
+        // Inject on the next document, after the old editor can no longer persist.
+        await page.addInitScript((key) => localStorage.setItem(key, '{broken'), storageKey);
         await page.reload(); await open();
         await expect(editor.getByRole('alert').filter({ hasText: 'повреждена' })).toBeVisible();
+        await page.locator('.settings-back').click(); await open();
+        await page.waitForTimeout(850);
+        await expect(editor.getByRole('alert').filter({ hasText: 'повреждена' })).toBeVisible();
+        await mkdir(evidence, { recursive: true });
+        await editor.getByRole('alert').filter({ hasText: 'повреждена' }).scrollIntoViewIfNeeded();
+        await page.screenshot({ path: `${evidence}/issue147-${surface}-storage-warning.png` });
         await expect(input).toHaveValue(initial);
         await input.fill(latest);
         await expect(status).toHaveText('Сохранено');
+        await expect(editor.getByRole('alert').filter({ hasText: 'повреждена' })).toHaveCount(0);
       } else if (scenario === 'storage failure') {
         await page.evaluate(() => {
           const original = Storage.prototype.setItem;

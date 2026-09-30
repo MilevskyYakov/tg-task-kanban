@@ -55,6 +55,8 @@ class SettingsEdit {
   warning = false;
   conflict?: { server: Draft; fields: string[] };
   private inFlight = false;
+  private retryPending = false;
+  private recoveryWarning = false;
   private stopped = false;
   private blocked = 0;
   private needsRead = true;
@@ -84,7 +86,7 @@ class SettingsEdit {
         }
         this.base = stored.base; this.draft = stored.draft; this.state = 'pending';
       }
-    } catch { this.warning = true; }
+    } catch { this.warning = this.recoveryWarning = true; }
     this.autosave = new Autosave({ key: `settings:${key}`, send: () => this.send(),
       onState: (state) => { this.state = state; this.notify(); },
       onError: (error) => {
@@ -105,7 +107,7 @@ class SettingsEdit {
     try {
       if (!this.inFlight && !this.attempt && !this.conflict && Object.keys(this.base).every((key) => equalField(this.draft, this.base, key)) && !Object.keys(this.errors).length) localStorage.removeItem(this.storageKey);
       else localStorage.setItem(this.storageKey, JSON.stringify({ version: 1, base: this.base, draft: this.draft, attempt: this.attempt }));
-      this.warning = false;
+      this.warning = this.recoveryWarning;
     } catch { this.warning = true; }
   }
   private queue(delay: number | null) {
@@ -202,6 +204,15 @@ class SettingsEdit {
     } finally {
       this.inFlight = false;
       if (!this.stopped) { this.persist(); this.notify(); }
+      if (this.retryPending) {
+        this.retryPending = false;
+        // A reconnect during a failed request must survive that request's queue(null).
+        // The timer runs after Autosave releases its single-flight promise.
+        if (!this.stopped && !this.blocked && !this.conflict) {
+          this.needsRead = true;
+          this.queue(0);
+        }
+      }
     }
   }
   start() {
@@ -214,6 +225,7 @@ class SettingsEdit {
   }
   set(key: string, value: Draft[string], immediate = false) {
     if (this.stopped) return;
+    this.recoveryWarning = false;
     this.draft = { ...this.draft, [key]: value };
     if (![401,403,404].includes(this.blocked)) { this.blocked = 0; this.error = ''; }
     this.queue(immediate ? 0 : 700);
@@ -222,6 +234,7 @@ class SettingsEdit {
     if (this.stopped || this.conflict || (this.blocked && !manual)) return;
     if (manual) { this.blocked = 0; this.error = ''; }
     this.needsRead = true;
+    if (this.inFlight) { this.retryPending = true; return; }
     this.queue(0);
     void this.autosave.flush();
   }
