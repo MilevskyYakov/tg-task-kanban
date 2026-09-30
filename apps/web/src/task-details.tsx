@@ -261,7 +261,8 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     baseRef.current = taskDraft(server);
     versionRef.current = server.version;
     unversionedRef.current = false;
-    replaceDraft(next);
+    // Consume acknowledged/rejected consent, but keep an opt-in for a newer assignment.
+    replaceDraft({ ...next, notifyAssignee: next.notifyAssignee && next.assigneeUserId !== baseRef.current.assigneeUserId });
     confirmed.current(server);
   };
   const showConflict = (serverTask: Task, fields = mergeTaskDraft(baseRef.current, draftRef.current, taskDraft(serverTask)).conflicts) => {
@@ -354,7 +355,13 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     onState: setSaveState
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [userId, task.board_id, task.id]);
-  useEffect(() => () => autosave.stop(), [autosave]);
+  const disposal = useRef<{ queue: typeof autosave; timer: ReturnType<typeof setTimeout> }>(undefined);
+  useEffect(() => {
+    if (disposal.current?.queue === autosave) clearTimeout(disposal.current.timer);
+    // Like settings edits, defer disposal past StrictMode's setup/cleanup probe.
+    // Only the same queue can cancel its disposal; a different task must stay isolated.
+    return () => { disposal.current = { queue: autosave, timer: setTimeout(() => autosave.stop(), 0) }; };
+  }, [autosave]);
   useEffect(() => reconnectRetry(() => { if (savable && retryOnReconnect.current) void autosave.flush().catch(() => undefined); }), [autosave, savable]);
   useEffect(() => {
     if (!initialDraft.restored || !savable) return;
@@ -452,6 +459,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
   const set = <K extends keyof TaskDraft>(key: K, value: TaskDraft[K]) => {
     setSeriesResult((result) => result?.error ? result : undefined);
     const next = { ...draftRef.current, [key]: value };
+    if (key === 'assigneeUserId' && value !== draftRef.current.assigneeUserId) next.notifyAssignee = false;
     // Update the ref synchronously: a flush triggered right after (blur, «Готово»,
     // «Удалить») must read the new value, not the pre-render snapshot (issue #129).
     draftRef.current = next;

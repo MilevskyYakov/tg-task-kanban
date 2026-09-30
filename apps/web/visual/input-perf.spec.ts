@@ -122,6 +122,25 @@ async function typeCyrillic(page: Page, lines: number) {
 
 test.setTimeout(180_000);
 
+test('create typing does not format deadlines from hidden task lists', async ({ page }) => {
+  await mockApp(page, 600);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Создать задачу' }).click();
+  const title = page.getByRole('textbox', { name: 'Что нужно сделать?' });
+  await expect(title).toBeVisible();
+  await page.evaluate(() => {
+    const original = Date.prototype.toLocaleString;
+    (window as any).hiddenDeadlineFormats = 0;
+    Date.prototype.toLocaleString = function (...args: Parameters<typeof original>) {
+      (window as any).hiddenDeadlineFormats += 1;
+      return original.apply(this, args);
+    };
+  });
+  await title.fill('Новая задача');
+  await expect(title).toHaveValue('Новая задача');
+  expect(await page.evaluate(() => (window as any).hiddenDeadlineFormats)).toBe(0);
+});
+
 for (const queue of [50, 600]) {
   test(`create title input latency, queue=${queue}`, async ({ page }) => {
     await mkdir(evidenceDir, { recursive: true });

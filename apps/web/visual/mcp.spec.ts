@@ -31,7 +31,7 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
       const revoking=path.startsWith('/api/mcp-connections/') && req.method()==='DELETE';
       const payload=req.postData() ? req.postDataJSON() : undefined;
       if (creating) { creates.push(payload); if (gate) await gate; }
-      if (path==='/api/mcp-connections' && req.method()==='GET' && failure==='list') { failure=''; return route.fulfill({status:503,json:{error:'synthetic list failure'}}); }
+      if (path==='/api/mcp-connections' && req.method()==='GET' && failure==='list') return route.fulfill({status:503,json:{error:'synthetic list failure'}});
       if (path.startsWith('/api/mcp-connections') && failure==='expired') return route.fulfill({status:401,json:{error:'Войдите снова через Telegram'}});
       if (creating && failure==='create-before') { failure=''; return route.abort('failed'); }
       const response=await app.inject({method:req.method() as 'GET'|'POST'|'DELETE',url:path,cookies:{session:person.token},headers:{host:'127.0.0.1:4173',...(req.headers().origin ? {origin:req.headers().origin} : {}),...(req.headers()['content-type'] ? {'content-type':req.headers()['content-type']} : {})},payload});
@@ -73,6 +73,7 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
     await enter();
     await expect(page.getByRole('alert')).toContainText('Не удалось загрузить подключения');
     await expect(page.getByText('Подключений пока нет')).toHaveCount(0);
+    failure='';
     await page.getByRole('button',{name:'Повторить',exact:true}).click();
     await expect(page.getByText('Подключений пока нет')).toBeVisible();
     await shot('empty');
