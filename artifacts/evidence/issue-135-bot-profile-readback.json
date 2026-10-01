@@ -1,0 +1,26 @@
+{
+  "issue": 135,
+  "username": "tasca_app_bot",
+  "identityVerified": true,
+  "changed": [
+    {"field": "commands", "scope": {"type": "all_private_chats"}, "language_code": "", "readback": "PASS"},
+    {"field": "name", "language_code": "ru", "readback": "PASS"},
+    {"field": "description", "language_code": "ru", "readback": "PASS"},
+    {"field": "short_description", "language_code": "ru", "readback": "PASS"},
+    {"field": "commands", "scope": {"type": "all_private_chats"}, "language_code": "ru", "readback": "PASS"}
+  ],
+  "nameDescriptionsDefault": "already matched approved profile; unchanged",
+  "nameDescriptionsRussian": "applied from docs/tasca-bot-profile.json and read back",
+  "commands": {"scope": "all_private_chats", "languages": ["", "ru"], "readback": "PASS"},
+  "avatar": "existing profile photo downloaded via getUserProfilePhotos/getFile and visually matched to approved v0.7; unchanged",
+  "avatarClientCrop": "not checked in Telegram client",
+  "mainMiniApp": "not changed; URL and preview need separate client/BotFather readback",
+  "defaultCommandScopesUnchanged": true,
+  "webhookConfigured": false,
+  "webhookUnchanged": true,
+  "menuType": "commands",
+  "menuUnchanged": true,
+  "realMessagesSent": false,
+  "productionChanged": false,
+  "privateEvidence": "before/after snapshots and per-field readback retained in task-local ignored evidence with mode 0600; no credentials published"
+}

@@ -1,7 +1,7 @@
 type TelegramResult<T> = { ok: boolean; result?: T; description?: string; error_code?: number };
 
 export class TelegramRejectedError extends Error {
-  constructor(public code: number) { super(`Telegram rejected request (${code})`); }
+  constructor(public code: number, public messageNotModified = false) { super(`Telegram rejected request (${code})`); }
 }
 
 export const escapeHtml = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
@@ -12,7 +12,8 @@ export async function telegramCall<T>(botToken: string, method: string, body: un
     ...(body instanceof FormData ? { body } : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   });
   const data = await response.json() as TelegramResult<T>;
-  if (!data.ok && data.error_code && data.error_code >= 400 && data.error_code < 500) throw new TelegramRejectedError(data.error_code);
+  if (!data.ok && data.error_code && data.error_code >= 400 && data.error_code < 500) throw new TelegramRejectedError(data.error_code,
+    method === 'editMessageText' && data.error_code === 400 && typeof data.description === 'string' && /^Bad Request: message is not modified(?::|$)/.test(data.description));
   if (!response.ok || !data.ok || data.result === undefined) throw new Error(`Telegram ${method} result unknown`);
   return data.result;
 }

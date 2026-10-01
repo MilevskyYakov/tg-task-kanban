@@ -12,7 +12,7 @@ import { renderPublication, schedulesForBoard, updateSchedule, validTimezone as 
 import { validTimezone } from './recurrence.js';
 import { claimTask } from './db.js';
 import { BoardAccessError, changePairInvite, createPairBoard, previewPairInvite, redeemPairInvite, removePairMember, setPairArchived } from './pair-boards.js';
-import { sendBotEntry, sendGroupWelcome } from './bot-entry.js';
+import { sendBotEntry, sendBotTutorial, sendGroupWelcome, type TutorialCallback } from './bot-entry.js';
 import { taskInput } from './task-input.js';
 import { recurrenceInput } from './recurrence-input.js';
 import { ChecklistConfirmationError, SettingsConflictError } from './db.js';
@@ -24,7 +24,7 @@ type ChatMemberUpdate = {
   old_chat_member: { status: string; user: { is_bot: boolean } };
   new_chat_member: { status: string; user: { is_bot: boolean } };
 };
-type TelegramUpdate = { update_id: number; my_chat_member?: ChatMemberUpdate; message?: { message_id: number; chat: { id: number; type: string }; text?: string; migrate_to_chat_id?: number; migrate_from_chat_id?: number } };
+type TelegramUpdate = { update_id: number; callback_query?: TutorialCallback; my_chat_member?: ChatMemberUpdate; message?: { message_id: number; chat: { id: number; type: string }; text?: string; migrate_to_chat_id?: number; migrate_from_chat_id?: number } };
 type TaskPatchInput = TaskInput & { confirmIncompleteChecklist?: boolean };
 const present = (status: string) => status === 'member' || status === 'administrator';
 const revisionPattern = /^[1-9]\d*$/;
@@ -430,6 +430,15 @@ export function buildApp(config: Config, db: Database) {
     if (request.headers['x-telegram-bot-api-secret-token'] !== config.webhookSecret) return reply.code(401).send({ error: 'invalid webhook secret' });
     const update = request.body;
     if (!update || !Number.isSafeInteger(update.update_id)) return reply.code(400).send({ error: 'invalid update' });
+    if (update.callback_query !== undefined) {
+      const callback = update.callback_query;
+      if (!callback || typeof callback.id !== 'string' || !callback.id.length || callback.id.length > 256 ||
+        !Number.isSafeInteger(callback.from?.id) || callback.from.id <= 0) return reply.code(400).send({ error: 'invalid callback' });
+      const delivery = await sendBotTutorial(db, config, callback);
+      if (delivery === 'uncertain' || delivery === 'failed') request.log.warn({ delivery }, 'Bot tutorial edit not confirmed; restart via /help');
+      // Button failures must not cause an automatic edit/retry loop or extra messages.
+      return { ok: delivery === 'sent' || delivery === 'skipped', delivery };
+    }
     const deliveryResult = (delivery: string) => {
       if (delivery === 'failed' || delivery === 'sending') {
         request.log.warn({ delivery }, 'Bot entry delivery requires retry');

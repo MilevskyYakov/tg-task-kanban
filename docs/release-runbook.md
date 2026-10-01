@@ -75,11 +75,11 @@ curl --fail https://task.kairos-ai.ru/health
 set -a; . ./.env; set +a
 curl --fail -X POST "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
   -H 'content-type: application/json' \
-  -d "{\"url\":\"$PUBLIC_URL/api/telegram/webhook\",\"secret_token\":\"$WEBHOOK_SECRET\",\"allowed_updates\":[\"message\",\"my_chat_member\"]}"
+  -d "{\"url\":\"$PUBLIC_URL/api/telegram/webhook\",\"secret_token\":\"$WEBHOOK_SECRET\",\"allowed_updates\":[\"message\",\"my_chat_member\",\"callback_query\"]}"
 curl --fail "https://api.telegram.org/bot$BOT_TOKEN/getWebhookInfo"
 ```
 
-Не копировать ответы API в Issue: они могут содержать адреса и диагностические данные.
+Не копировать ответы API в Issue: они могут содержать адреса и диагностические данные. Проверить, что `getWebhookInfo.allowed_updates` содержит `message`, `my_chat_member` и `callback_query`. Затем пройти обучение из `/start` и повторно из `/help`: три сценария, навигация, пропуск и переход в продукт. Без `callback_query` кнопки обучения не работают; зелёного health-check недостаточно.
 
 ## 5. Smoke и диагностика
 
