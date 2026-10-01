@@ -6,6 +6,12 @@ import { escapeHtml, telegramCall, TelegramRejectedError } from './telegram.js';
 
 type Delivery = 'sent' | 'failed' | 'uncertain' | 'sending' | 'skipped';
 
+function entryKey(config: Config, key: string) {
+  // The token prefix is the stable bot ID; never persist the token's secret part.
+  const identity = createHash('sha256').update(config.botToken.split(':', 1)[0]).digest('hex');
+  return `bot:${identity}:${key}`;
+}
+
 // Telegram has no send idempotency key. Unknown outcomes require operator inspection,
 // never an automatic resend. A process crash after claiming is also an unknown outcome.
 async function deliverEntry(db: Database, config: Config, key: string, prepare: () => Promise<{method: string; body: unknown}>): Promise<Delivery> {
@@ -38,7 +44,9 @@ async function deliverEntry(db: Database, config: Config, key: string, prepare: 
 export async function sendGroupWelcome(db: Database, config: Config, chatId: number) {
   const board = (await db.query<{id: string}>("SELECT id FROM boards WHERE type = 'chat' AND telegram_chat_id = $1", [chatId])).rows[0];
   if (!board) return 'skipped';
-  return deliverEntry(db, config, `board:${board.id}`, async () => {
+  const key = entryKey(config, `board:${board.id}`);
+  await db.query('INSERT INTO telegram_entry_deliveries (key, board_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [key, board.id]);
+  return deliverEntry(db, config, key, async () => {
     const photo = await readFile(new URL('../../../artifacts/ux/assets/group-welcome.png', import.meta.url));
     const message = await withBoardLock(db, board.id, async (client) => {
       const current = (await client.query<{name: string; telegram_chat_id: string}>("SELECT name, telegram_chat_id FROM boards WHERE id = $1 AND status <> 'frozen' FOR UPDATE", [board.id])).rows[0];
@@ -60,7 +68,7 @@ export async function sendGroupWelcome(db: Database, config: Config, chatId: num
 }
 
 export async function sendBotEntry(db: Database, config: Config, messageId: number, chatId: number, help: boolean) {
-  const key = `command:${createHash('sha256').update(`${chatId}:${messageId}`).digest('hex')}`;
+  const key = entryKey(config, `command:${createHash('sha256').update(`${chatId}:${messageId}`).digest('hex')}`);
   await db.query('INSERT INTO telegram_entry_deliveries (key) VALUES ($1) ON CONFLICT DO NOTHING', [key]);
   const button = (text: string, start: string) => [{ text, url: `https://t.me/${config.botUsername}?startapp=${start}` }];
   return deliverEntry(db, config, key, async () => ({ method: 'sendMessage', body: {
