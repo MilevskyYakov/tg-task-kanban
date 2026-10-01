@@ -134,7 +134,7 @@ export function buildApp(config: Config, db: Database) {
     const canActivate = board.status === 'draft' && await isChatAdmin(config.botToken, board.telegram_chat_id, user.telegram_id);
     return { board, canActivate };
   });
-  app.get('/api/bot-entry', async () => ({ groupUrl: `https://t.me/${config.botUsername}?startgroup=tasks` }));
+  app.get('/api/bot-entry', async (_request, reply) => reply.header('Cache-Control', 'no-store').send({ botUrl: `https://t.me/${config.botUsername}?start=landing`, groupUrl: `https://t.me/${config.botUsername}?startgroup=tasks` }));
   app.post<{Params: {id: string}}>('/api/boards/:id/invites', async (request, reply) => {
     const user = await sessionUser(db, request.cookies.session, config.sessionSecret);
     if (!user) return reply.code(401).send({ error: 'authentication required' });
@@ -464,6 +464,6 @@ export function buildApp(config: Config, db: Database) {
   });
 
   registerMcp(app, config, db, sendTaskNotification);
-  app.setNotFoundHandler((request, reply) => request.url.startsWith('/api/') || request.url.startsWith('/mcp') ? reply.code(404).send({ error: 'not found' }) : reply.sendFile('index.html'));
+  app.setNotFoundHandler((request, reply) => /^\/(api|health)(\/|\?|$)/.test(request.url) || request.url.startsWith('/mcp') ? reply.code(404).send({ error: 'not found' }) : reply.sendFile('index.html'));
   return app;
 }
