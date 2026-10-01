@@ -1,0 +1,91 @@
+{
+  "source": "tasca_rehearsal_137",
+  "restore": "tasca_rehearsal_restore_137",
+  "loopback_only": true,
+  "tables_equal": 20,
+  "new_task_retained": true,
+  "backup_bytes": 66799,
+  "backup_sha256": "135e2d113d5e4fd7b0d100b71817f475315463d7052d80da04fcf6e0bbe73ab1",
+  "table_snapshot": {
+    "board_links": {
+      "rows": 0,
+      "row_fingerprint": "d41d8cd98f00b204e9800998ecf8427e"
+    },
+    "boards": {
+      "rows": 6,
+      "row_fingerprint": "5d7a58b5a19d99b4676a1dc2596f5e17"
+    },
+    "mcp_board_grants": {
+      "rows": 3,
+      "row_fingerprint": "0516170a22fb6936fde95b1bbcfd8a06"
+    },
+    "mcp_connections": {
+      "rows": 3,
+      "row_fingerprint": "9ec337dea7035caa3d5e7931ce47a58b"
+    },
+    "mcp_write_receipts": {
+      "rows": 1,
+      "row_fingerprint": "31b0e860e7c68e76ac03da0f49d7eff0"
+    },
+    "memberships": {
+      "rows": 6,
+      "row_fingerprint": "490e33292e61ad33d5b24259a4f2c9ee"
+    },
+    "projects": {
+      "rows": 0,
+      "row_fingerprint": "d41d8cd98f00b204e9800998ecf8427e"
+    },
+    "publication_runs": {
+      "rows": 0,
+      "row_fingerprint": "d41d8cd98f00b204e9800998ecf8427e"
+    },
+    "publication_schedules": {
+      "rows": 0,
+      "row_fingerprint": "d41d8cd98f00b204e9800998ecf8427e"
+    },
+    "recurrence_templates": {
+      "rows": 0,
+      "row_fingerprint": "d41d8cd98f00b204e9800998ecf8427e"
+    },
+    "sessions": {
+      "rows": 10,
+      "row_fingerprint": "cf1c2eb81ff66ad686f6930f57b7bbe4"
+    },
+    "task_assignment_notifications": {
+      "rows": 0,
+      "row_fingerprint": "d41d8cd98f00b204e9800998ecf8427e"
+    },
+    "task_attachments": {
+      "rows": 0,
+      "row_fingerprint": "d41d8cd98f00b204e9800998ecf8427e"
+    },
+    "task_audit_events": {
+      "rows": 4,
+      "row_fingerprint": "4ff7af94573671432c95c1aa88a51e47"
+    },
+    "task_checklist_items": {
+      "rows": 0,
+      "row_fingerprint": "d41d8cd98f00b204e9800998ecf8427e"
+    },
+    "task_comments": {
+      "rows": 0,
+      "row_fingerprint": "d41d8cd98f00b204e9800998ecf8427e"
+    },
+    "task_filter_states": {
+      "rows": 0,
+      "row_fingerprint": "d41d8cd98f00b204e9800998ecf8427e"
+    },
+    "tasks": {
+      "rows": 4,
+      "row_fingerprint": "41abfc4315b67b621306d40dc3ec290b"
+    },
+    "telegram_entry_deliveries": {
+      "rows": 0,
+      "row_fingerprint": "d41d8cd98f00b204e9800998ecf8427e"
+    },
+    "users": {
+      "rows": 6,
+      "row_fingerprint": "66c248f4544b7538b26c2ddadbf98f2b"
+    }
+  }
+}

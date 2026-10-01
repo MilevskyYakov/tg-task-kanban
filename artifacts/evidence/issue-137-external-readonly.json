@@ -1,0 +1,82 @@
+{
+  "checked_at": "2026-09-30T23:47:22.760028+00:00",
+  "public": {
+    "task.kairos-ai.ru": {
+      "dns_resolves": true,
+      "/": {
+        "status": 200,
+        "type": "text/html; charset=utf-8"
+      },
+      "/health": {
+        "status": 200,
+        "type": "application/json; charset=utf-8"
+      },
+      "/mcp": {
+        "status": 401,
+        "type": "application/json; charset=utf-8"
+      }
+    },
+    "tasca.kairos-ai.ru": {
+      "dns_resolves": true,
+      "/": {
+        "error": "URLError",
+        "tls_verification_failed": true
+      },
+      "/health": {
+        "error": "URLError",
+        "tls_verification_failed": true
+      },
+      "/mcp": {
+        "error": "URLError",
+        "tls_verification_failed": true
+      }
+    }
+  },
+  "candidate_bot": {
+    "getMe": {
+      "ok": true,
+      "result": {
+        "username": "tasca_app_bot",
+        "first_name": "Таска — задачник",
+        "is_bot": true,
+        "can_join_groups": true
+      }
+    },
+    "getMyName": {
+      "ok": true,
+      "result": {
+        "name": "Таска — задачник"
+      }
+    },
+    "getMyDescription": {
+      "ok": true,
+      "result": {
+        "description": "Личные дела, общие планы и задачи команды — в одном месте.\n\nСоздавайте задачи, назначайте исполнителей и сроки, следите за выполнением. Для себя, вдвоём или всей командой.\n\nОткройте Таску и создайте первую задачу."
+      }
+    },
+    "getMyShortDescription": {
+      "ok": true,
+      "result": {
+        "short_description": "Дела под рукой. Задачи для себя и команды — прямо в Telegram."
+      }
+    },
+    "getMyCommands": {
+      "ok": true,
+      "result": []
+    },
+    "getChatMenuButton": {
+      "ok": true,
+      "result": {
+        "type": "commands"
+      }
+    },
+    "getWebhookInfo": {
+      "ok": true,
+      "result": {
+        "configured": false,
+        "pending_update_count": 0,
+        "has_last_error": false
+      }
+    }
+  }
+}

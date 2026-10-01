@@ -385,11 +385,13 @@ export function registerMcp(app: FastifyInstance, config: Config, db: Database, 
   }
   function headers(request: FastifyRequest, reply: FastifyReply, management = false) {
     reply.header('Cache-Control', 'no-store').header('Referrer-Policy', 'no-referrer');
-    const origin = new URL(config.publicUrl).origin;
+    const urls = [config.publicUrl, ...(config.publicUrlAliases ?? [])].map(value => new URL(value));
     const host = request.headers.host;
-    if (host !== new URL(config.publicUrl).host && (config.production || !/^(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(host ?? ''))) throw new McpFailure('ACTION_FORBIDDEN', 'Недопустимый адрес сервера', 403);
-    if (request.headers.origin !== undefined && request.headers.origin !== origin) throw new McpFailure('ACTION_FORBIDDEN', 'Недопустимый источник запроса', 403);
-    if (management && !['GET', 'HEAD'].includes(request.method) && request.headers.origin !== origin) throw new McpFailure('ACTION_FORBIDDEN', 'Недопустимый источник запроса', 403);
+    const local = !config.production && /^(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(host ?? '');
+    if (!urls.some(url => host === url.host) && !local) throw new McpFailure('ACTION_FORBIDDEN', 'Недопустимый адрес сервера', 403);
+    const originAllowed = urls.some(url => request.headers.origin === url.origin && (host === url.host || local));
+    if (request.headers.origin !== undefined && !originAllowed) throw new McpFailure('ACTION_FORBIDDEN', 'Недопустимый источник запроса', 403);
+    if (management && !['GET', 'HEAD'].includes(request.method) && !originAllowed) throw new McpFailure('ACTION_FORBIDDEN', 'Недопустимый источник запроса', 403);
   }
   function fail(error: unknown, reply: FastifyReply) {
     const failure = error instanceof McpFailure ? error : new McpFailure('TEMPORARY_UNAVAILABLE', 'Не удалось выполнить действие. Проверьте результат перед повтором', 503);
