@@ -18,6 +18,7 @@ for (const width of [390, 320]) {
     }));
     await page.route('**/api/**', async (route) => {
       const path = new URL(route.request().url()).pathname;
+      if (path === '/api/bot-entry') return route.fulfill({ json: { botUrl: 'https://t.me/kairostask_bot?start=landing' } });
       if (path === '/api/auth/telegram') {
         if (mode === 'loading') await loading;
         return route.fulfill({ status: mode === 'auth-error' ? 401 : 200, json: mode === 'auth-error' ? { error: 'Откройте приложение снова через бота.' } : { userId: 'synthetic' } });
@@ -35,7 +36,7 @@ for (const width of [390, 320]) {
     try {
       await page.goto('/');
       await expect(page.getByRole('img', { name: 'Таска' })).toBeVisible();
-      await expect(page.getByRole('link', { name: '@kairostask_bot' })).toHaveAttribute('href', 'https://t.me/kairostask_bot');
+      await expect(page.getByRole('link', { name: 'Открыть в Telegram' }).first()).toHaveAttribute('href', 'https://t.me/kairostask_bot?start=landing');
       await shot();
       mode = 'auth-error'; await page.reload();
       await expect(page.getByRole('heading', { name: 'Не удалось войти' })).toBeVisible();

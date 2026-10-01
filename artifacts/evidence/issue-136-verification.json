@@ -1,0 +1,50 @@
+{
+  "issue": 136,
+  "visual": [
+    {
+      "startTime": "2026-10-01T00:12:38.290Z",
+      "duration": 212109.701,
+      "expected": 85,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    },
+    {
+      "startTime": "2026-10-01T00:20:45.406Z",
+      "duration": 259783.162,
+      "expected": 146,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    },
+    {
+      "startTime": "2026-10-01T00:25:05.752Z",
+      "duration": 10847.113,
+      "expected": 12,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    }
+  ],
+  "total": 243,
+  "sha256": {
+    "apps/web/index.html": "ac397ca5ea17132991c62290c6fb64e5610954df79ab98b2c954cf33a10c575a",
+    "apps/web/src/landing.tsx": "abe3889ba7f7567112fc8baa7d9d5dc138dbfdba37c63f7ebebd63003322efd5",
+    "apps/web/src/landing.css": "43506154d4eb7f81b2e813bd101a469623538be7590f5516c4af938ab8f0f1b5",
+    "apps/web/src/main.tsx": "36fc45caa03de581aa513c4c6d14dbef10d8dd42f499a5c90b6077ad6fd32b4c",
+    "apps/api/src/app.ts": "f31cf65a28dc76125cd0bbb616a6420de5e5f785a32774e4a9fe818a33ec5363",
+    "apps/web/visual/landing.spec.ts": "974ead9790eb9f9ccc02244049fcd59224570eebb6ebe032be4925e5ec893172",
+    "apps/api/test/public-entry.test.ts": "b3232fbe7ecbd6d4b11d4fbecdb0b929cf73628f134bcb632b9043ae4f84583e",
+    "apps/web/public/brand/social-preview.png": "cc9c063ba9ec9a14bdd525edfaa6b19c0b35dfedce60722e9e83c316d7ff1b2f",
+    "apps/web/public/brand/tasca-ru-green.svg": "e9251116d18e8062a77b88e69f9174aab4d157cca3193f5e1c2bc000e50e7db3",
+    "apps/web/public/brand/favicon.png": "7684e2267b4c0cbfa1b473f7d354385c5b88868fdee7564f1bf6da6a92a335ea",
+    "apps/web/public/brand/app-preview.webp": "7cbfb201be3c8c715ab96200dc8ca9bb751ddd2dddbcfeea4b9cd2d444f43dc6"
+  },
+  "resource_bytes": {
+    "apps/web/dist/brand/social-preview.png": 397583,
+    "apps/web/dist/brand/favicon.png": 5391,
+    "apps/web/dist/brand/app-preview.webp": 25618,
+    "apps/web/dist/assets/index-DZKX5FFN.js": 384651,
+    "apps/web/dist/assets/index-BKz3pYXy.css": 76270
+  }
+}

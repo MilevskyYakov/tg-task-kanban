@@ -21,6 +21,7 @@ import { boardTypeName } from './domain';
 import { EntryGuide, GroupSetup, type EntryPath } from './bot-entry';
 import { McpConnections } from './mcp-connections';
 import { NameSetting, PublicationSetting, useSettingsEdits } from './settings-editor';
+import { Landing } from './landing';
 
 type TaskView = 'list' | 'kanban';
 type FilterChoice = 'project' | 'assignee' | 'status' | 'priority' | 'deadline';
@@ -789,7 +790,7 @@ function App() {
   </SettingsScreen>;
   const accountSettings = <SettingsScreen title="Аккаунт" subtitle="Профиль и личные параметры"><button className="back settings-back" onClick={() => navigate({ screen: 'settings' })}><Icon name="back"/>Настройки</button><div className="settings-groups"><section className="settings-group account-profile"><Avatar initials={initials(profileName)} label={profileName}/><span><strong>{profileName}</strong>{profileUsername && <small>{profileUsername}</small>}</span></section><section className="settings-group"><h2>Личные параметры</h2><div className="settings-form"><ChoiceAction label="Группировка задач" value={grouping} options={[{ value: 'deadline', label: 'По срокам' }, { value: 'project', label: 'По проектам' }]} onChange={(value) => setGrouping(value as typeof grouping)}/><ChoiceAction label="Обычная доска" value={globalBoardId} options={boardOptions} onChange={chooseTaskBoard}/></div></section><ActionRow label="Подключения" value="Доступ к задачам из AI-клиентов" onClick={()=>navigate({screen:'settings-connections'})}/></div></SettingsScreen>;
 
-  if (state === 'outside') return <main><EnvironmentStatus/><section className="outside-entry"><img className="brand-wordmark" src="/brand/tasca-ru-green.svg" alt="Таска"/><h1>Дела под рукой</h1><p>Откройте приложение через <a href="https://t.me/kairostask_bot">@kairostask_bot</a>.</p></section></main>;
+  if (state === 'outside') return <Landing/>;
   if (state === 'error') return <main><EnvironmentStatus/><section role="alert"><h1>Не удалось войти</h1><p>{message || 'Закройте приложение и откройте его снова через бота.'}</p></section></main>;
   if (state === 'loading') return <main><EnvironmentStatus/><Skeleton label="Загрузка приложения"/></main>;
   if (taskLinkError) return <main><EnvironmentStatus/><section role="alert"><p className="eyebrow">ОШИБКА {taskLinkError}</p><h1>{taskLinkError === 403 ? 'Нет доступа к задаче' : 'Задача не найдена'}</h1><p>{taskLinkError === 403 ? 'У вас нет доступа к доске этой задачи.' : 'Ссылка повреждена или задача больше недоступна.'}</p><button onClick={() => { setTaskLinkError(undefined); setBoardOverrideId(undefined); }}>К задачам</button></section></main>;
