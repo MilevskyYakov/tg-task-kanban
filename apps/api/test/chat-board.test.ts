@@ -78,12 +78,12 @@ test('bot entry: one photo, stable launch, admin-only setup and safe delivery ou
     assert.equal((await webhook(joined())).json().delivery, 'sent');
     assert.equal(photos.length, 1);
     const photo = photos[0];
-    assert.equal(photo.get('caption'), '<b>Задачи команды · Студия &lt;A&gt; &amp; B</b>\n\nДобавляйте задачи, берите их в работу и отслеживайте выполнение.');
+    assert.equal(photo.get('caption'), '<b>Таска · Студия &lt;A&gt; &amp; B</b>\n\nОбщие задачи вашей команды. Администратор запускает доску, участники добавляют задачи и берут их в работу.\n\nЗакрепите это сообщение — кнопка останется входом в доску.');
     assert.equal(photo.get('parse_mode'), 'HTML');
     const asset = photo.get('photo') as File;
     assert.equal(asset.name, 'group-welcome.png');
     assert.equal(asset.type, 'image/png');
-    assert.equal(createHash('sha256').update(Buffer.from(await asset.arrayBuffer())).digest('hex'), '60913eb886a11733ed4a0765043b148f462d82e6eeb11f1d0611e96a150494c0');
+    assert.equal(createHash('sha256').update(Buffer.from(await asset.arrayBuffer())).digest('hex'), '90cf42a175198eb232a0582e0ce792b2675db1042897a4637fda7804b792c456');
     const keyboard = JSON.parse(String(photo.get('reply_markup'))).inline_keyboard;
     assert.equal(keyboard.length, 1); assert.equal(keyboard[0].length, 1); assert.equal(keyboard[0][0].text, 'Открыть задачи');
     assert.equal(messages.length, 0, 'image, caption and button in one message');
@@ -166,11 +166,18 @@ test('bot entry: one photo, stable launch, admin-only setup and safe delivery ou
     await Promise.all([webhook(command(10, '/start')), webhook(command(10, '/start'))]);
     await webhook(command(10, '/start'));
     assert.equal(messages.length, 1);
+    assert.match(messages[0].text, /Таска — дела под рукой/);
     assert.match(messages[0].text, /Личные и общие задачи/);
     assert.deepEqual(messages[0].reply_markup.inline_keyboard.map((row: any[]) => row[0].text), ['Личные задачи', 'Доска на двоих', 'Доска для группы', 'Как начать']);
     assert.deepEqual(messages[0].reply_markup.inline_keyboard.map((row: any[]) => new URL(row[0].url).searchParams.get('startapp')), ['personal', 'pair', 'group', 'help']);
     await webhook(command(11, '/help@test_bot'));
     assert.match(messages[1].text, /настройках приложения/);
+    assert.match(messages[1].text, /при конфликте выберите нужную версию/);
+    assert.match(messages[1].text, /только по вашему выбору/);
+    for (const message of messages) {
+      assert.ok(message.text.length < 4096);
+      assert.ok(message.reply_markup.inline_keyboard.every((row: any[]) => new URL(row[0].url).pathname === '/test_bot'));
+    }
     await webhook(command(12, '/help@other_bot'));
     await webhook(command(13, '/start', 'supergroup'));
     await webhook(command(14, '/refresh_board'));

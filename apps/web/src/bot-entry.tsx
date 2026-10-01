@@ -39,6 +39,8 @@ export function EntryGuide({ path, onPath, onPersonal, onPair, onClose }: {
   if (path === 'help') return <PairScreen title="Как начать" onBack={onClose} actions={<button className="secondary" onClick={onClose}>К задачам</button>}>
     <img className="brand-wordmark" src="/brand/tasca-ru-green.svg" alt="Таска"/><h2>Дела под рукой</h2><p>Личные и общие задачи в Telegram. Добавляйте задачи, выбирайте исполнителя и следите за сроками.</p><p>Как будете работать?</p>
     <div className="entry-choices"><button className="secondary" onClick={() => onPath('personal')}>Личные задачи</button><button className="secondary" onClick={() => onPath('pair')}>Доска на двоих</button><button className="secondary" onClick={() => onPath('group')}>Доска для группы</button></div>
+    <h2>После первой задачи</h2><p>Правки существующих задач сохраняются автоматически. Перед выходом проверьте статус сохранения. При ошибке связи дождитесь синхронизации; при конфликте сравните версии и выберите нужную.</p>
+    <p>Уведомление исполнителю включается отдельно при назначении. Публикации в группу настраивает администратор. Обычная правка повторяющейся задачи не меняет всю серию — для этого есть отдельное действие.</p>
   </PairScreen>;
   const guide = guides[path];
   return <PairScreen title={guide.title} onBack={() => onPath('help')} error={error} actions={<>
