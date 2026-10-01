@@ -9,6 +9,7 @@ export type Config = {
   production: boolean;
   webhookSecret: string;
   publicUrl: string;
+  publicUrlAliases?: string[];
   botUsername: string;
   telegramApiProxy?: string;
 };
@@ -17,6 +18,16 @@ function positiveInteger(name: string, fallback: number): number {
   const value = Number(process.env[name] ?? fallback);
   if (!Number.isInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`);
   return value;
+}
+
+function publicOrigin(value: string): string {
+  let url: URL;
+  try { url = new URL(value); } catch { throw new Error('Public URL must be an absolute origin'); }
+  const localHttp = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if ((url.protocol !== 'https:' && !localHttp) || url.username || url.password || url.hostname.includes('*') || url.pathname !== '/' || url.search || url.hash) {
+    throw new Error('Public URL must be HTTPS (or loopback HTTP), without credentials, path, query or fragment');
+  }
+  return url.origin;
 }
 
 export function loadConfig(): Config {
@@ -28,6 +39,8 @@ export function loadConfig(): Config {
   if (!databaseUrl) throw new Error('DATABASE_URL is required');
   if (sessionSecret.length < 32) throw new Error('SESSION_SECRET must contain at least 32 characters');
   if (webhookSecret.length < 32) throw new Error('WEBHOOK_SECRET must contain at least 32 characters');
+  const botUsername = (process.env.BOT_USERNAME ?? 'kairostask_bot').replace(/^@/, '');
+  if (!/^[A-Za-z0-9_]{5,32}$/.test(botUsername)) throw new Error('BOT_USERNAME must be a Telegram username');
   return {
     botToken,
     databaseUrl,
@@ -38,8 +51,9 @@ export function loadConfig(): Config {
     port: positiveInteger('PORT', 2240),
     production: process.env.NODE_ENV === 'production',
     webhookSecret,
-    publicUrl: (process.env.PUBLIC_URL ?? 'https://task.kairos-ai.ru').replace(/\/$/, ''),
-    botUsername: (process.env.BOT_USERNAME ?? 'kairostask_bot').replace(/^@/, ''),
+    publicUrl: publicOrigin(process.env.PUBLIC_URL ?? 'https://task.kairos-ai.ru'),
+    publicUrlAliases: process.env.PUBLIC_URL_ALIASES ? [...new Set(process.env.PUBLIC_URL_ALIASES.split(',').map(value => publicOrigin(value.trim())))] : [],
+    botUsername,
     telegramApiProxy: process.env.TELEGRAM_API_PROXY || undefined
   };
 }

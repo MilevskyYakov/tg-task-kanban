@@ -10,10 +10,10 @@ const url=process.env.TEST_DATABASE_URL;
 if (!url) throw new Error('TEST_DATABASE_URL is required');
 const evidence=fileURLToPath(new URL('../../../artifacts/visual-evidence/issue82/',import.meta.url));
 test.use({trace:'off',video:'off',screenshot:'off'});
-for (const width of [390,320]) test(`connections lifecycle, loss recovery and clipboard with real API/DB ${width}`,async ({page})=>{
+for (const width of [390,320]) test(`connections lifecycle, loss recovery and clipboard with real API/DB ${width}`,async ({page,baseURL})=>{
   const db=createDatabase(url);
   const person=await login(db,{id:randomBytes(6).readUIntBE(0,6),first_name:'Тестовый пользователь'},3600,'isolated-visual-secret');
-  const config: Config={botToken:'test',databaseUrl:url,sessionSecret:'isolated-visual-secret',initDataMaxAgeSeconds:60,sessionMaxAgeSeconds:3600,host:'127.0.0.1',port:0,production:false,webhookSecret:'isolated-visual',publicUrl:'http://127.0.0.1:4173',botUsername:'test_bot'};
+  const config: Config={botToken:'test',databaseUrl:url,sessionSecret:'isolated-visual-secret',initDataMaxAgeSeconds:60,sessionMaxAgeSeconds:3600,host:'127.0.0.1',port:0,production:false,webhookSecret:'isolated-visual',publicUrl:baseURL!,botUsername:'test_bot'};
   const app=buildApp(config,db);
   let failure='';
   let release: (()=>void)|undefined;
@@ -34,7 +34,7 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
       if (path==='/api/mcp-connections' && req.method()==='GET' && failure==='list') return route.fulfill({status:503,json:{error:'synthetic list failure'}});
       if (path.startsWith('/api/mcp-connections') && failure==='expired') return route.fulfill({status:401,json:{error:'Войдите снова через Telegram'}});
       if (creating && failure==='create-before') { failure=''; return route.abort('failed'); }
-      const response=await app.inject({method:req.method() as 'GET'|'POST'|'DELETE',url:path,cookies:{session:person.token},headers:{host:'127.0.0.1:4173',...(req.headers().origin ? {origin:req.headers().origin} : {}),...(req.headers()['content-type'] ? {'content-type':req.headers()['content-type']} : {})},payload});
+      const response=await app.inject({method:req.method() as 'GET'|'POST'|'DELETE',url:path,cookies:{session:person.token},headers:{host:new URL(baseURL!).host,...(req.headers().origin ? {origin:req.headers().origin} : {}),...(req.headers()['content-type'] ? {'content-type':req.headers()['content-type']} : {})},payload});
       if ((creating && failure==='create-after') || (revoking && failure==='revoke-after')) { failure=''; return route.abort('failed'); }
       await route.fulfill({status:response.statusCode,contentType:'application/json',body:response.body});
     });
@@ -116,7 +116,7 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
     expect((await help.innerText()).includes(secret)).toBe(false);
     await shot('help-general');
     await help.getByRole('button',{name:'Hermes',exact:true}).click();
-    const commands=["hermes mcp add task_kanban --url 'http://127.0.0.1:4173/mcp' --auth header",'hermes mcp test task_kanban'];
+    const commands=[`hermes mcp add task_kanban --url '${baseURL}/mcp' --auth header`,'hermes mcp test task_kanban'];
     await expect(help.locator('.mcp-command')).toHaveText(commands);
     await expect(help).toContainText('API key / Bearer token');
     await expect(help).toContainText('Ввод скрыт');
@@ -135,8 +135,8 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
     await help.getByRole('button',{name:'Копировать команду проверки',exact:true}).click();
     expect(await page.evaluate(()=>(window as any).mcpCommandCopies)).toEqual(commands);
     for (const [client,program,registration] of [
-      ['Claude Code','claude',"claude mcp add --transport http --scope user task_kanban 'http://127.0.0.1:4173/mcp' --header 'Authorization: Bearer ${TASK_KANBAN_MCP_KEY}'"],
-      ['Codex CLI','codex',"codex mcp add task_kanban --url 'http://127.0.0.1:4173/mcp' --bearer-token-env-var TASK_KANBAN_MCP_KEY"]
+      ['Claude Code','claude',`claude mcp add --transport http --scope user task_kanban '${baseURL}/mcp' --header 'Authorization: Bearer \${TASK_KANBAN_MCP_KEY}'`],
+      ['Codex CLI','codex',`codex mcp add task_kanban --url '${baseURL}/mcp' --bearer-token-env-var TASK_KANBAN_MCP_KEY`]
     ]) {
       const launch=`bash -c 'IFS= read -r -s -p "Ключ доступа: " TASK_KANBAN_MCP_KEY && printf "\\n" && export TASK_KANBAN_MCP_KEY && exec ${program}'`;
       await help.getByRole('button',{name:client,exact:true}).focus();
@@ -172,7 +172,7 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
     await help.getByRole('button',{name:'Общая настройка',exact:true}).click();
     await help.getByRole('button',{name:'Копировать адрес',exact:true}).click();
     await expect(help.getByRole('status')).toHaveText('Адрес скопирован');
-    expect(await page.evaluate(()=>(window as any).mcpCommandCopies.at(-1))).toBe('http://127.0.0.1:4173/mcp');
+    expect(await page.evaluate(()=>(window as any).mcpCommandCopies.at(-1))).toBe(`${baseURL}/mcp`);
     await help.getByRole('button',{name:'Hermes',exact:true}).click();
     if (width===320) {
       const scaling=await page.addStyleTag({content:'html {font-size:200% !important;}'});

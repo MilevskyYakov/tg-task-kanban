@@ -146,7 +146,6 @@ export async function connectChatBoard(db: Database, chatId: number, name: strin
     await client.query(`INSERT INTO publication_schedules (board_id, kind, weekdays, local_time) VALUES
       ($1, 'daily', ARRAY[1,2,3,4,5]::smallint[], '11:00'), ($1, 'weekly', ARRAY[1]::smallint[], '10:30')
       ON CONFLICT DO NOTHING`, [boardId]);
-    if (boardId === candidateId) await client.query('INSERT INTO telegram_entry_deliveries (key, board_id) VALUES ($1, $2)', [`board:${boardId}`, boardId]);
     await client.query('COMMIT');
     return { id: boardId, status: board.rows[0].status };
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }

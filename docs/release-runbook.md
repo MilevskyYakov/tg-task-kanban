@@ -2,6 +2,8 @@
 
 Live cutover выполняется только после явного подтверждения владельца.
 
+Для финального выпуска Таски сначала пройти отдельные gates [адресов, Telegram identity и rollback](tasca-cutover-runbook.md). Этот общий runbook не разрешает промежуточный deploy и не заменяет readback внешних полей. Обычный откат ребрендинга сохраняет действующую БД и записи после переключения; восстановление старого dump не является штатным rollback.
+
 ## 1. Подготовка
 
 Требования: VPS с Docker Compose, HTTPS reverse proxy для `task.kairos-ai.ru`, доступ к BotFather и production `.env` вне Git.
