@@ -12,11 +12,12 @@
     "apps/api/src/telegram.ts": "0891ecb3a38c1d7b7a208b0b6334930080fe0e13d4076cbc743c20edb2ca1038",
     "apps/api/test/chat-board.test.ts": "7c2e9652a0bbaf53190bcb00bf2406f4e0aaad8f7ff849e68297668e3c079508",
     "apps/api/test/bot-tutorial.test.ts": "bdfc2477205de7267dc5c376ccf00174e7a0e4bddb902faefee7e356c845842e",
-    "docs/tasca-bot-content.md": "1dfee08d8c022ec6c1a8cdf638b512d568fbbb6fb1a8bd4b07f21beddc9f4273",
+    "docs/tasca-bot-content.md": "b7e4d6457eb2d90a2b900e3a5c58c3db7333007c2e3cbe91a3d795f37035cd29",
     "docs/tasca-bot-profile.json": "2eb29117baad71c6b7c8e368121ce4b4d2b09c3d8208ec0b38938bbfe9deb71a",
     "docs/release-runbook.md": "b661ca4fc74a0e4ffe09d4e52935a8ff151b939facc7c9533022195cdb0001a0",
-    "docs/tasca-cutover-runbook.md": "3a6c38ed35d9b9fc31e18c80fe095fe10d420eff0785c6743cfddb6cfbe208d1",
-    "artifacts/evidence/issue-135-bot-tutorial-report.md": "26ce8b7827dbd4991cb3b50991eebf346990dc58a2cd168a162c28d5a64dd181"
+    "docs/tasca-cutover-runbook.md": "4017655d3981986c08d3e75051c31650adb87c6f194c05867038b3223f154615",
+    "artifacts/evidence/issue-135-bot-tutorial-report.md": "7929cae8a4d2f1fb792dc999e840a13e81be55e4ce14420e340ef5fefab096dd",
+    "artifacts/evidence/issue-135-bot-profile-readback.json": "af72da2c90cadec17f64993e34b1b516e8686c3eeb8adbdf24aefaf5fff2d46d"
   },
   "checks": {
     "unit": 43,
@@ -49,7 +50,8 @@
     "artifacts/evidence/tasca-preparation-runtime/issue-135-tutorial/profile-check.json": "d28946ce167a7ada1950c1cd8d84f60ae3739ca404935f58cad91d269b8bfad7",
     "artifacts/evidence/tasca-preparation-runtime/issue-135-tutorial/audit.json": "a48beeddd3ced97fef73d88f9a4e452536300e803e1bd1e9bafb895033749900"
   },
-  "externalFieldsApplied": false,
+  "externalFieldsApplied": true,
+  "externalFieldsEvidence": "artifacts/evidence/issue-135-bot-profile-readback.json",
   "telegramDeviceSmoke": false,
   "productionChanged": false,
   "profile": {
