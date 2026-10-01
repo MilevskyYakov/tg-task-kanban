@@ -68,6 +68,8 @@ npm run test:cutover
 
 Это **не** проверка production PostgreSQL 17, TLS, Telegram devices, DNS или multi-bot migration. Старый код после rollback не поддерживает новый MCP alias: доказана работоспособность прежнего входа и сохранность новых данных, не доступность обоих origin на старом коде.
 
+Повторная интеграционная приёмка после исправления #164 и интеграции PR #166: кандидат `6ebf1ab1cc49a599258e60cc784907c44ba1d12f`, 70/70 unit/isolation и 243/243 browser-сценария в каждом из production/development режимов, lint/typecheck/build PASS. Адресный HTTP/MCP rollback и dump/restore повторены на отдельной синтетической БД: 20 таблиц совпали, новая задача сохранена. Отчёт и source hashes: `artifacts/evidence/tasca-preparation-closeout.md` и `.json`. Это не закрывает внешние gates ниже и не разрешает deploy.
+
 ## 5. До GO: оператор и владелец
 
 - [x] Владелец выбрал отдельного `@tasca_app_bot` и новый закреп вместо совместимости старых Telegram-ссылок. Это решение, не PASS полной миграционной приёмки.
