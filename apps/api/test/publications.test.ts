@@ -104,6 +104,8 @@ test('publications honor timezone, deduplicate runs, group tasks and keep deep l
   const messages = await renderPublication(db, boardId, 'daily', ['waiting'], 'test_bot', 'Europe/Moscow', now);
   assert.match(messages.join(''), /Иван/);
   assert.match(messages.join(''), /Команда &lt;A&gt;/);
+  assert.match(messages.join(''), /<footer>Таска · /);
+  assert.match((await renderPublication(db, boardId, 'daily', ['done'], 'test_bot', 'Europe/Moscow', now)).join(''), /Активных задач нет.*<\/p>\n<footer>Таска · /);
   assert.match(messages.join(''), /Сверить &lt;план&gt;/);
   assert.match(messages.join(''), /🔴/);
   assert.match(messages.join(''), /Блокер/);

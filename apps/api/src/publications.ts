@@ -109,7 +109,7 @@ export async function renderPublication(db: Database, boardId: string, kind: Pub
   const title = `${kind === 'daily' ? 'ПЛАН ДНЯ' : 'НЕДЕЛЯ'} · ${escapeHtml(board.rows[0].name)}`;
   const dateLine = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', timeZone: timezone }).format(now);
   const parts = [`<h1>${title}</h1>`];
-  if (!tasks.length) return [`${parts.join('\n')}\n<p>Активных задач нет.</p>\n<footer>Задачник · ${dateLine}</footer>`];
+  if (!tasks.length) return [`${parts.join('\n')}\n<p>Активных задач нет.</p>\n<footer>Таска · ${dateLine}</footer>`];
   const count = (predicate: (task: ReportTask) => boolean) => tasks.filter(predicate).length;
   parts.push(kind === 'daily'
     ? `<p>${dateLine} · Активно: <b>${count((task: ReportTask) => task.status !== 'done')}</b> · Блокеров: <b>${count((task: ReportTask) => task.status === 'waiting')}</b> · Просрочено: <b>${count((task: ReportTask) => task.overdue)}</b></p>`
@@ -140,7 +140,7 @@ export async function renderPublication(db: Database, boardId: string, kind: Pub
     const lines = backlogRows.rows.map((task: {id: string; title: string; total: string}) => taskLink(task, botUsername, boardId));
     parts.push(`<h2>Бэклог · ${backlogRows.rows[0].total}</h2>`, '<p>Любую можно взять себе.</p>', listWithTail(lines, 3));
   }
-  const html = `${parts.join('\n')}\n<footer>Задачник · ${dateLine}</footer>`;
+  const html = `${parts.join('\n')}\n<footer>Таска · ${dateLine}</footer>`;
   if (html.length > 32_768) throw new Error('publication exceeds Telegram rich message limit');
   return [html];
 }
