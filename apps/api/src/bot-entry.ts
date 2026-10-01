@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import type { Config } from './config.js';
 import { withBoardLock, type Database } from './db.js';
 import { escapeHtml, telegramCall, TelegramRejectedError } from './telegram.js';
+import { tutorialButton, tutorialPage, type TutorialPage } from './bot-tutorial.js';
 
 type Delivery = 'sent' | 'failed' | 'uncertain' | 'sending' | 'skipped';
 
@@ -14,21 +15,27 @@ function entryKey(config: Config, key: string) {
 
 // Telegram has no send idempotency key. Unknown outcomes require operator inspection,
 // never an automatic resend. A process crash after claiming is also an unknown outcome.
-async function deliverEntry(db: Database, config: Config, key: string, prepare: () => Promise<{method: string; body: unknown}>): Promise<Delivery> {
+async function deliverEntry(db: Database, config: Config, key: string, prepare: () => Promise<{method: string; body: unknown}>, retryFailed = true): Promise<Delivery> {
   await db.query(`UPDATE telegram_entry_deliveries SET status = 'uncertain', error_code = 'interrupted'
     WHERE key = $1 AND status = 'sending' AND updated_at < now() - interval '2 minutes'`, [key]);
   const claimed = await db.query(`UPDATE telegram_entry_deliveries d SET status = 'sending', attempts = attempts + 1, updated_at = now(), error_code = NULL
-    WHERE key = $1 AND status IN ('pending', 'failed')
-      AND (board_id IS NULL OR EXISTS (SELECT 1 FROM boards b WHERE b.id = d.board_id AND b.status <> 'frozen')) RETURNING key`, [key]);
+    WHERE key = $1 AND (status = 'pending' OR ($2 AND status = 'failed'))
+      AND (board_id IS NULL OR EXISTS (SELECT 1 FROM boards b WHERE b.id = d.board_id AND b.status <> 'frozen')) RETURNING key`, [key, retryFailed]);
   if (!claimed.rowCount) {
     const row = (await db.query<{status: Delivery}>('SELECT status FROM telegram_entry_deliveries WHERE key = $1', [key])).rows[0];
+    if (!retryFailed && row?.status === 'failed') return 'failed';
     return row && ['sent', 'sending', 'uncertain'].includes(row.status) ? row.status : 'skipped';
   }
   let attempted = false;
   try {
     const { method, body } = await prepare();
     attempted = true;
-    const result = await telegramCall<{message_id: number}>(config.botToken, method, body);
+    const result = await telegramCall<{message_id: number}>(config.botToken, method, body).catch((error) => {
+      if (method === 'editMessageText' && error instanceof TelegramRejectedError && error.messageNotModified) {
+        return { message_id: (body as {message_id: number}).message_id };
+      }
+      throw error;
+    });
     if (!Number.isSafeInteger(result.message_id)) throw new Error('Message receipt missing');
     await db.query("UPDATE telegram_entry_deliveries SET status = 'sent', message_id = $2, updated_at = now() WHERE key = $1", [key, result.message_id]);
     return 'sent';
@@ -70,12 +77,50 @@ export async function sendGroupWelcome(db: Database, config: Config, chatId: num
 export async function sendBotEntry(db: Database, config: Config, messageId: number, chatId: number, help: boolean) {
   const key = entryKey(config, `command:${createHash('sha256').update(`${chatId}:${messageId}`).digest('hex')}`);
   await db.query('INSERT INTO telegram_entry_deliveries (key) VALUES ($1) ON CONFLICT DO NOTHING', [key]);
-  const button = (text: string, start: string) => [{ text, url: `https://t.me/${config.botUsername}?startapp=${start}` }];
   return deliverEntry(db, config, key, async () => ({ method: 'sendMessage', body: {
-    chat_id: chatId, parse_mode: 'HTML',
+    chat_id: chatId, parse_mode: 'HTML', ...entryMessage(config, help)
+  } }));
+}
+
+function entryMessage(config: Config, help: boolean): TutorialPage {
+  const button = (text: string, start: string) => [{ text, url: `https://t.me/${config.botUsername}?startapp=${start}` }];
+  return {
     text: help
       ? '<b>Таска · как начать</b>\n\n1. Выберите доску: личную, на двоих по приглашению или для группы.\n2. Создайте задачу кнопкой «+». Исполнитель и срок необязательны. Список задач можно вставить в бэклоге.\n3. Возьмите задачу себе или назначьте исполнителя. Меняйте статус по мере работы.\n\nИзменения существующей задачи сохраняются автоматически. Перед выходом проверьте статус сохранения; при ошибке связи дождитесь синхронизации, при конфликте выберите нужную версию.\n\nУведомление исполнителю отправляется только по вашему выбору при назначении. Публикации в группу настраивает администратор.\n\nПомощь всегда доступна командой /help и в настройках приложения.'
-      : '<b>Таска — дела под рукой</b>\n\nЛичные и общие задачи в Telegram. Создавайте задачи, назначайте исполнителей и сроки, следите за выполнением.\n\nВыберите, как будете работать. Внутри — короткая инструкция и переход к первой задаче.',
-    reply_markup: { inline_keyboard: [button('Личные задачи', 'personal'), button('Доска на двоих', 'pair'), button('Доска для группы', 'group'), button('Как начать', 'help')] }
-  } }));
+      : '<b>Таска — дела под рукой</b>\n\nЛичные и общие задачи в Telegram. Создавайте задачи, назначайте исполнителей и сроки, следите за выполнением.\n\nВпервые здесь? Пройдите короткое обучение прямо в этом чате: зачем нужен задачник и как начать. Или сразу выберите доску ниже.',
+    reply_markup: { inline_keyboard: [[tutorialButton(help ? 'Пройти обучение ещё раз' : 'Как пользоваться Таской', 'intro')], button('Личные задачи', 'personal'), button('Доска на двоих', 'pair'), button('Доска для группы', 'group'), button('Как начать', 'help')] }
+  };
+}
+
+export type TutorialCallback = {
+  id: string;
+  from: {id: number};
+  data?: unknown;
+  message?: {message_id: number; date: number; from?: {id: number; is_bot: boolean}; chat: {id: number; type: string}; reply_markup?: {inline_keyboard?: {callback_data?: unknown}[][]}};
+};
+
+export async function sendBotTutorial(db: Database, config: Config, callback: TutorialCallback): Promise<Delivery> {
+  const message = callback.message;
+  const page = callback.data === 'learn:v1:skip' ? entryMessage(config, false) : tutorialPage(callback.data, config.botUsername);
+  const keyboard = message?.reply_markup?.inline_keyboard;
+  const isTutorial = Array.isArray(keyboard) && keyboard.some(row => Array.isArray(row) && row.some(button =>
+    button?.callback_data === 'learn:v1:skip' || tutorialPage(button?.callback_data, config.botUsername) !== null));
+  let delivery: Delivery = 'skipped';
+  if (page && isTutorial && message?.chat?.type === 'private' && message.chat.id === callback.from.id &&
+    Number.isSafeInteger(message.message_id) && message.message_id > 0 && Number.isSafeInteger(message.date) && message.date > 0 &&
+    message.from?.is_bot === true && message.from.id === Number(config.botToken.split(':', 1)[0])) {
+    const key = entryKey(config, `tutorial:${createHash('sha256').update(callback.id).digest('hex')}`);
+    await db.query('INSERT INTO telegram_entry_deliveries (key) VALUES ($1) ON CONFLICT DO NOTHING', [key]);
+    delivery = await deliverEntry(db, config, key, async () => ({ method: 'editMessageText', body: {
+      chat_id: message.chat.id, message_id: message.message_id, parse_mode: 'HTML', ...page
+    } }), false);
+  }
+  // An expired/failed callback answer must never turn an already edited message into a retry.
+  try {
+    await telegramCall(config.botToken, 'answerCallbackQuery', {
+      callback_query_id: callback.id, cache_time: 0, show_alert: delivery === 'skipped' || delivery === 'failed' || delivery === 'uncertain',
+      text: delivery === 'sent' ? '' : delivery === 'sending' ? 'Шаг уже обновляется.' : 'Не удалось обновить шаг. Откройте обучение заново через /help в личном чате бота.'
+    });
+  } catch { /* The user can restart with /help; no extra message is sent. */ }
+  return delivery;
 }

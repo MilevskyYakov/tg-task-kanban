@@ -1,0 +1,94 @@
+{
+  "issue": 135,
+  "baseCommit": "b389fe232ccc4960038fd7c5508e7bba724c610a",
+  "branch": "MilevskyYakov/issue-135-bot-tutorial",
+  "codeState": "verified source snapshot for publication; exact published commit/PR tracked in issue #135; no merge or deploy",
+  "sources": {
+    "README.md": "8c410508579171a73e797a4dfe706329c8f67e0fcf937e55e9caea93ce12c221",
+    "package.json": "88db97ba52b7a4f2186e4e040330c80bc94a165cedb589d30b8416af843474dd",
+    "apps/api/src/app.ts": "ed5abe5ec17380d7df8cf2d75a25cfa533613c5cc0b3b5fad9d63276aafa77f3",
+    "apps/api/src/bot-entry.ts": "d215d13bbcb69254a2711ae691e37b9a1149d0121e9d381fb7a400c487e22573",
+    "apps/api/src/bot-tutorial.ts": "c8b15d1d5b8a35267661243e4b41af1623ee1114ae6b4349184ef002cb744c75",
+    "apps/api/src/telegram.ts": "0891ecb3a38c1d7b7a208b0b6334930080fe0e13d4076cbc743c20edb2ca1038",
+    "apps/api/test/chat-board.test.ts": "7c2e9652a0bbaf53190bcb00bf2406f4e0aaad8f7ff849e68297668e3c079508",
+    "apps/api/test/bot-tutorial.test.ts": "bdfc2477205de7267dc5c376ccf00174e7a0e4bddb902faefee7e356c845842e",
+    "docs/tasca-bot-content.md": "1dfee08d8c022ec6c1a8cdf638b512d568fbbb6fb1a8bd4b07f21beddc9f4273",
+    "docs/tasca-bot-profile.json": "2eb29117baad71c6b7c8e368121ce4b4d2b09c3d8208ec0b38938bbfe9deb71a",
+    "docs/release-runbook.md": "b661ca4fc74a0e4ffe09d4e52935a8ff151b939facc7c9533022195cdb0001a0",
+    "docs/tasca-cutover-runbook.md": "3a6c38ed35d9b9fc31e18c80fe095fe10d420eff0785c6743cfddb6cfbe208d1",
+    "artifacts/evidence/issue-135-bot-tutorial-report.md": "26ce8b7827dbd4991cb3b50991eebf346990dc58a2cd168a162c28d5a64dd181"
+  },
+  "checks": {
+    "unit": 43,
+    "apiDb": 28,
+    "total": 71,
+    "lint": "PASS",
+    "typecheck": "PASS",
+    "build": "PASS",
+    "publicEntry": 1,
+    "browserDevelopment": {
+      "startTime": "2026-10-01T07:41:23.646Z",
+      "duration": 774533.673,
+      "expected": 243,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    },
+    "browserRetries": 0,
+    "browserProduction": "not run in this session"
+  },
+  "rawEvidence": {
+    "artifacts/evidence/tasca-preparation-runtime/issue-135-tutorial/baseline.log": "afa4a0268da6642e0e5776a0e8c7aec08cd3cba645361213a35e1df98973a91c",
+    "artifacts/evidence/tasca-preparation-runtime/issue-135-tutorial/red.log": "f7102818d511ac64296ec9d5f8c65176982058cd8a81083b69b25407409fdbeb",
+    "artifacts/evidence/tasca-preparation-runtime/issue-135-tutorial/tests.log": "442c40c2a22a65bfcd9678a99a2da32fa362dae0c4c4829811e78e98bd4e2f28",
+    "artifacts/evidence/tasca-preparation-runtime/issue-135-tutorial/lint.log": "f27c57d111ab615aefb7b53e78a6b4d58087630d3a0142331957e136bcfb25ff",
+    "artifacts/evidence/tasca-preparation-runtime/issue-135-tutorial/typecheck.log": "335bd39015b554dbf591809dad6e83edbc369c6c4fc63dd0169349145cc5543b",
+    "artifacts/evidence/tasca-preparation-runtime/issue-135-tutorial/build.log": "2055aa5cc0f010dfc0ed6b10dfeeb0dac0ad02ecfa42e22da43b5526fa7483d1",
+    "artifacts/evidence/tasca-preparation-runtime/issue-135-tutorial/public-entry.log": "ce30db380a8a5aa705c0574f8d8153d0d47e2c63b19e4019075b525f42fe19ce",
+    "artifacts/evidence/tasca-preparation-runtime/issue-135-tutorial/browser.json": "f2c9ef77dee864d6e104c1fb22117a1ec2b2c560d994aa54bc2bf781cd697ba5",
+    "artifacts/evidence/tasca-preparation-runtime/issue-135-tutorial/profile-check.json": "d28946ce167a7ada1950c1cd8d84f60ae3739ca404935f58cad91d269b8bfad7",
+    "artifacts/evidence/tasca-preparation-runtime/issue-135-tutorial/audit.json": "a48beeddd3ced97fef73d88f9a4e452536300e803e1bd1e9bafb895033749900"
+  },
+  "externalFieldsApplied": false,
+  "telegramDeviceSmoke": false,
+  "productionChanged": false,
+  "profile": {
+    "profileLengths": {
+      "name": 16,
+      "short_description": 61,
+      "description": 213
+    },
+    "commands": [
+      {
+        "command": "start",
+        "description": "Открыть Таску и выбрать доску"
+      },
+      {
+        "command": "help",
+        "description": "Как начать и работать с задачами"
+      }
+    ],
+    "assets": [
+      {
+        "path": "artifacts/ux/tasca-v07/assets/bot-avatar-512.png",
+        "bytes": 256256,
+        "widthHeight": [
+          512,
+          512
+        ],
+        "sha256": "0f7456be40a00b8c7f7a25caf021c77124ee8eee8691d23eb8b741fa954e49df"
+      },
+      {
+        "path": "artifacts/ux/tasca-v07/assets/group-welcome.png",
+        "bytes": 938723,
+        "widthHeight": [
+          1672,
+          941
+        ],
+        "sha256": "90cf42a175198eb232a0582e0ce792b2675db1042897a4637fda7804b792c456"
+      }
+    ]
+  },
+  "browserInventorySha256": "72035dafa33d7325714eee493f948c1ec1703e36143ee72aa1e23e60fe3d29c7",
+  "browserInventoryCount": 243
+}

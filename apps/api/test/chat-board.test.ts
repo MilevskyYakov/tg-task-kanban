@@ -69,7 +69,7 @@ test('new bot welcomes the existing board independently of legacy delivery and p
     await Promise.all([sendBotEntry(db, config, stamp, stamp, false), sendBotEntry(db, config, stamp, stamp, false)]);
     await sendBotEntry(db, { ...config, botToken: '200000000:rotated-synthetic-token' }, stamp, stamp, false);
     assert.equal(messages.length, 2, 'private command receipts must also be isolated by bot identity');
-    assert.deepEqual(messages.map(message => new URL(message.reply_markup.inline_keyboard[0][0].url).pathname), ['/old_test_bot', '/tasca_test_bot']);
+    assert.deepEqual(messages.map(message => new URL(message.reply_markup.inline_keyboard[1][0].url).pathname), ['/old_test_bot', '/tasca_test_bot']);
     await sendGroupWelcome(db, oldConfig, chatId);
     assert.equal(photos.length, 2, 'two scoped bot identities must not suppress each other');
   } finally {
@@ -244,15 +244,15 @@ test('bot entry: one photo, stable launch, admin-only setup and safe delivery ou
     assert.equal(messages.length, 1);
     assert.match(messages[0].text, /Таска — дела под рукой/);
     assert.match(messages[0].text, /Личные и общие задачи/);
-    assert.deepEqual(messages[0].reply_markup.inline_keyboard.map((row: any[]) => row[0].text), ['Личные задачи', 'Доска на двоих', 'Доска для группы', 'Как начать']);
-    assert.deepEqual(messages[0].reply_markup.inline_keyboard.map((row: any[]) => new URL(row[0].url).searchParams.get('startapp')), ['personal', 'pair', 'group', 'help']);
+    assert.deepEqual(messages[0].reply_markup.inline_keyboard.map((row: any[]) => row[0].text), ['Как пользоваться Таской', 'Личные задачи', 'Доска на двоих', 'Доска для группы', 'Как начать']);
+    assert.deepEqual(messages[0].reply_markup.inline_keyboard.slice(1).map((row: any[]) => new URL(row[0].url).searchParams.get('startapp')), ['personal', 'pair', 'group', 'help']);
     await webhook(command(11, '/help@test_bot'));
     assert.match(messages[1].text, /настройках приложения/);
     assert.match(messages[1].text, /при конфликте выберите нужную версию/);
     assert.match(messages[1].text, /только по вашему выбору/);
     for (const message of messages) {
       assert.ok(message.text.length < 4096);
-      assert.ok(message.reply_markup.inline_keyboard.every((row: any[]) => new URL(row[0].url).pathname === '/test_bot'));
+      assert.ok(message.reply_markup.inline_keyboard.slice(1).every((row: any[]) => new URL(row[0].url).pathname === '/test_bot'));
     }
     await webhook(command(12, '/help@other_bot'));
     await webhook(command(13, '/start', 'supergroup'));

@@ -43,10 +43,10 @@ DATABASE_URL=postgres://task:task@localhost:5432/task npm run migrate
 ```bash
 curl --fail -X POST "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
   -H 'content-type: application/json' \
-  -d "{\"url\":\"https://task.kairos-ai.ru/api/telegram/webhook\",\"secret_token\":\"$WEBHOOK_SECRET\",\"allowed_updates\":[\"message\",\"my_chat_member\"]}"
+  -d "{\"url\":\"https://task.kairos-ai.ru/api/telegram/webhook\",\"secret_token\":\"$WEBHOOK_SECRET\",\"allowed_updates\":[\"message\",\"my_chat_member\",\"callback_query\"]}"
 ```
 
-`/start` предлагает личные задачи, доску на двоих и доску для группы. `/help` и «Помощь» в настройках приложения повторно открывают инструкции.
+`/start` предлагает пошаговое обучение в личном чате и прямые входы в личные задачи, доску на двоих и доску для группы. `/help` повторно запускает обучение; «Помощь» в настройках приложения сохраняет инструкции Mini App. Для кнопок обучения webhook должен принимать `callback_query`; после изменения проверить `getWebhookInfo`. Применение webhook остаётся частью отдельно разрешённого deploy.
 
 Боту нужны права читать состав чата для серверной проверки актуального статуса администратора. При первом подключении новой группы бот отправляет одно фото с подписью «Таска · {Название доски}», краткой инструкцией и кнопкой «Открыть задачи». Пользователь закрепляет сообщение сам. Его `startapp`-токен ведёт на первичную настройку для администратора, ожидание для участника, затем — прямо к задачам. Повторы webhook и повторная активация не меняют успешную ссылку; старые закрепы не мигрируют. Неопределённый результат отправки требует ручной проверки, а не автоматической повторной рассылки. Проверки, диагностика и Telegram device gate: [`docs/issue-80-verification.md`](docs/issue-80-verification.md).
 
