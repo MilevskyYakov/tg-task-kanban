@@ -48,6 +48,78 @@ export function creationHaptic(enabled: boolean): void {
   } catch { /* Unsupported device feedback must not affect creation. */ }
 }
 
+// Keyboard-aware layout is shared by task creation and task details. Focus alone
+// is not a keyboard signal (desktop, hardware keyboards, and pinch zoom).
+export function useTaskKeyboardViewport(): void {
+  useEffect(() => {
+    const root = document.documentElement;
+    const viewport = window.visualViewport;
+    let fullHeight = window.innerHeight;
+    let width = window.innerWidth;
+    let keyboardOpen = false;
+    let frame = 0;
+    const update = () => {
+      if (viewport && Math.abs(viewport.scale - 1) > 0.05) return;
+      const active = document.activeElement;
+      const editable = (active instanceof HTMLTextAreaElement || (active instanceof HTMLInputElement && /^(text|search|email|url|tel|number|password)$/.test(active.type)))
+        && !active.readOnly && !active.disabled && active.closest('.create-screen, .task-details');
+      const height = Math.min(window.innerHeight, viewport?.height ?? window.innerHeight);
+      const top = viewport?.offsetTop ?? 0;
+      if (width !== window.innerWidth) { width = window.innerWidth; fullHeight = window.innerHeight; }
+      if (!editable && !keyboardOpen) fullHeight = window.innerHeight;
+      fullHeight = Math.max(fullHeight, window.innerHeight);
+      // Ignore browser chrome changes; retain layout through submit/blur until
+      // the keyboard actually closes, so the tapped button cannot jump away.
+      keyboardOpen = fullHeight - height > 120 && Boolean(editable || keyboardOpen);
+      root.toggleAttribute('data-task-keyboard', keyboardOpen);
+      if (!keyboardOpen) {
+        root.style.removeProperty('--task-input-height');
+        root.style.removeProperty('--task-keyboard-inset');
+        return;
+      }
+      root.style.setProperty('--task-input-height', `${Math.max(44, height - 48)}px`);
+      root.style.setProperty('--task-keyboard-inset', `${Math.max(0, window.innerHeight - height - top)}px`);
+      if (!editable || active.closest('[role="dialog"]')) return;
+      // WebKit may leave an autosized textarea scrolled to its beginning after
+      // it is capped. Reveal an end-caret without changing selection or drafts.
+      if (active instanceof HTMLTextAreaElement && active.selectionStart === active.selectionEnd && active.selectionEnd === active.value.length) {
+        active.scrollTop = active.scrollHeight;
+      }
+      // Keep the bounded editor visible. Do not fight intentional page scrolling.
+      const rect = active.getBoundingClientRect();
+      const delta = rect.top < top + 12 ? rect.top - top - 12
+        : rect.bottom > top + height - 12 ? rect.bottom - top - height + 12 : 0;
+      if (Math.abs(delta) > 1) window.scrollBy({ top: delta, behavior: 'instant' });
+    };
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        update();
+        // The first scroll can be clamped to the old document height until the
+        // keyboard padding is committed. Recheck once, not on manual scrolling.
+        if (keyboardOpen) frame = requestAnimationFrame(update);
+      });
+    };
+    document.addEventListener('focusin', schedule);
+    document.addEventListener('focusout', schedule);
+    document.addEventListener('input', schedule);
+    window.addEventListener('resize', schedule);
+    viewport?.addEventListener('resize', schedule);
+    schedule();
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener('focusin', schedule);
+      document.removeEventListener('focusout', schedule);
+      document.removeEventListener('input', schedule);
+      window.removeEventListener('resize', schedule);
+      viewport?.removeEventListener('resize', schedule);
+      root.removeAttribute('data-task-keyboard');
+      root.style.removeProperty('--task-input-height');
+      root.style.removeProperty('--task-keyboard-inset');
+    };
+  }, []);
+}
+
 export function useTelegramEnvironment(): boolean {
   const [online, setConnection] = useState(() => navigator.onLine);
 

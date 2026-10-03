@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { buildApp } from '../../api/src/app';
 import { createDatabase, createTask, login } from '../../api/src/db';
 import type { Config } from '../../api/src/config';
+import { expectEditorAboveKeyboard, setKeyboardViewport } from './keyboard-fixture';
 
 const evidence = fileURLToPath(new URL('../../../artifacts/visual-evidence/', import.meta.url));
 const board = { id: 'board-1', name: 'Task Kanban', type: 'personal', status: 'active', role: 'owner' };
@@ -97,6 +98,49 @@ async function openDetails(page: Page, width: number, options: DetailsOptions = 
   await expect(page.getByRole('heading', { name: 'Детали задачи' })).toBeAttached();
   return requests;
 }
+
+test.describe('keyboard viewport', () => {
+  test('short card uses the new scroll range after keyboard padding changes', async ({ page }) => {
+    await mockDetails(page, { taskOverrides: { description: 'Строка описания\n'.repeat(30) } });
+    await page.route('**/collaboration', (route) => route.fulfill({ json: { checklist: [], comments: [], attachments: [], timeline: [] } }));
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.goto('/');
+    await page.evaluate(() => document.fonts.ready);
+    await page.getByRole('button', { name: /Подготовить UX-спецификацию/ }).first().click();
+    await page.locator('.detail-description-actions').getByRole('button', { name: 'Изменить', exact: true }).click();
+    await setKeyboardViewport(page, 360, 24);
+    const description = page.getByRole('textbox', { name: 'Описание', exact: true });
+    await expectEditorAboveKeyboard(description, 360, 24);
+    await expect.poll(() => description.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  });
+  for (const width of [320, 390]) test(`long description and comment stay above the keyboard ${width}`, async ({ page, browserName }) => {
+    await openDetails(page, width, { taskOverrides: { description: 'Строка длинного описания\n'.repeat(40) } });
+    await page.locator('.detail-description-actions').getByRole('button', { name: 'Изменить', exact: true }).click();
+    const description = page.getByRole('textbox', { name: 'Описание', exact: true });
+    await expect(description).toBeFocused();
+    await setKeyboardViewport(page, 360, 24);
+    await expect(page.locator('.comment-composer')).toHaveCSS('position', 'static');
+    await expectEditorAboveKeyboard(description, 360, 24);
+    await page.keyboard.type('Дополнение');
+    await expect(description).toHaveValue('Строка длинного описания\n'.repeat(40) + 'Дополнение');
+    await expectEditorAboveKeyboard(description, 360, 24);
+    await expect.poll(() => description.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await mkdir(evidence, { recursive: true });
+    await page.screenshot({ path: `${evidence}/keyboard-details-${browserName}-${width}.png`, clip: { x: 0, y: 24, width, height: 360 } });
+    await description.evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(3, 3));
+    await page.keyboard.press('KeyX');
+    expect(await description.evaluate((element: HTMLTextAreaElement) => element.selectionStart)).toBe(4);
+    await expectEditorAboveKeyboard(description, 360, 24);
+    const comment = page.locator('.comment-composer input:not([type=file])');
+    await comment.evaluate((element: HTMLInputElement) => element.focus({ preventScroll: true }));
+    await expectEditorAboveKeyboard(comment, 360, 24);
+    await page.keyboard.type('Черновик комментария');
+    await expect(comment).toHaveValue('Черновик комментария');
+    await setKeyboardViewport(page, 844);
+    await expect(page.locator('.comment-composer')).toHaveCSS('position', 'fixed');
+    await expect(comment).toHaveValue('Черновик комментария');
+  });
+});
 
 async function flushAutosave(page: Page) {
   // The save-state line announces the flush result; wait until it settles on «Сохранено»
