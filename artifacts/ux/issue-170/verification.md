@@ -6,7 +6,9 @@
 
 Первый предрелизный полный прогон: **248 PASS / 1 FAIL** (`release-browser.log`). Ошибка `Fastify has already been closed and cannot be reopened` возникла в `backlog.spec.ts`: страница оставалась открытой после закрытия тестового API. Применён существующий соседний порядок очистки — сначала закрыть страницы, затем Fastify, затем очистить БД. Тот же порядок исправлен в backlog, pair, entry, MCP и details; assertions продукта и retries не ослаблены. Backlog после исправления: **6/6 PASS**, по три повтора каждой ширины (`teardown-results.json`).
 
-Свежие unit/integration: **45 + 28 PASS**, lint/typecheck/build/public-entry/diff-check — PASS. Полный итоговый браузерный прогон выполняется на исправленных тестах; результат будет добавлен до merge.
+Свежие unit/integration: **45 + 28 PASS**, lint/typecheck/build/public-entry/diff-check — PASS. Полный итоговый браузерный прогон на исправленных тестах: **249/249 PASS**, без skipped, failures и retries (`release-final-results.json`, `release-final.log`, runtime/test-код commit `27636c5`).
+
+Перед merge обнаружено параллельное продвижение `main`: `6197b8c`, PR #173 / Issue #171. В его описании также подтверждено разрешение владельца на frontend deploy. Текущий результат 249/249 относится только к #170 на прежней базе, не к объединённому snapshot. Для безопасной общей доставки нужно определить одного владельца deploy, интегрировать новый `main` и проверить объединённую версию. До разрешения этой координации PR #172 остаётся draft; production данной задачей не изменён. Серверные скрипты подготовки и переключения сохранены только локально в ignored evidence, не запускались.
 
 Production preflight: app закреплён на `sha256:7fb7c02e6ce70cf7be78c80569d323fe81baddfa43c79af6efb8aa0440f22690`, DB и polling consumer healthy. Серверный checkout содержит локальный runtime Compose и старее фактического runtime. Выпуск ограничен web-сборкой из слитого коммита поверх текущего image; API/dependencies/transport сохраняются побайтово, проверяются до переключения. БД, consumer, nginx и secrets не обновляются. Обратная операция возвращает прежний image/Compose с действующей БД.
 
