@@ -7,6 +7,8 @@ type TelegramWebApp = {
   ready(): void;
   expand(): void;
   close?(): void;
+  isVersionAtLeast?(version: string): boolean;
+  HapticFeedback?: { impactOccurred(style: 'soft'): unknown };
   openTelegramLink?(url: string): void;
   onEvent?(event: 'themeChanged', listener: () => void): void;
   offEvent?(event: 'themeChanged', listener: () => void): void;
@@ -35,6 +37,15 @@ export function writeStorage(key: string, value: string): boolean {
 export function removeStorage(key: string): void {
   try { localStorage.removeItem(key); }
   catch { /* Storage may be unavailable inside a Telegram WebView. */ }
+}
+
+// Telegram 6.1+: optional, device-dependent feedback, never part of saving.
+export function creationHaptic(enabled: boolean): void {
+  if (!enabled || document.visibilityState !== 'visible') return;
+  try {
+    const app = window.Telegram?.WebApp;
+    if (app?.isVersionAtLeast?.('6.1')) app.HapticFeedback?.impactOccurred('soft');
+  } catch { /* Unsupported device feedback must not affect creation. */ }
 }
 
 export function useTelegramEnvironment(): boolean {

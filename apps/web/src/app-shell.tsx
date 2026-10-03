@@ -36,9 +36,10 @@ export function Icon({ name }: { name: IconName }) {
   return <svg className="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
 
-export function AppShell({ children, message, navigation, navigate, hideNavigation = false }: { children: ReactNode; message: string; navigation: NavigationState; navigate: (next: NavigationState) => void; hideNavigation?: boolean }) {
+export function AppShell({ children, message, announcement = '', navigation, navigate, hideNavigation = false }: { children: ReactNode; message: string; announcement?: string; navigation: NavigationState; navigate: (next: NavigationState) => void; hideNavigation?: boolean }) {
   return <main className={`app-shell${hideNavigation ? ' fullscreen' : ''}`}>
     <EnvironmentStatus/>
+    <span className="creation-announcement" role={announcement ? 'status' : undefined} aria-live="polite" aria-atomic="true">{announcement}</span>
     <div className="app-content">{children}</div>
     {message && <p className="app-message" role="status">{message}</p>}
     {!hideNavigation && <BottomNavigation navigation={navigation} navigate={navigate}/>}
@@ -156,7 +157,7 @@ export function Badge({ children, tone = 'neutral' }: { children: ReactNode; ton
 }
 
 export function TasksScreen({ children, boardName, onSelectBoard }: { children: ReactNode; boardName: string; onSelectBoard: () => void }) {
-  return <><header className="page-header"><div className="title-row"><h1>Задачи</h1></div><button className="board-selector" onClick={onSelectBoard}>{boardName}<Icon name="chevron"/></button></header>{children}</>;
+  return <><header className="page-header"><div className="title-row"><h1 tabIndex={-1}>Задачи</h1></div><button className="board-selector" onClick={onSelectBoard}>{boardName}<Icon name="chevron"/></button></header>{children}</>;
 }
 
 export function SettingsScreen({ children, title = 'Настройки', subtitle }: { children: ReactNode; title?: string; subtitle?: string }) {
