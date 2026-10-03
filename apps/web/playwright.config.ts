@@ -14,7 +14,7 @@ export default defineConfig({
     browserName: 'chromium',
     colorScheme: 'dark',
     locale: 'ru-RU',
-    reducedMotion: 'reduce'
+    contextOptions: { reducedMotion: 'reduce' }
   },
   webServer: {
     command: `npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
