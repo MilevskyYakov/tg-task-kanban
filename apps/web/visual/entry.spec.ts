@@ -173,8 +173,10 @@ for (const width of [390, 320]) {
       expect(await second.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       expect(errors).toEqual([]);
     } finally {
+      await page.close();
+      await second.close();
+      await app.close();
       globalThis.fetch = originalFetch;
-      await second.close(); await app.close();
       await db.query('DELETE FROM boards WHERE telegram_chat_id = $1 OR owner_user_id = ANY($2)', [-stamp, [owner.userId, guest.userId]]);
       await db.query('DELETE FROM users WHERE id = ANY($1)', [[owner.userId, guest.userId]]);
       await db.end();

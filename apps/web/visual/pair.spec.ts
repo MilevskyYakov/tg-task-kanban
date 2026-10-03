@@ -280,6 +280,7 @@ test('pair two browser sessions use real API/DB for creation, consent, collabora
     expect((await db.query('SELECT body FROM task_comments WHERE board_id = $1', [createdId])).rows[0].body).toBe('Совместное обсуждение');
     expect(errors).toEqual([]);
   } finally {
+    await page.close();
     await second.close();
     await app.close();
     await db.query('DELETE FROM boards WHERE owner_user_id = ANY($1)', [[owner.userId, guest.userId]]);

@@ -1,0 +1,123 @@
+{
+  "viewport": {
+    "width": 440,
+    "height": 862
+  },
+  "deviceScaleFactor": 2,
+  "fixedTime": "2026-10-03T09:41:00Z",
+  "tasks": [
+    {
+      "board_id": "demo",
+      "board_name": "Общие дела",
+      "project_id": "Проект",
+      "assignee_user_id": "demo-user",
+      "creator_user_id": "demo-user",
+      "status": "todo",
+      "priority": "urgent",
+      "overdue": false,
+      "wait_check_due": false,
+      "id": "1",
+      "title": "Обсудить план проекта",
+      "project_name": "Проект",
+      "assignee_name": "Анна Иванова",
+      "deadline": "2026-10-04T09:00:00Z"
+    },
+    {
+      "board_id": "demo",
+      "board_name": "Общие дела",
+      "project_id": "Поездка",
+      "assignee_user_id": "demo-user",
+      "creator_user_id": "demo-user",
+      "status": "todo",
+      "priority": "normal",
+      "overdue": false,
+      "wait_check_due": false,
+      "id": "2",
+      "title": "Купить билеты",
+      "project_name": "Поездка",
+      "assignee_name": "Михаил Петров",
+      "deadline": "2026-10-04T12:00:00Z"
+    },
+    {
+      "board_id": "demo",
+      "board_name": "Общие дела",
+      "project_id": "Ремонт",
+      "assignee_user_id": "demo-user",
+      "creator_user_id": "demo-user",
+      "status": "todo",
+      "priority": "normal",
+      "overdue": false,
+      "wait_check_due": false,
+      "id": "3",
+      "title": "Выбрать цвет стен",
+      "project_name": "Ремонт",
+      "assignee_name": "Анна Иванова",
+      "deadline": "2026-10-05T09:00:00Z"
+    },
+    {
+      "board_id": "demo",
+      "board_name": "Общие дела",
+      "project_id": "Проект",
+      "assignee_user_id": "demo-user",
+      "creator_user_id": "demo-user",
+      "status": "todo",
+      "priority": "normal",
+      "overdue": false,
+      "wait_check_due": false,
+      "id": "4",
+      "title": "Собрать идеи",
+      "project_name": "Проект",
+      "assignee_name": "Михаил Петров"
+    },
+    {
+      "board_id": "demo",
+      "board_name": "Общие дела",
+      "project_id": "Личное",
+      "assignee_user_id": "demo-user",
+      "creator_user_id": "demo-user",
+      "status": "todo",
+      "priority": "normal",
+      "overdue": false,
+      "wait_check_due": false,
+      "id": "5",
+      "title": "Записаться на тренировку",
+      "project_name": "Личное",
+      "assignee_name": "Анна Иванова"
+    }
+  ],
+  "cards": [
+    {
+      "file": "landing-card-project.png",
+      "title": "Обсудить план проекта",
+      "project": "Проект",
+      "bounds": {
+        "x": 18,
+        "y": 210,
+        "width": 404,
+        "height": 92.59375
+      }
+    },
+    {
+      "file": "landing-card-shared.png",
+      "title": "Купить билеты",
+      "project": "Поездка",
+      "bounds": {
+        "x": 18,
+        "y": 314.59375,
+        "width": 404,
+        "height": 82
+      }
+    },
+    {
+      "file": "landing-card-personal.png",
+      "title": "Записаться на тренировку",
+      "project": "Личное",
+      "bounds": {
+        "x": 18,
+        "y": 656.59375,
+        "width": 404,
+        "height": 82
+      }
+    }
+  ]
+}

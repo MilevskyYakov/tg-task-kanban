@@ -220,6 +220,7 @@ for (const width of [390, 320]) {
     } finally {
       releaseBulk?.();
       releaseLoad?.();
+      await page.close();
       await second.close();
       await app.close();
       await db.query('DELETE FROM boards WHERE id = $1 OR owner_user_id = ANY($2)', [boardId, [owner.userId, member.userId]]);

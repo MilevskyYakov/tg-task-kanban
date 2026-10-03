@@ -511,6 +511,7 @@ test('details draft and partial fields persist through real API and database', a
     expect((await read()).issue_url).toBe('https://github.com/o/r/issues/9');
     await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), draftKey)).toBeNull();
   } finally {
+    await page.close();
     if (app) await app.close();
     if (boardId) await db.query('DELETE FROM boards WHERE id = $1', [boardId]);
     if (owner) await db.query('DELETE FROM users WHERE id = $1', [owner.userId]);
