@@ -1,5 +1,15 @@
 # Проверка реализации лендинга #170
 
+## Объединённый выпуск #170 + #171
+
+Владелец разрешил общую интеграцию, проверку и дальнейший deploy из #170. Координация опубликована и прочитана обратно: https://github.com/MilevskyYakov/tg-task-kanban/issues/171#issuecomment-5969286657.
+
+`main` с #171 (`6197b8c`) влит без конфликтов; runtime/test snapshot — `00598c29115fe51dd21db9d3798ad0682dca158f`. Полная объединённая проверка: **279/279 PASS**, 0 skipped, 0 unexpected, 0 flaky (`combined-results.json`, `combined-browser.log`). Свежие 45 unit + 28 integration/API/DB, lint/typecheck, build, public-entry и diff-check — PASS (`combined-*.log`). Прежние отдельные прогоны ниже не подменяют этот результат.
+
+На свежем preflight #171 уже был опубликован. Действующая база и точка отката: `sha256:79d79c68b6564200d05408d7dad24d6963295c9348cfb9c8c1291f8e3bc8a51d`, revision `6197b8cab973cbadf5448cf74963ec7220fb7101`. SHA-256 действующего Compose: `f8af3fa40c0cc8c1479f987cf01f4c5d572ba60e67c6b39dff4f381b5661929d`. Выпуск #170 сохраняет этот backend/runtime и заменяет только web-сборку объединённого main. Подготовка сравнивает содержимое runtime вне web; переключение проверяет ожидаемые image/Compose и сохраняет прежний Compose. DB и polling consumer не должны перезапускаться. При регрессии вернуть этот image с действующей БД; без миграций, восстановления БД или изменения Telegram-транспорта.
+
+После merge требуется фактический production smoke и запись точных revision/image, package hash/size, результата проверки assets и browser в #170/#171. Этот документ фиксирует зелёный предрелизный gate, не выдаёт ещё не выполненное переключение за успешное. Device-приёмка #171 (физический haptic, Telegram iOS/Android, VoiceOver/TalkBack) остаётся открытой; сообщения и тестовые задачи в production для browser smoke не создаются.
+
 ## Разрешённый выпуск через PR #172
 
 Владелец разрешил deploy, затем отдельно commit/PR/merge. Ниже сохранена история локальных этапов; их прежние формулировки «без commit/deploy» описывают тот момент, а не текущий запрет.
