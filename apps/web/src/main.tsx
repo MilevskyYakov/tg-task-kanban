@@ -12,7 +12,7 @@ import { deadlineDraft, deadlinePatch, formatTaskDeadline, isTaskOverdue } from 
 import { activeFilterCount, dateInputToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveStartupContext, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, taskStatusRestriction, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
 import { TaskKanban } from './task-kanban';
 import { FoundationFixture } from './visual-fixture';
-import { creationHaptic, readStorage, removeStorage, writeStorage } from './environment';
+import { creationHaptic, readStorage, removeStorage, useTaskKeyboardViewport, writeStorage } from './environment';
 import { CreateButton } from './create-feedback';
 import { isBacklogTask } from './tasks';
 import { BulkCreate, type BulkDraft } from './bulk-create';
@@ -32,6 +32,7 @@ window.Telegram?.WebApp?.ready();
 window.Telegram?.WebApp?.expand();
 const storedTaskView = restoreTaskViewState(readStorage('tasks.viewState'));
 function App() {
+  useTaskKeyboardViewport();
   const [state, setState] = useState<'loading' | 'outside' | 'error' | 'ready'>('loading');
   const [boards, setBoards] = useState<Board[]>([]);
   const [pairFlow, setPairFlow] = useState<{board?: Board}>();

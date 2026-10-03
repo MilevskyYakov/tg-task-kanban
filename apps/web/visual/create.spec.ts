@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { expectEditorAboveKeyboard, setKeyboardViewport } from './keyboard-fixture';
 
 const evidence = fileURLToPath(new URL('../../../artifacts/visual-evidence/', import.meta.url));
 const board = { id: 'board-1', name: 'Все доски', type: 'personal', status: 'active', role: 'owner' };
@@ -49,6 +50,82 @@ async function mockCreate(page: Page, failCreate = false, options: { filters?: R
   });
   return { requests, savedTasks };
 }
+
+test.describe('keyboard viewport', () => {
+  for (const width of [320, 390]) test(`creation, series and reopening keep the editor visible ${width}`, async ({ page, browserName }) => {
+    const { requests } = await mockCreate(page);
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto('/');
+    await page.evaluate(() => document.fonts.ready);
+    await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();
+    const title = page.getByRole('textbox', { name: 'Что нужно сделать?' });
+    await title.fill('Первая с клавиатурой');
+    await setKeyboardViewport(page, 400);
+    await expect(page.locator('.create-action')).toHaveCSS('position', 'static');
+    await expectEditorAboveKeyboard(title, 400);
+    const another = page.getByRole('button', { name: 'Создать и добавить ещё', exact: true });
+    // Scroll the page like a user, outside the textarea's own scroll area.
+    await page.mouse.move(4, 200);
+    await page.mouse.wheel(0, 2000);
+    await expectEditorAboveKeyboard(another, 400);
+    await another.click();
+    await expect(title).toBeFocused();
+    await expect(title).toHaveValue('');
+    await expectEditorAboveKeyboard(title, 400);
+    await page.keyboard.type('Следующая');
+    await expect(title).toHaveValue('Следующая');
+    const notice = page.getByRole('region', { name: 'Результат создания' });
+    await expect(notice).toContainText('Первая с клавиатурой');
+    expect(requests).toHaveLength(1);
+    await setKeyboardViewport(page, 844);
+    await expect(page.locator('.create-action')).toHaveCSS('position', 'fixed');
+    await page.locator('.create-screen > header button').click();
+    await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();
+    await setKeyboardViewport(page, 400, 32);
+    await expectEditorAboveKeyboard(title, 400, 32);
+    await expect(notice).toContainText('Первая с клавиатурой');
+    const description = page.getByRole('textbox', { name: 'Описание', exact: true });
+    await description.evaluate((element: HTMLTextAreaElement) => element.focus({ preventScroll: true }));
+    await expectEditorAboveKeyboard(description, 400, 32);
+    await description.fill('Длинное описание\n'.repeat(30));
+    await page.keyboard.type('Конец');
+    await expectEditorAboveKeyboard(description, 400, 32);
+    await expect.poll(() => description.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await page.mouse.move(4, 200);
+    await page.mouse.wheel(0, -2000);
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+    await page.keyboard.type(' текста');
+    await expectEditorAboveKeyboard(description, 400, 32);
+    await mkdir(evidence, { recursive: true });
+    await page.screenshot({ path: `${evidence}/keyboard-create-${browserName}-${width}.png`, clip: { x: 0, y: 32, width, height: 400 } });
+  });
+  test('focus, browser chrome and pinch zoom do not imply a keyboard', async ({ page }) => {
+    await mockCreate(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();
+    await expect(page.getByRole('textbox', { name: 'Что нужно сделать?' })).toBeFocused();
+    await expect(page.locator('.create-action')).toHaveCSS('position', 'fixed');
+    await setKeyboardViewport(page, 780);
+    await expect(page.locator('.create-action')).toHaveCSS('position', 'fixed');
+    await setKeyboardViewport(page, 400, 0, 2);
+    await expect(page.locator('.create-action')).toHaveCSS('position', 'fixed');
+  });
+  test('layout-resizing keyboard works without VisualViewport', async ({ page }) => {
+    await mockCreate(page);
+    await page.addInitScript(() => Object.defineProperty(window, 'visualViewport', { value: undefined }));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();
+    const title = page.getByRole('textbox', { name: 'Что нужно сделать?' });
+    await page.setViewportSize({ width: 390, height: 400 });
+    await expect(page.locator('.create-action')).toHaveCSS('position', 'static');
+    await expectEditorAboveKeyboard(title, 400);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator('.create-action')).toHaveCSS('position', 'fixed');
+  });
+});
 
 async function openFilledCreate(page: Page, width: number) {
   await mockCreate(page);
@@ -112,17 +189,19 @@ test('create keeps input after failed request', async ({ page }) => {
   await expect(description).toHaveValue('Детали задачи тоже должны сохраниться');
 });
 
-test('create submit stays reachable when visual viewport shrinks for keyboard', async ({ page }) => {
+test('create input stays visible and submit remains reachable when keyboard shrinks layout', async ({ page }) => {
   await openFilledCreate(page, 320);
   await page.getByRole('button', { name: 'Дополнительно' }).click();
-  await page.setViewportSize({ width: 320, height: 520 });
   const description = page.getByRole('textbox', { name: 'Описание' });
   await description.focus();
-  const action = await page.locator('.create-action').boundingBox();
-  const field = await description.boundingBox();
-  expect((action?.y ?? 520) + (action?.height ?? 0)).toBeLessThanOrEqual(521);
-  expect((field?.y ?? 520) + (field?.height ?? 0)).toBeLessThanOrEqual(action?.y ?? 0);
+  await page.setViewportSize({ width: 320, height: 520 });
+  await expectEditorAboveKeyboard(description, 520);
+  await expect(page.locator('.create-action')).toHaveCSS('position', 'static');
   await page.screenshot({ path: `${evidence}/create-320x520-keyboard.png` });
+  await page.mouse.move(4, 200);
+  await page.mouse.wheel(0, 2000);
+  await expectEditorAboveKeyboard(page.locator('.create-action'), 520);
+  await expect(page.getByRole('button', { name: 'Создать задачу', exact: true })).toBeEnabled();
 });
 
 for (const width of [390, 320]) {
