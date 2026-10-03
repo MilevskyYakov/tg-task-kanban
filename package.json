@@ -8,7 +8,7 @@
     "typecheck": "npm run typecheck -ws",
     "lint": "npm run typecheck",
     "test": "npm run test:unit && npm run test:isolation",
-    "test:unit": "tsx --test apps/api/test/auth.test.ts apps/api/test/config.test.ts apps/api/test/recurrence.test.ts apps/api/test/publication-scheduler.test.ts apps/web/test/tasks.test.ts",
+    "test:unit": "tsx --test apps/api/test/auth.test.ts apps/api/test/config.test.ts apps/api/test/recurrence.test.ts apps/api/test/publication-scheduler.test.ts apps/web/test/tasks.test.ts ops/telegram-poller.test.mjs ops/telegram-transport.test.mjs",
     "test:visual": "npm run screenshots -w @task/web",
     "test:isolation": "test -n \"$TEST_DATABASE_URL\" && tsx --test apps/api/test/isolation.test.ts apps/api/test/chat-board.test.ts apps/api/test/bot-tutorial.test.ts apps/api/test/pair-board.test.ts apps/api/test/task-lifecycle.test.ts apps/api/test/task-collaboration.test.ts apps/api/test/task-blockers.test.ts apps/api/test/task-deadlines.test.ts apps/api/test/task-backlog.test.ts apps/api/test/recurrence-db.test.ts apps/api/test/project-archive.test.ts apps/api/test/publications.test.ts apps/api/test/settings.test.ts apps/api/test/mcp.test.ts",
     "test:public-entry": "tsx --test apps/api/test/public-entry.test.ts",

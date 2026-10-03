@@ -14,6 +14,7 @@ backups
 ._*
 **/._*
 artifacts/visual-evidence
+artifacts/evidence/tasca-preparation-runtime
 artifacts/ux/exports
 **/*.pen
 playwright-report

@@ -1,0 +1,39 @@
+# Separate Compose project: no second app, scheduler, database or public listener.
+services:
+  telegram-poller:
+    image: ${TASCA_POLLER_IMAGE:?Use the verified local application image ID}
+    pull_policy: never
+    container_name: tg-task-kanban-telegram-poller
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 90s
+    env_file: ${TASCA_POLLER_ENV_FILE:?Private file containing only bot transport settings}
+    environment:
+      TELEGRAM_WEBHOOK_FORWARD_URL: http://tg-task-kanban-app-1:2240/api/telegram/webhook
+    command: [node, /app/ops/telegram-poller.mjs]
+    volumes:
+      - ./ops/telegram-poller.mjs:/app/ops/telegram-poller.mjs:ro
+      - ./ops/telegram-transport.mjs:/app/ops/telegram-transport.mjs:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=1m,uid=1000,gid=1000,mode=0700
+    networks: [task]
+    labels:
+      com.tasca.role: telegram-poller
+    healthcheck:
+      test: [CMD, node, -e, "const fs=require('node:fs');process.exit(Date.now()-Number(fs.readFileSync('/tmp/telegram-poller-heartbeat','utf8'))<120000?0:1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+networks:
+  task:
+    external: true
+    name: ${TASCA_NETWORK:?Existing application network}
