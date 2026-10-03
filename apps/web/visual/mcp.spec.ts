@@ -254,6 +254,7 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
     expect(errors).toEqual([]);
   } finally {
     release?.();
+    await page.close();
     await app.close();
     await db.query('DELETE FROM boards WHERE owner_user_id=$1',[person.userId]);
     await db.query('DELETE FROM users WHERE id=$1',[person.userId]);
