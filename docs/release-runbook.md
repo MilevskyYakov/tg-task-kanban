@@ -69,6 +69,8 @@ curl --fail https://task.kairos-ai.ru/health
 
 ## 4. Bot menu и webhook
 
+**Текущий production с 2026-10-03 использует исходящий polling-приёмник.** Перед операциями с Telegram читать [актуальный транспорт и откат](telegram-polling-runbook.md). Команда `setWebhook` ниже относится к webhook-режиму: её нельзя выполнять при работающем consumer. Пустой webhook URL в polling-режиме не является ошибкой. Исправление исходящих CONNECT включено в app и в приёмник.
+
 В BotFather задать Menu Button URL: `https://task.kairos-ai.ru`. После явного подтверждения владельца:
 
 ```bash
