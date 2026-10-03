@@ -56,6 +56,10 @@ for (const width of [390, 320]) {
             if (failure === 'bulk' && payload.title === 'Проверить страницу' && attempt === 1) return route.fulfill({ status: 503, json: { error: 'Временный отказ' } });
           }
           const response = await app.inject({ method: request.method() as 'GET' | 'POST' | 'PATCH' | 'PUT', url: path, cookies: { session: person.token }, payload });
+          if (failure === 'single-response' && request.method() === 'POST' && path.endsWith('/tasks') && response.statusCode < 300) {
+            failure = 'none';
+            return route.abort('failed');
+          }
           if (failure === 'claim-response' && path.endsWith('/claim') && response.statusCode === 200) {
             failure = 'none';
             return route.abort('failed');
@@ -187,8 +191,18 @@ for (const width of [390, 320]) {
       const last = requests.at(-1)!;
       expect(last).toMatchObject({ projectId: project.id, status: 'todo', priority: 'normal', assigneeUserId: null, description: null, deadline: null, deadlineDate: null, waitReason: null, blockerTaskId: null, waitCheckAt: null, notifyAssignee: false });
       await page.getByRole('textbox', { name: 'Что нужно сделать?' }).fill('Третья в серии');
+      failure = 'single-response';
+      await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();
+      await expect(page.locator('.app-message')).toContainText('До подтверждения ввод сохранён и заблокирован');
+      await expect(page.getByRole('textbox', { name: 'Что нужно сделать?' })).toBeDisabled();
+      await expect(page.getByRole('textbox', { name: 'Что нужно сделать?' })).toHaveValue('Третья в серии');
+      const lostRequest = requests.at(-1)!;
+      const storedReceipt = (await db.query('SELECT id FROM tasks WHERE board_id = $1 AND create_request_id = $2', [boardId, lostRequest.requestId])).rows;
+      expect(storedReceipt).toHaveLength(1);
       await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();
       await expect(page.locator('.backlog-row').filter({ hasText: 'Третья в серии' })).toBeVisible();
+      expect(requests.at(-1)).toEqual(lostRequest);
+      expect((await db.query('SELECT id FROM tasks WHERE board_id = $1 AND create_request_id = $2', [boardId, lostRequest.requestId])).rows).toEqual(storedReceipt);
       failure = 'load';
       await page.reload();
       await page.getByRole('button', { name: /^Бэклог/ }).click();

@@ -134,6 +134,9 @@ for (const width of [390, 320]) {
       await page.getByRole('button', { name: 'Добавить задачу', exact: true }).click();
       await page.getByRole('textbox', { name: 'Что нужно сделать?' }).fill('Первая задача команды');
       await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();
+      await expect(page.locator('.created-result')).toContainText('Задача создана, но скрыта фильтрами');
+      await expect(page.getByRole('button', { name: 'Мои', exact: true })).toHaveAttribute('aria-pressed', 'true');
+      await page.getByRole('button', { name: 'Все', exact: true }).click();
       await expect(page.getByRole('button', { name: /Первая задача команды/ })).toBeVisible();
       await second.getByRole('button', { name: 'Проверить готовность' }).click();
       await second.getByRole('button', { name: /Бэклог/ }).click();
