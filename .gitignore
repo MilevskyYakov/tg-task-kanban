@@ -5,6 +5,7 @@ dist/
 *.tsbuildinfo
 .DS_Store
 artifacts/visual-evidence/
+artifacts/issue-178/
 artifacts/evidence/issue-147-runtime/
 artifacts/evidence/issue-148-runtime/
 artifacts/evidence/issue-149-runtime/

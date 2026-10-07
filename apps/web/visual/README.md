@@ -11,6 +11,12 @@ The harness starts Vite with a deterministic mocked Telegram WebApp, captures 39
 
 Set `PLAYWRIGHT_PORT` when default port 4173 is occupied, for example `PLAYWRIGHT_PORT=4174 npm run screenshots -w @task/web -- details.spec.ts`.
 
+`PLAYWRIGHT_CHANNEL=chrome` selects an already installed Chrome when the bundled Chromium is unavailable. Playwright still creates a fresh temporary browser profile; it does not use a personal Chrome profile. No browser installation is performed by the harness.
+
+`mcp.spec.ts` covers creation, selected/all editing, access-diff confirmation, preserved drafts on conflict, lost edit/rotation responses, explicit rotation recovery, revocation, keyboard/focus and mobile layouts with real Fastify/DB operations. Evidence is under `artifacts/visual-evidence/issue178/`. Traces/video/automatic failure screenshots are disabled for this suite; explicit screenshots hide `.mcp-key`. Use synthetic sessions only, never a real user's key.
+
+The stale-confirmation regressions remove and restore membership after the confirmation opens, at 320/390 px. Both rename-only and an intentional addition of another board must fail without restoring the lost grant; recovery requires a fresh access snapshot and explicit confirmation naming the restored board.
+
 Generated PNG files are written to `artifacts/visual-evidence/` and intentionally ignored by Git.
 
 Tasca (#134) keeps the light-only contract under dark Telegram/browser settings.

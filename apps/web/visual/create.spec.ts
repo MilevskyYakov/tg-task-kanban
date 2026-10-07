@@ -800,8 +800,10 @@ for (const width of [320, 390]) {
           if (state !== previous) {
             (window as any).__motion.push({ time: performance.now(), state }); previous = state;
           }
-          requestAnimationFrame(sample);
         };
+        // Measure DOM-state duration; frame polling can miss the start under load.
+        // The video below remains the evidence of rendered motion, not this timer.
+        new MutationObserver(sample).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-create-state'] });
         sample();
       });
       await page.locator('.create-action button').last().hover();
@@ -820,7 +822,7 @@ for (const width of [320, 390]) {
       expect(confirmationMs).toBeGreaterThanOrEqual(280);
       expect(confirmationMs).toBeLessThan(1000);
       expect(await haptics(page)).toEqual(['soft', 'soft']);
-      await writeFile(`${motionEvidence}/motion-${width}.json`, JSON.stringify({ width, confirmationMs, states }, null, 2));
+      await writeFile(`${motionEvidence}/motion-${width}.json`, JSON.stringify({ width, timing: 'dom-state', confirmationMs, states }, null, 2));
       await page.screenshot({ path: `${motionEvidence}/motion-result-${width}.png` });
     } finally {
       await context.close();
