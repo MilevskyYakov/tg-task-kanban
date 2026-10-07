@@ -50,7 +50,7 @@ Telegram гарантирует проверку чужого членства �
 - `PLAYWRIGHT_CHANNEL=chrome PLAYWRIGHT_PORT=4183 npm run screenshots -w @task/web -- --grep 'board entry photo flow'`: PASS, 2 tests, 320/390 px. Лог `cover-v2-visual.log`.
 - Прототип пересобран прежней командой: PASS, 12 комбинаций и клавиатурный переход; лог `cover-v2-preview.log`. Обновлённый `message-390-100.png` просмотрен: принятая картинка без обрезки, название доски, ссылка и кнопка расположены под ней. Это макет, не Telegram.
 - `board-entry.png` побайтово совпадает с принятой `cover-v2.png`; `group-welcome.png` побайтово совпадает с HEAD. `git diff --check`: PASS.
-- Полный UI-прогон и настоящий Telegram после замены картинки не запускались. Dockerfile включает новый asset, но сборка Docker-образа и deploy не выполнялись.
+- До `/taskfinish` полный UI-прогон после замены картинки ещё не запускался; последующий полный результат приведён ниже. Настоящий Telegram не проверен. Dockerfile включает новый asset, но сборка Docker-образа и deploy не выполнялись.
 
 ### Воспроизведение
 
@@ -70,7 +70,15 @@ git diff --check
 
 ## Проверка при /taskfinish
 
-Свежий `origin/main` совпадает с исходной базой. На кандидате с принятой обложкой повторно прошли `npm run test`, `npm run lint`, `npm run typecheck`, `npm run build`, `npm run test:public-entry`. Полный `npm run test:visual` запущен с подготовленным FFmpeg; его окончательный результат ещё не зафиксирован в этом snapshot. Команды и exit codes сохраняются в `artifacts/visual-evidence/issue-180/taskfinish-checks.json`, логи — `taskfinish-*.log`.
+Свежий `origin/main` совпадает с исходной базой. Итоговый продуктовый код и принятая обложка зафиксированы в `32453e3fb9fb8d38601f113e67cd6981fefbb69e`; последующие изменения отчёта не меняют проверенные исходники. На этом кандидате:
+
+- `npm run test`: PASS, 45 unit + 30 API/DB tests, без пропусков.
+- `npm run lint`, `npm run typecheck`, `npm run build`: PASS.
+- `npm run test:public-entry`: PASS, 1 test.
+- Полный `npm run test:visual`: PASS, **288/288**, 21.9 минуты, без retries и ослабления assertions. Использованы `NODE_ENV=test`, `PLAYWRIGHT_CHANNEL=chrome`, `PLAYWRIGHT_PORT=4184`, подготовленный FFmpeg через `PLAYWRIGHT_BROWSERS_PATH`. Прежний результат 283/5 выше остаётся историей, а не статусом этого прогона; причина прежней нестабильности keyboard/MCP не установлена.
+- Отдельный TypeScript-check новых API/browser tests и прототипа, `git diff --check`: PASS.
+
+Команды и exit codes сохранены в `artifacts/visual-evidence/issue-180/taskfinish-checks.json`, логи — `taskfinish-*.log`, SHA-256 исходников и ассетов — `taskfinish-snapshot.json`. Новые строки perf evidence сохранены в `taskfinish-input-perf.jsonl`, побочный diff общего `artifacts/evidence/input-perf.jsonl` убран. Проверочный процесс завершился с exit 0, тестовый порт 4184 освобождён.
 
 Дополнительно `npm run test:cutover`: PASS, 2 tests. Только отдельная локальная БД `tasca_rehearsal_issue180_finish`, текущие миграции и baseline API из Git-ревизии `58924f41b3b5f22ee5a4e3bab6a603d0262c5cde`, собранный в игнорируемом `baseline-58924f4`. `ROLLBACK_APP_MODULE` указывает на его `apps/api/dist/app.js`; Telegram mocked. Проверка не меняет реальные runtime, transport, ключи или production-БД. Лог `taskfinish-cutover.log`.
 
@@ -80,7 +88,7 @@ Fate: `weekly` — промежуточный результат и evidence в 
 
 ## Обязательные оставшиеся gates
 
-- Чистый стабильный общий visual gate: локальный полный прогон не был зелёным, хотя все пять упавших сценариев прошли отдельно после подготовки FFmpeg. Пороги keyboard/motion и таймауты тестов не ослаблялись, соседние продуктовые сценарии не переделывались ради зелёного отчёта.
+- Перед merge проверить внешние автодеплои по #175; отсутствие GitHub hooks/workflows не заменяет эту проверку.
 - Отдельное разрешение тестового бота/runtime, чатов и аккаунтов. На реальном Telegram проверить получение фото, фактическую пересылку, работоспособность ссылки из подписи и поведение кнопки. Зафиксировать клиент, ОС и версии, а не только mock.
 - На разрешённых клиентах проверить первого пользователя без предыдущего чата с ботом, существующего пользователя, участника и постороннего; выбранная доска не должна теряться при «Начать», onboarding и возврате. Отдельно проверить отсутствие доступа/его потерю, архив, frozen, ограничения прав бота и временный сбой проверки.
 - В объединённой версии #176/#175 проверить две доски одного Telegram-чата. Текущая схема имеет уникальную chat-доску, поэтому этот кейс не подменяется двумя парными досками. Новый код адресует UUID напрямую и не выбирает первую доску чата, но это не интеграционный PASS будущей схемы.
