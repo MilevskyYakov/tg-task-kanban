@@ -7,12 +7,12 @@ import { fileURLToPath } from 'node:url';
 import { validateInitData } from './auth.js';
 import { activateChatBoard, addChecklistItem, addTaskAttachment, addTaskComment, addTaskFileAttachment, boardForUser, boardMembers, boardsForUser, claimAssignmentNotification, connectChatBoard, createInvite, createProject, createRecurrence, createTask, deleteChecklistItem, finishAssignmentNotification, freezeChatBoard, incompleteChecklistCount, login, migrateChatBoard, pendingNotificationForTask, ProjectConflictError, projectsForBoard, recurrencesForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskAttachmentFile, taskCollaboration, TaskActionError, TaskConflictError, taskFilterState, taskForBoard, tasksForAssignee, tasksForBoard, updateChecklistItem, updateProject, updateRecurrence, updateTask, updateTaskAndFuture, TaskVersionConflictError, type AttachmentInput, type Database, type RecurrenceInput, type TaskInput } from './db.js';
 import type { Config } from './config.js';
-import { isChatAdmin, telegramCall } from './telegram.js';
+import { isChatAdmin, isChatMember, telegramCall } from './telegram.js';
 import { renderPublication, schedulesForBoard, updateSchedule, validTimezone as validPublicationTimezone, type PublicationKind, type PublicationSchedule } from './publications.js';
 import { validTimezone } from './recurrence.js';
 import { claimTask } from './db.js';
 import { BoardAccessError, changePairInvite, createPairBoard, previewPairInvite, redeemPairInvite, removePairMember, setPairArchived } from './pair-boards.js';
-import { sendBotEntry, sendBotTutorial, sendGroupWelcome, type TutorialCallback } from './bot-entry.js';
+import { sendBoardEntry, sendBotEntry, sendBotTutorial, sendGroupWelcome, type TutorialCallback } from './bot-entry.js';
 import { taskInput } from './task-input.js';
 import { recurrenceInput } from './recurrence-input.js';
 import { ChecklistConfirmationError, SettingsConflictError } from './db.js';
@@ -113,7 +113,7 @@ export function buildApp(config: Config, db: Database) {
     const token = request.body?.token;
     if (typeof token !== 'string' || !token || token.length > 128) return reply.code(400).send({ error: 'invalid board link' });
     if (token.startsWith('pair_') && !/^pair_[A-Za-z0-9_-]{32}$/.test(token)) return reply.code(400).send({ error: 'invalid board link' });
-    const board = token.startsWith('pair_') ? await redeemPairInvite(db, id, token, request.body.acceptedHistory === true) : await redeemBoardLink(db, id, token);
+    const board = token.startsWith('pair_') ? await redeemPairInvite(db, id, token, request.body.acceptedHistory === true) : await redeemBoardLink(db, id, token, (chatId, telegramId) => isChatMember(config.botToken, chatId, telegramId));
     return board ?? reply.code(404).send({ error: 'board link is invalid or revoked' });
   });
   app.post<{Params: {id: string}, Body: {name?: string}}>('/api/boards/:id/activate', async (request, reply) => {
@@ -135,6 +135,12 @@ export function buildApp(config: Config, db: Database) {
     return { board, canActivate };
   });
   app.get('/api/bot-entry', async (_request, reply) => reply.header('Cache-Control', 'no-store').send({ botUrl: `https://t.me/${config.botUsername}?start=landing`, groupUrl: `https://t.me/${config.botUsername}?startgroup=tasks` }));
+  app.get<{Params: {id: string}}>('/api/boards/:id/entry', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const board = await boardForUser(db, id, request.params.id);
+    if (!board || !['chat', 'pair'].includes(board.type) || !['active', 'archived'].includes(board.status)) return reply.code(404).send({ error: 'Доска недоступна. Откройте доступную вам общую доску.' });
+    return reply.header('Cache-Control', 'no-store').send({ botUrl: `https://t.me/${config.botUsername}?start=entry_${board.id}` });
+  });
   app.post<{Params: {id: string}}>('/api/boards/:id/invites', async (request, reply) => {
     const user = await sessionUser(db, request.cookies.session, config.sessionSecret);
     if (!user) return reply.code(401).send({ error: 'authentication required' });
@@ -454,6 +460,11 @@ export function buildApp(config: Config, db: Database) {
       const command = /^\/(start|help)(?:@([A-Za-z0-9_]+))?(?:\s|$)/.exec(update.message.text);
       if (command && (!command[2] || command[2].toLowerCase() === config.botUsername.toLowerCase())) {
         if (!Number.isSafeInteger(update.message.message_id) || update.message.message_id <= 0) return reply.code(400).send({ error: 'invalid message id' });
+        const payload = update.message.text.slice(command[0].length).trim();
+        if (command[1] === 'start' && payload.startsWith('entry_')) {
+          const boardId = payload.slice('entry_'.length);
+          return deliveryResult(await sendBoardEntry(db, config, update.message.message_id, update.message.chat.id, uuid.test(boardId) ? boardId : null));
+        }
         return deliveryResult(await sendBotEntry(db, config, update.message.message_id, update.message.chat.id, command[1] === 'help'));
       }
     }

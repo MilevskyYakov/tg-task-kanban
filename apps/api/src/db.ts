@@ -162,7 +162,13 @@ export async function freezeChatBoard(db: Database, chatId: number, updateId?: n
       AND ($2::bigint IS NULL OR telegram_member_update_id IS NULL OR (COALESCE(telegram_member_date, 0), telegram_member_update_id) < ($3, $2))`, [chatId, updateId ?? null, eventDate]);
 }
 
-export async function redeemBoardLink(db: Database, userId: string, token: string) {
+export async function redeemBoardLink(db: Database, userId: string, token: string, verifyChatMember?: (chatId: string, telegramUserId: string) => Promise<boolean>) {
+  const boardLaunch = /^open_([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.exec(token);
+  if (boardLaunch) {
+    // An address, not an invitation. Current membership is the only authority.
+    const board = await boardForUser(db, userId, boardLaunch[1]);
+    return board && ['chat', 'pair'].includes(board.type) ? board : null;
+  }
   const taskLaunch = token.match(/^task_([0-9a-f-]{36})_([0-9a-f-]{36})$/i);
   if (taskLaunch) {
     const task = await db.query<{id: string}>(`SELECT b.id FROM boards b JOIN memberships m ON m.board_id = b.id
@@ -173,11 +179,18 @@ export async function redeemBoardLink(db: Database, userId: string, token: strin
   const client = await db.connect();
   try {
     await client.query('BEGIN');
-    const result = await client.query<{id: string; status: string}>(`SELECT b.id, b.status FROM board_links l JOIN boards b ON b.id = l.board_id
+    const result = await client.query<{id: string; status: string; kind: string; telegram_chat_id: string}>(`SELECT b.id, b.status, b.telegram_chat_id, l.kind FROM board_links l JOIN boards b ON b.id = l.board_id
       WHERE l.token_hash = $1 AND l.revoked_at IS NULL AND b.type = 'chat' FOR UPDATE OF b, l`, [linkHash(token)]);
     const link = result.rows[0];
-    if (link && link.status !== 'frozen') await client.query(`INSERT INTO memberships (board_id, user_id, role) VALUES ($1, $2, 'member')
-      ON CONFLICT (board_id, user_id) DO NOTHING`, [link.id, userId]);
+    if (link && link.status !== 'frozen') {
+      const member = await client.query('SELECT 1 FROM memberships WHERE board_id = $1 AND user_id = $2', [link.id, userId]);
+      if (!member.rowCount) {
+        const user = (await client.query<{telegram_id: string}>('SELECT telegram_id FROM users WHERE id = $1', [userId])).rows[0];
+        const allowed = link.kind === 'invite' || (link.kind === 'launch' && user && verifyChatMember && await verifyChatMember(link.telegram_chat_id, user.telegram_id));
+        if (allowed) await client.query(`INSERT INTO memberships (board_id, user_id, role) VALUES ($1, $2, 'member')
+          ON CONFLICT (board_id, user_id) DO NOTHING`, [link.id, userId]);
+      }
+    }
     await client.query('COMMIT');
     return link ? boardForUser(db, userId, link.id) : null;
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }

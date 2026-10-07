@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import type { Config } from './config.js';
-import { withBoardLock, type Database } from './db.js';
+import { boardForUser, withBoardLock, type Database } from './db.js';
 import { escapeHtml, telegramCall, TelegramRejectedError } from './telegram.js';
 import { tutorialButton, tutorialPage, type TutorialPage } from './bot-tutorial.js';
 
@@ -90,6 +90,27 @@ function entryMessage(config: Config, help: boolean): TutorialPage {
       : '<b>Таска — дела под рукой</b>\n\nЛичные и общие задачи в Telegram. Создавайте задачи, назначайте исполнителей и сроки, следите за выполнением.\n\nВпервые здесь? Пройдите короткое обучение прямо в этом чате: зачем нужен задачник и как начать. Или сразу выберите доску ниже.',
     reply_markup: { inline_keyboard: [[tutorialButton(help ? 'Пройти обучение ещё раз' : 'Как пользоваться Таской', 'intro')], button('Личные задачи', 'personal'), button('Доска на двоих', 'pair'), button('Доска для группы', 'group'), button('Как начать', 'help')] }
   };
+}
+
+export async function sendBoardEntry(db: Database, config: Config, messageId: number, chatId: number, boardId: string | null) {
+  const key = entryKey(config, `command:${createHash('sha256').update(`${chatId}:${messageId}`).digest('hex')}`);
+  await db.query('INSERT INTO telegram_entry_deliveries (key) VALUES ($1) ON CONFLICT DO NOTHING', [key]);
+  return deliverEntry(db, config, key, async () => {
+    const user = (await db.query<{id: string}>('SELECT id FROM users WHERE telegram_id = $1', [chatId])).rows[0];
+    const board = user && boardId ? await boardForUser(db, user.id, boardId) : null;
+    if (!board || !['chat', 'pair'].includes(board.type) || !['active', 'archived'].includes(board.status)) {
+      return { method: 'sendMessage', body: { chat_id: chatId, text: 'Не удалось получить вход в доску. Откройте доступную вам общую доску в Таске и нажмите «Получить сообщение для пересылки».' } };
+    }
+    const url = `https://t.me/${config.botUsername}?startapp=open_${board.id}`;
+    const photo = await readFile(new URL('../../../artifacts/ux/assets/board-entry.png', import.meta.url));
+    const body = new FormData();
+    body.set('chat_id', String(chatId));
+    body.set('photo', new Blob([photo], { type: 'image/png' }), 'board-entry.png');
+    body.set('caption', `<b>Таска · ${escapeHtml(board.name)}</b>\n\nВход в общую доску задач.\nДоска доступна только её участникам. Эта ссылка не приглашает новых людей.\n\nОткрыть доску: ${url}`);
+    body.set('parse_mode', 'HTML');
+    body.set('reply_markup', JSON.stringify({ inline_keyboard: [[{ text: 'Открыть доску', url }]] }));
+    return { method: 'sendPhoto', body };
+  });
 }
 
 export type TutorialCallback = {

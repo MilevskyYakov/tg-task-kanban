@@ -17,6 +17,7 @@ RUN npm ci --omit=dev --workspace=@task/api && npm cache clean --force
 COPY --from=build /app/apps/api/dist apps/api/dist
 COPY --from=build /app/apps/api/migrations apps/api/migrations
 COPY --from=build /app/artifacts/ux/assets/group-welcome.png artifacts/ux/assets/group-welcome.png
+COPY --from=build /app/artifacts/ux/assets/board-entry.png artifacts/ux/assets/board-entry.png
 COPY --from=build /app/apps/web/dist apps/web/dist
 COPY ops/telegram-transport.mjs ops/telegram-transport.mjs
 USER node
