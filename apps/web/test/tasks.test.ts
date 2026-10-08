@@ -8,6 +8,31 @@ import { runClaim } from '../src/claim-task.js';
 import { resolveThemeScheme } from '../src/environment.js';
 import { countLabel, initialNavigation, isSettingsNavigation, settingsSections } from '../src/navigation.js';
 import { mergeTaskDraft, taskDraft, taskDraftStorageKey, taskPatch } from '../src/task-details.js';
+import { assessmentText, normalizeTaskFilters, priorityRank, groupTasksByPriority } from '../src/tasks.js';
+
+test('assessment drafts merge independently, reset atomically and saved filters retain legacy meaning', () => {
+  const base = taskDraft({ ...tasks[0], importance: null, urgency: null });
+  const local = { ...base, importance: true };
+  const remote = { ...base, urgency: false };
+  assert.deepEqual(mergeTaskDraft(base, local, remote), { draft: { ...local, urgency: false }, conflicts: [] });
+  assert.deepEqual(taskPatch(local, base).patch, { importance: true });
+  assert.deepEqual(taskPatch(base, { ...base, importance: true, urgency: false }).patch, { importance: null, urgency: null });
+  assert.deepEqual(mergeTaskDraft(base, local, { ...base, importance: false }).conflicts, ['importance']);
+  const preserved = { ...defaultFilters, scope: 'all' as const, project: 'p', assignee: 'u', status: 'waiting' as const, deadline: 'week' as const, search: 'Поиск' };
+  const urgent = normalizeTaskFilters({ ...preserved, priority: 'urgent' });
+  assert.deepEqual(urgent, { ...preserved, urgency: 'true' });
+  const normal = normalizeTaskFilters({ ...preserved, priority: 'normal' });
+  assert.equal(normal.priority, 'normal'); assert.equal(normal.urgency, undefined);
+  assert.equal(normalizeTaskFilters({ ...normal, urgency: 'false' }).priority, '');
+  const restored = restoreTaskViewState(JSON.stringify({ ...defaultTaskViewState, view: 'obsolete', grouping: 'obsolete', filters: urgent }));
+  assert.deepEqual(restored.filters, urgent); assert.equal(restored.view, 'list');
+  const pairs = [true, false, null].flatMap(importance => [true, false, null].map(urgency => ({ ...tasks[0], id: `${importance}/${urgency}`, importance, urgency })));
+  assert.deepEqual(groupTasksByPriority(pairs).map(group => group.tasks.length), [5, 1, 1, 1, 1]);
+  assert.equal(priorityRank({ importance: null, urgency: true }), 0);
+  assert.match(assessmentText({ importance: null, urgency: true }), /Важность не оценена.*Срочная/);
+  const unassessed = filterTasks(pairs, { ...defaultFilters, scope: 'all', urgency: 'true', unassessed: true }, '');
+  assert.deepEqual(unassessed.map(row => row.id), ['null/true']);
+});
 import {
   activeFilterCount,
   dateInputToIso,

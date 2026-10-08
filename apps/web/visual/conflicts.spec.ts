@@ -64,7 +64,8 @@ for (const keepLocal of [true, false]) {
       await remoteTitle.blur();
       await saved(second);
       await second.getByRole('button', { name: /^Приоритет/ }).click();
-      await second.getByRole('radio', { name: 'Срочная', exact: true }).click();
+      await second.getByRole('radiogroup', { name: 'Срочная?' }).getByRole('radio', { name: 'Да', exact: true }).click();
+      await second.getByRole('dialog', { name: 'Приоритет', exact: true }).getByRole('button', { name: 'Применить', exact: true }).click();
       await saved(second);
       const shownVersion = (await readback()).version;
       await page.locator('.detail-description-actions').getByRole('button', { name: 'Изменить' }).click();

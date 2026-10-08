@@ -5,6 +5,7 @@ import Fastify from 'fastify';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateInitData } from './auth.js';
+import { AssessmentError } from './assessment.js';
 import { activateChatBoard, addChecklistItem, addTaskAttachment, addTaskComment, addTaskFileAttachment, boardForUser, boardMembers, boardsForUser, claimAssignmentNotification, connectChatBoard, createInvite, createProject, createRecurrence, createTask, deleteChecklistItem, finishAssignmentNotification, freezeChatBoard, incompleteChecklistCount, login, migrateChatBoard, pendingNotificationForTask, ProjectConflictError, projectsForBoard, recurrencesForBoard, redeemBoardLink, renameBoard, revokeInvites, saveTaskFilterState, sessionUser, sessionUserId, setTaskArchived, taskAttachmentFile, taskCollaboration, TaskActionError, TaskConflictError, taskFilterState, taskForBoard, tasksForAssignee, tasksForBoard, updateChecklistItem, updateProject, updateRecurrence, updateTask, updateTaskAndFuture, TaskVersionConflictError, type AttachmentInput, type Database, type RecurrenceInput, type TaskInput } from './db.js';
 import type { Config } from './config.js';
 import { isChatAdmin, telegramCall } from './telegram.js';
@@ -35,6 +36,7 @@ export function buildApp(config: Config, db: Database) {
   app.register(multipart);
   const attachmentFileLimits = { maxFileSize: 15 * 1024 * 1024, allowedMimeTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] };
   app.setErrorHandler((error, request, reply) => {
+    if (error instanceof AssessmentError) return reply.code(error.status).send({ error: error.message });
     if (error instanceof BoardAccessError) return reply.code(error.status).send({ error: error.message });
     if (error instanceof ChecklistConfirmationError) return reply.code(409).send({ error: error.message, incompleteChecklist: error.count });
     if (error instanceof SettingsConflictError) return reply.code(409).send({ error: error.message, current: error.current });

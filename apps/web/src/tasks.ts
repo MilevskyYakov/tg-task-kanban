@@ -1,5 +1,21 @@
 export type TaskStatus = 'todo' | 'in_progress' | 'waiting' | 'done';
 export type TaskPriority = 'normal' | 'urgent';
+export type Assessment = { importance: boolean | null; urgency: boolean | null };
+export type AssessmentFilter = 'any' | 'true' | 'false' | 'unassessed';
+export const emptyAssessment: Assessment = { importance: null, urgency: null };
+export const assessmentText = (value: Partial<Assessment>) => [
+  value.importance === true ? 'Важная' : value.importance === false ? 'Неважная' : 'Важность не оценена',
+  value.urgency === true ? 'Срочная' : value.urgency === false ? 'Несрочная' : 'Срочность не оценена'
+].join(' · ');
+export const priorityGroups = ['Не разобрано', 'Важное срочное', 'Неважное срочное', 'Важное несрочное', 'Неважное несрочное'];
+export const priorityRank = (task: Partial<Assessment>) => task.importance == null || task.urgency == null ? 0 : task.urgency ? task.importance ? 1 : 2 : task.importance ? 3 : 4;
+export function compareTaskPriority(left: Task, right: Task) {
+  const a = left.priority_key ?? [String(priorityRank(left)), '1', '', left.created_at ?? '', left.id];
+  const b = right.priority_key ?? [String(priorityRank(right)), '1', '', right.created_at ?? '', right.id];
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+  return 0;
+}
+export const groupTasksByPriority = (tasks: Task[]) => priorityGroups.map((label, rank) => ({ label, tasks: tasks.filter(task => priorityRank(task) === rank).sort(compareTaskPriority) }));
 
 export type Task = {
   id: string;
@@ -16,6 +32,11 @@ export type Task = {
   recurrence_template_id?: string;
   status: TaskStatus;
   priority: TaskPriority;
+  importance?: boolean | null;
+  urgency?: boolean | null;
+  priority_key?: string[];
+  created_at?: string;
+  recurrence_version?: string;
   deadline?: string;
   deadline_date?: string;
   deadline_timezone?: string;
@@ -39,6 +60,9 @@ export type TaskFilters = {
   assignee: string;
   status: '' | TaskStatus;
   priority: '' | TaskPriority;
+  importance?: AssessmentFilter;
+  urgency?: AssessmentFilter;
+  unassessed?: boolean;
   deadline: '' | 'overdue' | 'today' | 'week' | 'none';
   unassigned: boolean;
   search: string;
@@ -59,6 +83,9 @@ export function activeFilterCount(filters: TaskFilters): number {
     + Number(Boolean(filters.assignee))
     + Number(Boolean(filters.status))
     + Number(Boolean(filters.priority))
+    + Number(Boolean(filters.importance && filters.importance !== 'any'))
+    + Number(Boolean(filters.urgency && filters.urgency !== 'any'))
+    + Number(Boolean(filters.unassessed))
     + Number(Boolean(filters.deadline))
     + Number(filters.unassigned);
 }
@@ -97,15 +124,15 @@ export function resolveStartupContext(startParam?: string): StartupContext {
 }
 
 export type TaskViewState = {
-  view: 'list' | 'kanban';
-  grouping: 'deadline' | 'project';
+  view: 'list' | 'kanban' | 'matrix';
+  grouping: 'deadline' | 'project' | 'priority';
   filters: TaskFilters;
   scrollY: number;
   kanbanStatus: TaskStatus;
 };
 
 export const defaultTaskViewState: TaskViewState = {
-  view: 'list', grouping: 'deadline', filters: defaultFilters, scrollY: 0, kanbanStatus: 'todo'
+  view: 'list', grouping: 'priority', filters: defaultFilters, scrollY: 0, kanbanStatus: 'todo'
 };
 
 const taskStatuses: TaskStatus[] = ['todo', 'in_progress', 'waiting', 'done'];
@@ -130,18 +157,26 @@ export const serializeTaskViewState = (state: TaskViewState): string => JSON.str
 export function restoreTaskViewState(value: string | null): TaskViewState {
   try {
     const state = JSON.parse(value ?? '') as Partial<TaskViewState>;
-    if ((state.view !== 'list' && state.view !== 'kanban')
-      || (state.grouping !== 'deadline' && state.grouping !== 'project')
-      || !isTaskFilters(state.filters)
+    if (!isTaskFilters(state.filters)
       || typeof state.scrollY !== 'number' || !Number.isFinite(state.scrollY) || state.scrollY < 0
       || !taskStatuses.includes(state.kanbanStatus as TaskStatus)) return defaultTaskViewState;
-    return state as TaskViewState;
+    return { ...state, filters: normalizeTaskFilters(state.filters),
+      view: ['list','kanban','matrix'].includes(state.view!) ? state.view! : 'list',
+      grouping: ['deadline','project','priority'].includes(state.grouping!) ? state.grouping! : 'priority' } as TaskViewState;
   } catch {
     return defaultTaskViewState;
   }
 }
 
 export type DeadlineGroup = 'overdue' | 'today' | 'upcoming' | 'none';
+export function normalizeTaskFilters(value: Partial<TaskFilters>): TaskFilters {
+  const result = { ...defaultFilters, ...value };
+  for (const key of ['importance', 'urgency'] as const) if (result[key] !== undefined && !['any','true','false','unassessed'].includes(result[key]!)) delete result[key];
+  if (result.priority === 'urgent' && (!result.urgency || result.urgency === 'any')) { result.urgency = 'true'; result.priority = ''; }
+  if (result.urgency && result.urgency !== 'any') result.priority = '';
+  if (result.unassessed !== undefined) result.unassessed = result.unassessed === true;
+  return result;
+}
 
 // Intl.DateTimeFormat construction dominates input latency on large boards:
 // it was being created per task per filter pass (up to 8 passes per keystroke).
@@ -192,6 +227,7 @@ export function filterTasks(tasks: Task[], filters: TaskFilters, userId: string,
   const checkProject = filters.project ? (task: Task) => task.project_id === filters.project : null;
   const checkAssignee = filters.assignee ? (task: Task) => task.assignee_user_id === filters.assignee : null;
   const checkPriority = filters.priority ? (task: Task) => task.priority === filters.priority : null;
+  const assessed = (value: boolean | null | undefined, filter?: AssessmentFilter) => !filter || filter === 'any' || (filter === 'unassessed' ? value == null : value === (filter === 'true'));
   const checkSearch = search
     ? (task: Task) => task.title.toLocaleLowerCase('ru-RU').includes(search) || task.description?.toLocaleLowerCase('ru-RU').includes(search)
     : null;
@@ -215,6 +251,8 @@ export function filterTasks(tasks: Task[], filters: TaskFilters, userId: string,
       && (!checkAssignee || checkAssignee(task))
       && (filters.status ? task.status === filters.status : task.status !== 'done')
       && (!checkPriority || checkPriority(task))
+      && assessed(task.importance, filters.importance) && assessed(task.urgency, filters.urgency)
+      && (!filters.unassessed || priorityRank(task) === 0)
       && (!filters.unassigned || !task.assignee_user_id)
       && (!checkSearch || checkSearch(task))
       && (!checkDeadline || checkDeadline(task));

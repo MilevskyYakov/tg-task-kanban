@@ -72,7 +72,7 @@ for (const transport of ['DB', 'REST', 'MCP'] as const) for (const kind of ['tas
         } else {
           const { expectedVersion, ...changes } = input;
           const args = { boardId: destination, requestId: randomUUID(),
-            ...(kind === 'task' ? { taskId: target.id, expectedVersion: expectedVersion ?? await version(), changes } : { recurrenceId: target.id, ...changes }) };
+            ...(kind === 'task' ? { taskId: target.id, expectedVersion: expectedVersion ?? await version(), changes } : { recurrenceId: target.id, expectedVersion: expectedVersion ?? await version(), ...changes }) };
           const result = await call(writers.get(person.userId)!, `update_${kind}`, args);
           if (expected === 'ok') {
             assert.equal(result.ok, true, JSON.stringify(result));
@@ -90,7 +90,7 @@ for (const transport of ['DB', 'REST', 'MCP'] as const) for (const kind of ['tas
       await change(kind === 'task' ? { title: 'Edited after archive' } : { paused: true });
       assert.equal(kind === 'task' ? (await read()).title : Boolean((await read()).paused_at), kind === 'task' ? 'Edited after archive' : true);
       for (const projectId of [project.id, project.id.toUpperCase()]) {
-        await change({ title: 'Historical link kept', projectId, description: 'Independent edit', priority: 'urgent' });
+        await change({ title: 'Historical link kept', projectId, description: 'Independent edit', priority: 'urgent', expectedVersion: await version() });
         const row = await read();
         assert.equal(row.project_id, project.id, 'same UUID is historical, including uppercase input');
         assert.equal(row.description, 'Independent edit');
@@ -114,8 +114,8 @@ for (const transport of ['DB', 'REST', 'MCP'] as const) for (const kind of ['tas
         await change({ status: 'in_progress' }, 'ok', member);
         assert.equal((await read()).status, 'in_progress');
         // The explicit series path resends projectId even when it has not changed.
-        if (transport === 'DB') assert.ok(await updateTaskAndFuture(db, owner.userId, boardId, task.id, { title: 'Applied to series', projectId: project.id }));
-        if (transport === 'REST') assert.equal((await app.inject({ method: 'PATCH', url: `${path}?scope=future`, cookies: { session: owner.token }, payload: { title: 'Applied to series', projectId: project.id } })).statusCode, 200);
+        if (transport === 'DB') assert.ok(await updateTaskAndFuture(db, owner.userId, boardId, task.id, { title: 'Applied to series', projectId: project.id, expectedRecurrenceVersion: recurrence.version }));
+        if (transport === 'REST') assert.equal((await app.inject({ method: 'PATCH', url: `${path}?scope=future`, cookies: { session: owner.token }, payload: { title: 'Applied to series', projectId: project.id, expectedRecurrenceVersion: recurrence.version } })).statusCode, 200);
         if (transport !== 'MCP') assert.equal((await db.query('SELECT title FROM recurrence_templates WHERE id=$1', [recurrence.id])).rows[0].title, 'Applied to series');
       } else {
         await change({ archived: true });

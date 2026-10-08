@@ -17,6 +17,8 @@ type ReportTask = {
   title: string;
   status: TaskStatus;
   priority: string;
+  importance?: boolean | null;
+  urgency?: boolean | null;
   deadline: string | null;
   deadline_date: string | null;
   deadline_timezone: string | null;
@@ -69,13 +71,13 @@ async function reportTasks(db: Database, boardId: string, kind: PublicationKind,
       OR (t.status = 'done' AND t.completed_at >= (date_trunc('week', $3::timestamptz AT TIME ZONE $4) - interval '1 week') AT TIME ZONE $4
       AND t.completed_at < date_trunc('week', $3::timestamptz AT TIME ZONE $4) AT TIME ZONE $4))`
     : `t.archived_at IS NULL AND t.status = ANY($2::text[])`;
-  const result = await db.query<ReportTask>(`SELECT t.id, t.title, t.status, t.priority, t.deadline, t.wait_check_at,
+  const result = await db.query<ReportTask>(`SELECT t.id, t.title, t.status, t.priority, t.importance, t.urgency, t.deadline, t.wait_check_at,
       to_char(t.deadline_date, 'YYYY-MM-DD') AS deadline_date, t.deadline_timezone,
       task_deadline_overdue(t.status, t.deadline, t.deadline_date, t.deadline_timezone, $3::timestamptz) AS overdue,
       p.name AS project_name, u.first_name AS assignee_name FROM tasks t
     LEFT JOIN projects p ON p.id = t.project_id LEFT JOIN users u ON u.id = t.assignee_user_id
     WHERE t.board_id = $1 AND (${filter})
-    ORDER BY u.first_name NULLS LAST, p.name NULLS LAST, t.status, t.priority = 'urgent' DESC, t.deadline NULLS LAST, t.created_at`, params);
+    ORDER BY u.first_name NULLS LAST, p.name NULLS LAST, t.status, task_priority_key(t.importance,t.urgency,t.deadline,t.deadline_date,t.deadline_timezone,t.created_at,t.id) COLLATE "C"`, params);
   return result.rows;
 }
 
@@ -84,7 +86,7 @@ function taskLink(task: Pick<ReportTask, 'id' | 'title'>, botUsername: string, b
 }
 
 function taskLine(task: ReportTask, now: Date, botUsername: string, boardId: string) {
-  const labels = [publicationStatusDisplayName[task.status], task.priority === 'urgent' ? '🔥' : '', task.overdue ? '🔴' : '', task.deadline_date ? `${task.deadline_date} · весь день (${task.deadline_timezone})` : '', task.wait_check_at && new Date(task.wait_check_at) <= now && task.status === 'waiting' ? 'ПРОВЕРИТЬ' : ''].filter(Boolean).join(' · ');
+  const labels = [publicationStatusDisplayName[task.status], task.importance === true ? 'Важная' : task.importance === false ? 'Неважная' : '', task.urgency === true ? 'Срочная' : task.urgency === false ? 'Несрочная' : '', task.importance == null || task.urgency == null ? 'Не разобрано' : '', task.overdue ? '🔴' : '', task.deadline_date ? `${task.deadline_date} · весь день (${task.deadline_timezone})` : '', task.wait_check_at && new Date(task.wait_check_at) <= now && task.status === 'waiting' ? 'ПРОВЕРИТЬ' : ''].filter(Boolean).join(' · ');
   return `${taskLink(task, botUsername, boardId)}${labels ? ` — <b>${labels}</b>` : ''}`;
 }
 

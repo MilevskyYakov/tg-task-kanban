@@ -114,7 +114,7 @@ for (const scenario of ['success', 'cancel', 'lost response', 'failure', 'denied
         return;
       }
       await expect(dialog).toContainText('Applied title');
-      for (const label of ['Название', 'Описание', 'Проект', 'Исполнитель', 'Приоритет']) await expect(dialog.getByRole('heading', { name: label, exact: true })).toBeVisible();
+      for (const label of ['Название', 'Описание', 'Проект', 'Исполнитель', 'Важность', 'Срочность']) await expect(dialog.getByRole('heading', { name: label, exact: true })).toBeVisible();
       await expect(dialog).toContainText('Статус, блокер, срок и уже созданные задачи не изменятся');
       await expect(dialog.locator('p').first()).toBeFocused();
       await page.keyboard.press('Shift+Tab');
@@ -161,7 +161,7 @@ for (const scenario of ['success', 'cancel', 'lost response', 'failure', 'denied
         await expect(seriesStatus).toHaveText('Применено к будущим повторам');
         expect((await readTemplate()).title).toBe(scenario === 'version race' ? 'Concurrent title' : 'Applied title');
         const payload = writes.filter((write) => write.future).at(-1)!.input;
-        expect(Object.keys(payload).sort()).toEqual(['assigneeUserId', 'confirmIncompleteChecklist', 'description', 'expectedVersion', 'priority', 'projectId', 'title']);
+        expect(Object.keys(payload).sort()).toEqual(['assigneeUserId', 'confirmIncompleteChecklist', 'description', 'expectedRecurrenceVersion', 'expectedVersion', 'importance', 'projectId', 'title', 'urgency']);
         expect((await readTask(past.id)).title).toBe('Series title');
         await runRecurrenceScheduler(db, new Date('2026-01-03T09:00:00Z'));
         const future = (await db.query('SELECT * FROM tasks WHERE board_id=$1 ORDER BY occurrence_at DESC LIMIT 1', [boardId])).rows[0];

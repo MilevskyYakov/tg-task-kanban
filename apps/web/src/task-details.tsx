@@ -4,6 +4,8 @@ import { ActionRow, Avatar, ChoiceRow, EnvironmentStatus, Icon, Sheet } from './
 import { issueUrlShort, type Collaboration, type Member, type Project } from './domain';
 import { dateInputToIso, deadlineDraft, deadlinePatch, priorityDisplayName, statusDisplayName, type DeadlineDraft, type Task, type TaskPriority, type TaskStatus } from './tasks';
 import { DeadlineField } from './deadline-field';
+import { PrioritySheet } from './task-priority';
+import { assessmentText } from './tasks';
 import { Autosave, reconnectRetry, type SaveState } from './autosave';
 
 const statuses = Object.keys(statusDisplayName) as TaskStatus[];
@@ -23,6 +25,8 @@ export type TaskDraft = {
   assigneeUserId: string;
   due: DeadlineDraft;
   priority: TaskPriority;
+  importance: boolean | null;
+  urgency: boolean | null;
   blockerTaskId: string;
   issueUrl: string;
   waitReason: string;
@@ -39,6 +43,8 @@ export function taskDraft(task: Task): TaskDraft {
     assigneeUserId: task.assignee_user_id ?? '',
     due: deadlineDraft(task),
     priority: task.priority,
+    importance: task.importance ?? null,
+    urgency: task.urgency ?? null,
     blockerTaskId: task.blocked_by_task_id ?? '',
     issueUrl: task.issue_url ?? '',
     waitReason: task.wait_reason ?? '',
@@ -62,6 +68,8 @@ export function taskPatch(draft: TaskDraft, base: TaskDraft) {
   else if (!sameDraftField(draft, base, 'issueUrl')) patch.issueUrl = issueUrl;
   if (draft.description !== base.description) patch.description = draft.description.trim() ? draft.description : null;
   if (draft.priority !== base.priority) patch.priority = draft.priority;
+  if (draft.importance !== base.importance) patch.importance = draft.importance;
+  if (draft.urgency !== base.urgency) patch.urgency = draft.urgency;
   if (draft.projectId !== base.projectId) patch.projectId = draft.projectId || null;
   if (draft.assigneeUserId !== base.assigneeUserId) {
     patch.assigneeUserId = draft.assigneeUserId || null;
@@ -128,7 +136,7 @@ const saveStateLabels: Record<SaveState, string> = {
 };
 
 const draftGroups: (keyof TaskDraft)[][] = [
-  ['title'], ['description'], ['projectId'], ['assigneeUserId'], ['due'], ['priority'], ['issueUrl'],
+  ['title'], ['description'], ['projectId'], ['assigneeUserId'], ['due'], ['priority'], ['importance'], ['urgency'], ['issueUrl'],
   ['status', 'blockerTaskId', 'waitReason', 'waitCheckAt']
 ];
 const sameDraftField = (left: TaskDraft, right: TaskDraft, key: keyof TaskDraft) => {
@@ -172,6 +180,7 @@ const isStoredTaskDraft = (value: unknown): value is TaskDraft => {
       && typeof draft.due.timezone === 'string'
       && (draft.due.originalTimestamp === undefined || draft.due.originalTimestamp === null || typeof draft.due.originalTimestamp === 'string'))
     && Object.keys(priorityDisplayName).includes(draft.priority ?? '')
+    && [null, undefined, true, false].includes(draft.importance) && [null, undefined, true, false].includes(draft.urgency)
     && typeof draft.blockerTaskId === 'string' && typeof draft.issueUrl === 'string'
     && typeof draft.waitReason === 'string' && typeof draft.waitCheckAt === 'string';
 };
@@ -186,6 +195,8 @@ const readTaskDraft = (key: string, base: TaskDraft, serverVersion: string | und
     if (!stored || typeof stored !== 'object' || (stored as { version?: unknown }).version !== 1
       || !isStoredTaskDraft((stored as { draft?: unknown }).draft)) throw new Error('Invalid saved draft');
     const saved = stored as { draft: TaskDraft; base?: unknown; serverVersion?: unknown };
+    saved.draft = { ...saved.draft, importance: saved.draft.importance ?? null, urgency: saved.draft.urgency ?? null };
+    if (isStoredTaskDraft(saved.base)) saved.base = { ...saved.base, importance: saved.base.importance ?? null, urgency: saved.base.urgency ?? null };
     const versioned = isStoredTaskDraft(saved.base) && typeof saved.serverVersion === 'string' && /^[1-9]\d*$/.test(saved.serverVersion);
     return { ...initial, draft: { ...saved.draft, notifyAssignee: false },
       base: versioned ? saved.base as TaskDraft : base, serverVersion: versioned ? saved.serverVersion as string : serverVersion,
@@ -229,7 +240,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
   const [historyOpen, setHistoryOpen] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [seriesConfirmation, setSeriesConfirmation] = useState<{ draft: TaskDraft; version: string }>();
+  const [seriesConfirmation, setSeriesConfirmation] = useState<{ draft: TaskDraft; version: string; recurrenceVersion: string }>();
   const [seriesWorking, setSeriesWorking] = useState(false);
   const seriesInFlight = useRef(false);
   const [seriesResult, setSeriesResult] = useState<{ text: string; error: boolean }>();
@@ -405,7 +416,12 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
         return;
       }
       autosave.setPaused(true);
-      setSeriesConfirmation({ draft: baseRef.current, version: versionRef.current });
+      const current = await api<Task>(`/api/boards/${task.board_id}/tasks/${task.id}`);
+      if (!current.recurrence_version) throw new Error('Не удалось прочитать версию серии');
+      setSeriesConfirmation({ draft: baseRef.current, version: versionRef.current, recurrenceVersion: current.recurrence_version });
+    } catch (caught) {
+      autosave.setPaused(Boolean(conflictRef.current || checklistConfirmationRef.current));
+      setSeriesResult({ text: caught instanceof Error ? caught.message : 'Не удалось прочитать серию', error: true });
     } finally { seriesInFlight.current = false; setSeriesWorking(false); }
   };
   const closeSeriesConfirmation = () => {
@@ -420,7 +436,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     const sent = seriesConfirmation.draft;
     try {
       const saved = await onSave({ title: sent.title, description: sent.description || null, projectId: sent.projectId || null,
-        assigneeUserId: sent.assigneeUserId || null, priority: sent.priority }, true, false, seriesConfirmation.version);
+        assigneeUserId: sent.assigneeUserId || null, importance: sent.importance, urgency: sent.urgency, expectedRecurrenceVersion: seriesConfirmation.recurrenceVersion }, true, false, seriesConfirmation.version);
       acceptServer(saved, mergeTaskDraft(sent, draftRef.current, taskDraft(saved)).draft);
       setSeriesResult({ text: 'Применено к будущим повторам', error: false });
     } catch (caught) {
@@ -500,9 +516,10 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
   const displayedSaveState = checklistConfirmation || (saveState === 'saved' && (Object.keys(fieldErrors).length || conflict)) ? 'pending' : saveState;
   const conflictLabels: Partial<Record<keyof TaskDraft, string>> = {
     title: 'Название', description: 'Описание', status: 'Статус', projectId: 'Проект', assigneeUserId: 'Исполнитель',
-    due: 'Срок', priority: 'Приоритет', blockerTaskId: 'Задача-блокер', issueUrl: 'GitHub issue', waitReason: 'Внешняя причина', waitCheckAt: 'Дата проверки'
+    due: 'Срок', priority: 'Прежняя отметка приоритета', importance: 'Важность', urgency: 'Срочность', blockerTaskId: 'Задача-блокер', issueUrl: 'GitHub issue', waitReason: 'Внешняя причина', waitCheckAt: 'Дата проверки'
   };
   const conflictValue = (value: TaskDraft, key: keyof TaskDraft) => {
+    if (key === 'importance' || key === 'urgency') return value[key] == null ? 'Не оценено' : value[key] ? 'Да' : 'Нет';
     if (key === 'status') return statusDisplayName[value.status];
     if (key === 'priority') return priorityDisplayName[value.priority];
     if (key === 'projectId') return projects.find((item) => item.id === value.projectId)?.name ?? (value.projectId || 'Без проекта');
@@ -512,10 +529,14 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     return String(value[key] || 'Не задано');
   };
   const choiceSheet = choice && (() => {
+    if (choice === 'priority') return <PrioritySheet value={draft} onClose={() => setChoice(undefined)} onApply={value => {
+      const next = { ...draftRef.current, ...value };
+      replaceDraft(next); scheduleSave(next);
+    }}/>;
     const definition = choiceDefinitions[choice];
     const choose = (value: string) => {
       if (choice === 'status') set('status', value as TaskStatus);
-      else if (choice === 'priority') set('priority', value as TaskPriority);
+
       else if (choice === 'project') set('projectId', value);
       else if (choice === 'assignee') set('assigneeUserId', value);
       else set('blockerTaskId', value);
@@ -541,7 +562,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
           <ActionRow label="Проект" value={projects.find((item) => item.id === draft.projectId)?.name ?? 'Без проекта'} onClick={() => setChoice('project')}/>
           <ActionRow label="Исполнитель" value={members.find((item) => item.id === draft.assigneeUserId)?.first_name ?? 'Без ответственного'} onClick={() => setChoice('assignee')}/>
           <DeadlineField value={draft.due} onChange={(value) => set('due', value)} showIcon={false}/>
-          <ActionRow label="Приоритет" value={priorityDisplayName[draft.priority]} onClick={() => setChoice('priority')}/>
+          <ActionRow label="Приоритет" value={assessmentText(draft)} onClick={() => setChoice('priority')}/>
         </div>
         {fieldErrors.due && <p className="detail-error" role="alert">{fieldErrors.due}</p>}
         <div className="detail-github">
@@ -596,7 +617,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     {!readOnly && choiceSheet}
     {seriesConfirmation && !readOnly && <Sheet className="task-sheet" title="Будущие повторы" onClose={closeSeriesConfirmation}>
       <p tabIndex={0}>В шаблон будут перенесены эти значения. Статус, блокер, срок и уже созданные задачи не изменятся.</p>
-      {(['title', 'description', 'projectId', 'assigneeUserId', 'priority'] as const).map((key) => <section className="detail-conflict-values" key={key}>
+      {(['title', 'description', 'projectId', 'assigneeUserId', 'importance', 'urgency'] as const).map((key) => <section className="detail-conflict-values" key={key}>
         <h3>{conflictLabels[key]}</h3><dl><dd>{conflictValue(seriesConfirmation.draft, key)}</dd></dl>
       </section>)}
       {seriesWorking && <p role="status">Применяется…</p>}
