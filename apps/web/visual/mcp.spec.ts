@@ -1,16 +1,19 @@
 import { expect, test } from '@playwright/test';
-import { randomBytes } from 'node:crypto';
+import { assertSettingsLayout } from './settings-layout';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { buildApp } from '../../api/src/app';
 import { createDatabase, login } from '../../api/src/db';
+import { createPairBoard } from '../../api/src/pair-boards';
 import type { Config } from '../../api/src/config';
 
 const url=process.env.TEST_DATABASE_URL;
 if (!url) throw new Error('TEST_DATABASE_URL is required');
-const evidence=fileURLToPath(new URL('../../../artifacts/visual-evidence/issue82/',import.meta.url));
+const evidence=fileURLToPath(new URL('../../../artifacts/visual-evidence/issue178/',import.meta.url));
 test.use({trace:'off',video:'off',screenshot:'off'});
 for (const width of [390,320]) test(`connections lifecycle, loss recovery and clipboard with real API/DB ${width}`,async ({page,baseURL})=>{
+  test.setTimeout(90000);
   const db=createDatabase(url);
   const person=await login(db,{id:randomBytes(6).readUIntBE(0,6),first_name:'Тестовый пользователь'},3600,'isolated-visual-secret');
   const config: Config={botToken:'test',databaseUrl:url,sessionSecret:'isolated-visual-secret',initDataMaxAgeSeconds:60,sessionMaxAgeSeconds:3600,host:'127.0.0.1',port:0,production:false,webhookSecret:'isolated-visual',publicUrl:baseURL!,botUsername:'test_bot'};
@@ -19,6 +22,8 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
   let release: (()=>void)|undefined;
   let gate: Promise<void>|undefined;
   const creates: any[]=[];
+  const edits: any[]=[];
+  const rotations: any[]=[];
   const errors: string[]=[];
   try {
     await page.setViewportSize({width,height:844});
@@ -29,13 +34,17 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
       if (path==='/api/auth/telegram') return route.fulfill({json:{userId:person.userId}});
       const creating=path==='/api/mcp-connections' && req.method()==='POST';
       const revoking=path.startsWith('/api/mcp-connections/') && req.method()==='DELETE';
+      const editing=path.startsWith('/api/mcp-connections/') && req.method()==='PATCH';
+      const rotating=path.endsWith('/rotate') && req.method()==='POST';
       const payload=req.postData() ? req.postDataJSON() : undefined;
       if (creating) { creates.push(payload); if (gate) await gate; }
+      if (editing) { edits.push(payload); if (gate) await gate; }
+      if (rotating) { rotations.push(payload); if (gate) await gate; }
       if (path==='/api/mcp-connections' && req.method()==='GET' && failure==='list') return route.fulfill({status:503,json:{error:'synthetic list failure'}});
       if (path.startsWith('/api/mcp-connections') && failure==='expired') return route.fulfill({status:401,json:{error:'Войдите снова через Telegram'}});
-      if (creating && failure==='create-before') { failure=''; return route.abort('failed'); }
-      const response=await app.inject({method:req.method() as 'GET'|'POST'|'DELETE',url:path,cookies:{session:person.token},headers:{host:new URL(baseURL!).host,...(req.headers().origin ? {origin:req.headers().origin} : {}),...(req.headers()['content-type'] ? {'content-type':req.headers()['content-type']} : {})},payload});
-      if ((creating && failure==='create-after') || (revoking && failure==='revoke-after')) { failure=''; return route.abort('failed'); }
+      if ((creating && failure==='create-before') || (editing && failure==='edit-before') || (rotating && failure==='rotate-before')) { failure=''; return route.abort('failed'); }
+      const response=await app.inject({method:req.method() as 'GET'|'POST'|'PATCH'|'DELETE',url:path,cookies:{session:person.token},headers:{host:new URL(baseURL!).host,...(req.headers().origin ? {origin:req.headers().origin} : {}),...(req.headers()['content-type'] ? {'content-type':req.headers()['content-type']} : {})},payload});
+      if ((creating && failure==='create-after') || (revoking && failure==='revoke-after') || (editing && failure==='edit-after') || (rotating && failure==='rotate-after')) { failure=''; return route.abort('failed'); }
       await route.fulfill({status:response.statusCode,contentType:'application/json',body:response.body});
     });
     const enter=async()=>{
@@ -48,6 +57,7 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
     await mkdir(evidence,{recursive:true});
     const shot=async(name:string)=>{
       await page.evaluate(()=>document.fonts.ready);
+      await assertSettingsLayout(page, await page.locator('.sheet').count() ? '.sheet' : '.mcp-screen');
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       await page.screenshot({path:`${evidence}/${name}-${width}.png`,fullPage:!await page.getByRole('dialog',{name:'Как подключить клиент'}).isVisible(),style:'.mcp-key { color: transparent !important; -webkit-text-fill-color: transparent !important; background: #d7dde6 !important; }'});
     };
@@ -112,6 +122,9 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
     await expect(help.getByRole('button',{name:'Общая настройка',exact:true})).toHaveAttribute('aria-pressed','true');
     await expect(help).toContainText('Streamable HTTP');
     await expect(help).toContainText('Bearer ВАШ_КЛЮЧ');
+    await expect(help.locator('.mcp-help-steps > li')).toHaveCount(3);
+    await expect(help.getByRole('heading', {name:'Добавьте сервер'})).toBeVisible();
+    await expect(help.getByRole('button', {name:'Hermes',exact:true})).toHaveCSS('box-shadow', 'none');
     await expect(help.locator('.mcp-command')).toHaveCount(0);
     expect((await help.innerText()).includes(secret)).toBe(false);
     await shot('help-general');
@@ -215,6 +228,148 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
     await expect(page.locator('.mcp-key')).toHaveCount(0);
     await help.getByRole('button',{name:'Готово',exact:true}).click();
     await shot('details');
+    await expect(page.locator('.mcp-summary').getByRole('button', {name:'Редактировать',exact:true})).toBeVisible();
+    await expect(page.locator('.mcp-details').getByRole('heading', {name:'Мой Hermes',exact:true})).toHaveCount(1);
+    await expect(page.locator('.mcp-details .mcp-board-scope li')).toHaveCount(1);
+    await expect(page.locator('.mcp-credentials').getByRole('button', {name:'Перевыпустить ключ',exact:true})).toBeVisible();
+    await expect(page.locator('.mcp-revoke').getByRole('button', {name:'Отозвать доступ',exact:true})).toBeVisible();
+    const connectionId=(await db.query('SELECT id FROM mcp_connections WHERE user_id=$1',[person.userId])).rows[0].id;
+    const originalHash=(await db.query('SELECT key_hash FROM mcp_connections WHERE id=$1',[connectionId])).rows[0].key_hash;
+    const secondBoard=await createPairBoard(db,person.userId,'Синтетическая доска с длинным названием для проверки переноса строк',randomUUID());
+    const longName='Подключение с длинным названием для проверки редактирования';
+    const review=page.getByRole('dialog',{name:'Подтвердить настройки доступа?'});
+    const saveReview=async()=>{
+      await page.getByRole('button',{name:'Сохранить изменения',exact:true}).click();
+      await expect(review).toContainText('Ключ не изменится');
+    };
+    await expect(page.locator('.mcp-summary')).toContainText('Создано:');
+    await page.getByRole('button',{name:'Редактировать',exact:true}).click();
+    await expect(page.getByRole('radio',{name:/Выбранные доски/})).toHaveAttribute('aria-checked','true');
+    await page.getByLabel('Название',{exact:true}).fill(longName);
+    await page.getByRole('button',{name:'Назад',exact:true}).click();
+    await expect(page.getByRole('dialog',{name:'Выйти без сохранения?'})).toBeVisible();
+    await page.getByRole('button',{name:'Остаться',exact:true}).click();
+    await page.getByRole('radio',{name:/Все мои текущие и будущие доски/}).click();
+    await page.getByRole('radio',{name:/Только чтение/}).click();
+    await saveReview();
+    await expect(review).toContainText('включая личные');
+    await expect(review).toContainText('Добавятся: '+secondBoard.name);
+    await review.getByRole('button',{name:'Отмена',exact:true}).click();
+    expect(edits.length).toBe(0);
+    await expect(page.getByLabel('Название',{exact:true})).toHaveValue(longName);
+    if (width===320) {
+      await page.setViewportSize({width,height:440});
+      await page.getByLabel('Название',{exact:true}).focus();
+      await expect(page.getByLabel('Название',{exact:true})).toBeInViewport();
+      await page.getByRole('button',{name:'Сохранить изменения',exact:true}).scrollIntoViewIfNeeded();
+      await expect(page.getByRole('button',{name:'Сохранить изменения',exact:true})).toBeInViewport();
+      await shot('edit-keyboard');
+      await page.setViewportSize({width,height:844});
+      const scaling=await page.addStyleTag({content:'html {font-size:200% !important;}'});
+      await shot('edit-text-200');
+      await scaling.evaluate(element=>element.parentNode?.removeChild(element));
+    }
+    await shot('edit-auto');
+    await saveReview(); await shot('edit-confirmation');
+    await review.getByRole('button',{name:'Отмена',exact:true}).focus();
+    await page.keyboard.press('Tab');
+    await expect(review.getByRole('button',{name:'Закрыть',exact:true})).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('button',{name:'Сохранить изменения',exact:true})).toBeFocused();
+    await saveReview();
+    gate=new Promise<void>(resolve=>{release=resolve;});
+    await review.getByRole('button',{name:'Подтвердить',exact:true}).click();
+    await expect(review.getByRole('button',{name:'Сохраняем…',exact:true})).toBeDisabled();
+    release!(); gate=undefined;
+    await expect(page.getByRole('status')).toContainText('Ключ не изменился');
+    expect(edits.length).toBe(1);
+    expect((await db.query('SELECT key_hash FROM mcp_connections WHERE id=$1',[connectionId])).rows[0].key_hash===originalHash).toBe(true);
+    await expect(page.locator('.mcp-summary .mcp-auto')).toContainText('Автодоступ');
+    await shot('automatic-details');
+    if (width===320) {
+      const scaling=await page.addStyleTag({content:'html {font-size:200% !important;}'});
+      await shot('details-text-200');
+      for (const name of ['Редактировать','Перевыпустить ключ','Отозвать доступ']) {
+        const control=page.getByRole('button',{name,exact:true});
+        // Trial performs normal hit-testing and scrolling without editing or revoking access.
+        await control.click({trial:true});
+        await expect(control).toBeInViewport();
+        expect(await control.evaluate(element=>{
+          const rect=element.getBoundingClientRect();
+          const hit=document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2);
+          return {name:element.textContent,unobstructed:element.contains(hit)};
+        })).toEqual({name,unobstructed:true});
+      }
+      await scaling.evaluate(element=>element.parentNode?.removeChild(element));
+    }
+    // Membership loss and immediate rejoin are visible as an exception, never silently restored.
+    await db.query('DELETE FROM memberships WHERE board_id=$1 AND user_id=$2',[secondBoard.id,person.userId]);
+    await db.query("INSERT INTO memberships (board_id,user_id,role) VALUES ($1,$2,'owner')",[secondBoard.id,person.userId]);
+    await page.getByRole('button',{name:'Подключения',exact:true}).click();
+    await page.getByRole('button',{name:new RegExp(longName)}).click();
+    await expect(page.locator('.mcp-summary')).toContainText('Не восстановлен после повторного вступления');
+    await page.getByRole('button',{name:'Редактировать',exact:true}).click();
+    await page.getByRole('radio',{name:/Выбранные доски/}).click();
+    await page.getByRole('radio',{name:/Чтение и изменение/}).click();
+    await saveReview();
+    await expect(review).toContainText('Появится право создавать и изменять задачи');
+    failure='edit-after';
+    await review.getByRole('button',{name:'Подтвердить',exact:true}).click();
+    await expect(page.getByLabel('Название',{exact:true})).toBeDisabled();
+    await expect(page.getByRole('button',{name:'Проверить результат'})).toBeVisible();
+    await shot('edit-uncertain');
+    await page.getByRole('button',{name:'Проверить результат'}).click();
+    await expect(page.getByRole('status')).toContainText('Ключ не изменился');
+    expect(edits.at(-1).requestId).toBe(edits.at(-2).requestId);
+    // A concurrent editor preserves this draft and requires an explicit reload, not blind retry.
+    await page.getByRole('button',{name:'Редактировать',exact:true}).click();
+    await page.getByLabel('Название',{exact:true}).fill('Несохранённый черновик');
+    const current=(await db.query('SELECT revision::text FROM mcp_connections WHERE id=$1',[connectionId])).rows[0];
+    const changed=await app.inject({method:'PATCH',url:'/api/mcp-connections/'+connectionId,cookies:{session:person.token},headers:{host:new URL(baseURL!).host,origin:baseURL!},payload:{...edits.at(-1),requestId:randomUUID(),expectedVersion:current.revision,name:'Другой редактор'}});
+    expect(changed.statusCode).toBe(200);
+    await saveReview(); await review.getByRole('button',{name:'Подтвердить',exact:true}).click();
+    await expect(page.getByRole('alert')).toContainText('Подключение изменилось');
+    await expect(page.getByLabel('Название',{exact:true})).toHaveValue('Несохранённый черновик');
+    await expect(page.getByRole('button',{name:'Сохранить изменения',exact:true})).toBeDisabled();
+    await shot('edit-conflict');
+    await page.getByRole('button',{name:'Открыть текущие настройки'}).click();
+    await expect(page.getByRole('heading',{name:'Другой редактор',exact:true})).toBeVisible();
+    await page.getByRole('button',{name:'Редактировать',exact:true}).click();
+    await page.getByLabel('Название',{exact:true}).fill(longName);
+    await saveReview(); failure='edit-before'; await review.getByRole('button',{name:'Подтвердить',exact:true}).click();
+    await page.getByRole('button',{name:'Проверить результат'}).click();
+    await expect(page.getByRole('status')).toContainText('Ключ не изменился');
+    expect(edits.at(-1).requestId).toBe(edits.at(-2).requestId);
+    const rotateDialog=page.getByRole('dialog',{name:'Перевыпустить ключ?'});
+    await page.getByRole('button',{name:'Перевыпустить ключ',exact:true}).click();
+    await expect(rotateDialog).toContainText('Обновите его в настройках клиента');
+    await rotateDialog.getByRole('button',{name:'Отмена',exact:true}).click();
+    expect(rotations.length).toBe(0);
+    await page.getByRole('button',{name:'Перевыпустить ключ',exact:true}).click();
+    await shot('rotation-confirmation'); failure='rotate-after';
+    await rotateDialog.getByRole('button',{name:'Подтвердить перевыпуск'}).click();
+    await expect(rotateDialog.getByRole('alert')).toContainText('Результат перевыпуска неизвестен');
+    await shot('rotation-uncertain');
+    await rotateDialog.getByRole('button',{name:'Проверить результат'}).click();
+    await expect(page.getByRole('heading',{name:'Ключ создан, но не был получен'})).toBeVisible();
+    expect(rotations.at(-1).requestId).toBe(rotations.at(-2).requestId);
+    expect((await db.query("SELECT count(*)::int AS count FROM mcp_connection_events WHERE connection_id=$1 AND action='rotated'",[connectionId])).rows[0].count).toBe(1);
+    await shot('rotation-lost');
+    await page.getByRole('button',{name:'Перевыпустить ключ',exact:true}).click();
+    failure='rotate-before';
+    await rotateDialog.getByRole('button',{name:'Подтвердить перевыпуск'}).click();
+    await rotateDialog.getByRole('button',{name:'Проверить результат'}).click();
+    await expect(page.getByRole('heading',{name:'Ключ создан',exact:true})).toBeVisible();
+    const newSecret=await page.locator('.mcp-key').innerText();
+    expect(newSecret===secret).toBe(false);
+    expect(await page.evaluate(key=>JSON.stringify({...localStorage,...sessionStorage}).includes(key),newSecret)).toBe(false);
+    expect(page.url().includes(newSecret)).toBe(false);
+    await shot('rotated-secret');
+    expect(rotations.at(-1).requestId).toBe(rotations.at(-2).requestId);
+    expect(rotations.at(-1).requestId===rotations[0].requestId).toBe(false);
+    await page.getByRole('button',{name:'Копировать ключ',exact:true}).click();
+    await page.getByRole('button',{name:'Готово',exact:true}).click();
+    await page.getByRole('button',{name:new RegExp(longName)}).click();
     await page.getByRole('button',{name:'Отозвать доступ',exact:true}).click();
     await shot('revoke');
     failure='revoke-after';
@@ -256,6 +411,83 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
     release?.();
     await page.close();
     await app.close();
+    await db.query('DELETE FROM boards WHERE owner_user_id=$1',[person.userId]);
+    await db.query('DELETE FROM users WHERE id=$1',[person.userId]);
+    await db.end();
+  }
+});
+
+for (const width of [390,320]) test(`stale selected confirmation cannot restore lost access ${width}`,async ({page,baseURL})=>{
+  test.setTimeout(90000);
+  const db=createDatabase(url);
+  const person=await login(db,{id:randomBytes(6).readUIntBE(0,6),first_name:'Проверка доступа'},3600,'isolated-access-review');
+  const config: Config={botToken:'test',databaseUrl:url,sessionSecret:'isolated-access-review',initDataMaxAgeSeconds:60,sessionMaxAgeSeconds:3600,host:'127.0.0.1',port:0,production:false,webhookSecret:'isolated-test',publicUrl:baseURL!,botUsername:'test_bot'};
+  const app=buildApp(config,db);
+  const edits: any[]=[];
+  try {
+    const board=await createPairBoard(db,person.userId,'Регрессионная доска',randomUUID());
+    const personal=(await db.query("SELECT id,name FROM boards WHERE owner_user_id=$1 AND type='personal'",[person.userId])).rows[0];
+    const management=(method:'GET'|'POST',path:string,payload?:object)=>app.inject({method,url:'/api/mcp-connections'+path,cookies:{session:person.token},headers:{host:new URL(baseURL!).host,origin:baseURL!},payload});
+    const issued=await management('POST','',{requestId:randomUUID(),name:'Проверка старого черновика',mode:'write',boardIds:[board.id]});
+    expect(issued.statusCode).toBe(201);
+    const connectionId=issued.json().connection.id;
+    const originalHash=(await db.query('SELECT key_hash FROM mcp_connections WHERE id=$1',[connectionId])).rows[0].key_hash;
+    await page.setViewportSize({width,height:844});
+    await page.route('https://telegram.org/js/telegram-web-app.js',route=>route.fulfill({contentType:'application/javascript',body:"window.Telegram={WebApp:{initData:'isolated-browser-test',ready(){},expand(){}}};"}));
+    await page.route('**/api/**',async route=>{
+      const req=route.request(), path=new URL(req.url()).pathname+new URL(req.url()).search;
+      if (path==='/api/auth/telegram') return route.fulfill({json:{userId:person.userId}});
+      const payload=req.postData() ? req.postDataJSON() : undefined;
+      if (req.method()==='PATCH') edits.push(payload);
+      const response=await app.inject({method:req.method() as 'GET'|'POST'|'PATCH',url:path,cookies:{session:person.token},headers:{host:new URL(baseURL!).host,...(req.headers().origin ? {origin:req.headers().origin} : {}),...(req.headers()['content-type'] ? {'content-type':req.headers()['content-type']} : {})},payload});
+      await route.fulfill({status:response.statusCode,contentType:'application/json',body:response.body});
+    });
+    await page.goto('/');
+    await page.getByRole('button',{name:'Настройки',exact:true}).click();
+    await page.getByRole('button',{name:/Аккаунт.*Профиль/}).click();
+    await page.getByRole('button',{name:/Подключения.*Доступ/}).click();
+    await page.getByRole('button',{name:/Проверка старого черновика.*Активное/}).click();
+    const review=page.getByRole('dialog',{name:'Подтвердить настройки доступа?'});
+    const chooseBoard=async(name:string)=>{
+      await page.getByRole('button',{name:/^Доски/}).click();
+      const picker=page.getByRole('dialog',{name:'Доступные доски'});
+      await picker.getByRole('checkbox',{name:new RegExp(name)}).click();
+      await picker.getByRole('button',{name:'Готово',exact:true}).click();
+    };
+    for (const addAnother of [false,true]) {
+      const before=(await management('GET','/'+connectionId)).json();
+      await page.getByRole('button',{name:'Редактировать',exact:true}).click();
+      await page.getByLabel('Название',{exact:true}).fill('Несохранённое имя');
+      if (addAnother) await chooseBoard(personal.name);
+      await page.getByRole('button',{name:'Сохранить изменения',exact:true}).click();
+      await expect(review).toContainText('Добавятся: '+(addAnother ? personal.name : 'Нет'));
+      // Change membership after opening the confirmation, not just before editing.
+      await db.query('DELETE FROM memberships WHERE board_id=$1 AND user_id=$2',[board.id,person.userId]);
+      await db.query("INSERT INTO memberships (board_id,user_id,role) VALUES ($1,$2,'owner')",[board.id,person.userId]);
+      await review.getByRole('button',{name:'Подтвердить',exact:true}).click();
+      await expect(page.getByRole('alert')).toContainText('Доступ к доскам изменился');
+      await expect(page.getByLabel('Название',{exact:true})).toHaveValue('Несохранённое имя');
+      await expect(page.getByRole('button',{name:'Сохранить изменения',exact:true})).toBeDisabled();
+      expect(edits.at(-1).confirmExpansion).toBe(addAnother);
+      expect(edits.at(-1).expectedAccessVersion).toBe(before.accessVersion);
+      const after=(await management('GET','/'+connectionId)).json();
+      expect(after.version).toBe(before.version);
+      expect(after.name).toBe(before.name);
+      expect(after.boards).toEqual([]);
+      expect(after.accessVersion).not.toBe(before.accessVersion);
+      expect((await db.query('SELECT key_hash FROM mcp_connections WHERE id=$1',[connectionId])).rows[0].key_hash===originalHash).toBe(true);
+      // Recovery requires opening current settings and explicitly adding the lost board.
+      await page.getByRole('button',{name:'Открыть текущие настройки'}).click();
+      await page.getByRole('button',{name:'Редактировать',exact:true}).click();
+      await chooseBoard(board.name);
+      await page.getByRole('button',{name:'Сохранить изменения',exact:true}).click();
+      await expect(review).toContainText('Добавятся: '+board.name);
+      await review.getByRole('button',{name:'Подтвердить',exact:true}).click();
+      await expect(page.getByRole('status')).toContainText('Ключ не изменился');
+      expect((await management('GET','/'+connectionId)).json().boards.map((b:{id:string})=>b.id)).toEqual([board.id]);
+    }
+  } finally {
+    await page.close(); await app.close();
     await db.query('DELETE FROM boards WHERE owner_user_id=$1',[person.userId]);
     await db.query('DELETE FROM users WHERE id=$1',[person.userId]);
     await db.end();

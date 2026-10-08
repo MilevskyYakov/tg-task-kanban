@@ -70,9 +70,9 @@ test('task collaboration enforces access, immutable audit and notification idemp
   const multipart = (name: string, filename: string, contentType: string, data: Buffer) => Buffer.concat([
     Buffer.from(`--${boundary}\r\ncontent-disposition: form-data; name="${name}"; filename="${filename}"\r\ncontent-type: ${contentType}\r\n\r\n`),
     data, Buffer.from(`\r\n--${boundary}--\r\n`)]);
-  const upload = async (options: { token?: string; data?: Buffer; filename?: string; mimeType?: string }) =>
+  const upload = async (options: { token?: string; data?: Buffer; filename?: string; mimeType?: string; requestId?: string }) =>
     app.inject({ method: 'POST', url: `/api/boards/${boardId}/tasks/${task.id}/attachments/file`,
-      headers: { cookie: `session=${options.token ?? tokens[2]}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      headers: { cookie: `session=${options.token ?? tokens[2]}`, 'content-type': `multipart/form-data; boundary=${boundary}`, ...(options.requestId !== undefined ? { 'x-upload-id': options.requestId } : {}) },
       payload: multipart('file', options.filename ?? 'shot.png', options.mimeType ?? 'image/png', options.data ?? png) });
   const tooBig = await upload({ data: Buffer.alloc(16 * 1024 * 1024, 1), filename: 'big.png' });
   assert.equal(tooBig.statusCode, 413, 'file larger than 15 MB is rejected');
@@ -82,11 +82,53 @@ test('task collaboration enforces access, immutable audit and notification idemp
   const noFile = await app.inject({ method: 'POST', url: `/api/boards/${boardId}/tasks/${task.id}/attachments/file`,
     headers: { cookie: `session=${tokens[2]}`, 'content-type': 'application/json' }, payload: {} });
   assert.equal(noFile.statusCode, 400, 'missing multipart payload is rejected');
-  const savedFile = await upload({});
+  for (const requestId of ['', 'not-a-uuid', `${randomUUID()} `]) assert.equal((await upload({ requestId })).statusCode, 400, 'invalid upload id rejected without normalization');
+  const requestId = randomUUID();
+  const [savedFile, concurrentFile] = await Promise.all([upload({ requestId }), upload({ requestId })]);
   assert.equal(savedFile.statusCode, 200);
+  assert.equal(concurrentFile.statusCode, 200);
+  assert.deepEqual(concurrentFile.json(), savedFile.json(), 'concurrent initial uploads create only one attachment');
   assert.equal(savedFile.json().kind, 'file');
   assert.equal(Number(savedFile.json().file_size), png.length);
   const attachmentId = savedFile.json().id;
+  assert.equal(attachmentId, requestId, 'client upload ID is the persistent receipt');
+  const replays = await Promise.all([upload({ requestId }), upload({ requestId })]);
+  for (const replay of replays) {
+    assert.equal(replay.statusCode, 200);
+    assert.deepEqual(replay.json(), savedFile.json(), 'concurrent retries return the original receipt');
+  }
+  for (const change of [{ data: Buffer.from('different bytes') }, { filename: 'different.png' }, { mimeType: 'image/jpeg' }, { token: tokens[0] }]) {
+    assert.equal((await upload({ requestId, ...change })).statusCode, 409, 'same id cannot replace bytes, metadata or actor');
+  }
+  const secondTask = await createTask(db, users[0], boardId, { title: 'Other upload target' });
+  assert.ok(secondTask);
+  const crossTask = await app.inject({ method: 'POST', url: `/api/boards/${boardId}/tasks/${secondTask.id}/attachments/file`,
+    headers: { cookie: `session=${tokens[2]}`, 'content-type': `multipart/form-data; boundary=${boundary}`, 'x-upload-id': requestId },
+    payload: multipart('file', 'shot.png', 'image/png', png) });
+  assert.equal(crossTask.statusCode, 409, 'same key cannot attach the receipt to another task');
+  assert.equal((await upload({ requestId, token: tokens[3] })).statusCode, 404, 'replay does not bypass membership');
+  const persisted = await db.query('SELECT board_id, task_id, file_data FROM task_attachments WHERE id=$1', [attachmentId]);
+  assert.equal(persisted.rows[0].board_id, boardId);
+  assert.equal(persisted.rows[0].task_id, task.id);
+  assert.deepEqual(persisted.rows[0].file_data, png);
+  assert.ok((await taskCollaboration(db, users[0], boardId, task.id))!.attachments.some((item: {id: string}) => item.id === attachmentId));
+  assert.equal((await upload({ token: tokens[3] })).statusCode, 404, 'known task ID does not allow outsider upload');
+  const wrongBoard = await app.inject({ method: 'POST', url: `/api/boards/${otherBoardId}/tasks/${task.id}/attachments/file`,
+    headers: { cookie: `session=${tokens[3]}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
+    payload: multipart('file', 'wrong-board.png', 'image/png', png) });
+  assert.equal(wrongBoard.statusCode, 404, 'membership in another board cannot relocate the upload');
+  for (const status of ['frozen', 'archived']) {
+    await db.query('UPDATE boards SET status=$2 WHERE id=$1', [boardId, status]);
+    assert.equal((await upload({})).statusCode, 404, `${status} board rejects upload`);
+    assert.equal((await upload({ requestId })).statusCode, 404, `${status} board rejects replay too`);
+    assert.deepEqual((await taskAttachmentFile(db, users[0], boardId, task.id, attachmentId)).file_data, png, 'existing read access is preserved');
+  }
+  await db.query("UPDATE boards SET status='active' WHERE id=$1", [boardId]);
+  await db.query('UPDATE tasks SET archived_at=now() WHERE id=$1', [task.id]);
+  assert.equal((await upload({})).statusCode, 404, 'archived task rejects upload');
+  assert.equal((await upload({ requestId })).statusCode, 404, 'archived task rejects replay');
+  await db.query('UPDATE tasks SET archived_at=NULL WHERE id=$1', [task.id]);
+  assert.equal((await db.query("SELECT count(*)::int AS count FROM task_attachments WHERE task_id=$1 AND kind='file'", [task.id])).rows[0].count, 1, 'rejected attempts do not create files');
   assert.equal(await taskAttachmentFile(db, users[3], boardId, task.id, attachmentId), null, 'other board member cannot read file');
   const reader = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${task.id}/attachments/${attachmentId}/file`, headers: { cookie: `session=${tokens[0]}` } });
   assert.equal(reader.statusCode, 200);
@@ -94,6 +136,11 @@ test('task collaboration enforces access, immutable audit and notification idemp
   assert.deepEqual(reader.rawPayload, png);
   const stolen = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${task.id}/attachments/${attachmentId}/file`, headers: { cookie: `session=${tokens[3]}` } });
   assert.equal(stolen.statusCode, 404, 'outsider receives no file and no existence hint');
+  await db.query('DELETE FROM memberships WHERE board_id=$1 AND user_id=$2', [boardId, users[2]]);
+  assert.equal((await upload({})).statusCode, 404, 'lost membership prevents upload');
+  assert.equal((await upload({ requestId })).statusCode, 404, 'lost membership prevents replay');
+  const revokedRead = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${task.id}/attachments/${attachmentId}/file`, headers: { cookie: `session=${tokens[2]}` } });
+  assert.equal(revokedRead.statusCode, 404, 'lost membership prevents file read');
   assert.ok(await addTaskFileAttachment(db, users[1], boardId, task.id, { data: png, fileName: 'again.png', mimeType: 'image/png', fileSize: png.length }), 'persistence via db helper');
   await updateTask(db, users[1], boardId, task.id, { status: 'done' });
   const collaboration = await taskCollaboration(db, users[0], boardId, task.id);

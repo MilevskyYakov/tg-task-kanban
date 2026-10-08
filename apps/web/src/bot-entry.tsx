@@ -1,10 +1,37 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, json } from './api';
-import { Icon, Skeleton } from './app-shell';
+import { ActionRow, Icon, Skeleton } from './app-shell';
 import type { Board } from './domain';
 import { PairScreen } from './pair-board';
 
 export type EntryPath = 'personal' | 'pair' | 'group' | 'help';
+export function BoardEntryAction({ boardId }: { boardId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [opened, setOpened] = useState(false);
+  const lock = useRef(false);
+  const active = useRef(true);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  const open = async () => {
+    if (lock.current) return;
+    lock.current = true; setBusy(true); setError(''); setOpened(false);
+    try {
+      const { botUrl } = await api<{botUrl: string}>(`/api/boards/${boardId}/entry`);
+      if (!active.current) return;
+      if (window.Telegram?.WebApp?.openTelegramLink) window.Telegram.WebApp.openTelegramLink(botUrl);
+      else window.location.assign(botUrl);
+      setOpened(true);
+    } catch (caught) {
+      if (active.current) setError(caught instanceof ApiError ? caught.message : 'Не удалось открыть бота. Проверьте связь и повторите.');
+    } finally { lock.current = false; if (active.current) setBusy(false); }
+  };
+  return <div>
+    <ActionRow label="Вход в эту доску" value={busy ? 'Открываем бота…' : 'Получить сообщение для пересылки'} icon={<Icon name="send"/>} disabled={busy} onClick={() => void open()}/>
+    {error && <p className="pair-notice error" role="alert">{error}</p>}
+    {opened && <p className="pair-notice" role="status">В чате бота нажмите «Начать», если Telegram предложит. Затем перешлите сообщение с обложкой и ссылкой в нужный диалог.</p>}
+  </div>;
+}
+
 const guides = {
   personal: { title: 'Личные задачи', heading: 'Всё своё — в одном месте.', steps: [
     ['Добавьте задачу', 'Нажмите «+». Исполнитель и срок необязательны.'],

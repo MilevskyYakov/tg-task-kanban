@@ -95,7 +95,16 @@ test.describe('keyboard viewport', () => {
     await page.mouse.move(4, 200);
     await page.mouse.wheel(0, -2000);
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+    // Completion of an intentional scroll must not pull the editor back.
+    await page.evaluate(() => document.dispatchEvent(new Event('scrollend')));
+    expect(await page.evaluate(() => scrollY)).toBe(0);
     await page.keyboard.type(' текста');
+    await expectEditorAboveKeyboard(description, 400, 32);
+    // A later native scroll can override the two input animation frames.
+    await page.evaluate(() => {
+      window.scrollTo({ top: 0, behavior: 'instant' });
+      document.dispatchEvent(new Event('scrollend'));
+    });
     await expectEditorAboveKeyboard(description, 400, 32);
     await mkdir(evidence, { recursive: true });
     await page.screenshot({ path: `${evidence}/keyboard-create-${browserName}-${width}.png`, clip: { x: 0, y: 32, width, height: 400 } });
@@ -391,6 +400,12 @@ test('series resets assignee, deadline and notification while keeping project an
 const motionEvidence = fileURLToPath(new URL('../../../artifacts/evidence/issue-171/', import.meta.url));
 test.beforeAll(async () => { await mkdir(motionEvidence, { recursive: true }); });
 const haptics = (page: Page) => page.evaluate(() => (window as any).__haptics as string[]);
+async function pauseCreationClock(page: Page) {
+  // Use one timeline, not Node's wall clock racing the browser and IPC.
+  // Pause before submitting; the hour of headroom exceeds the test timeout.
+  await page.clock.install({ time: '2026-09-18T08:00:00Z' });
+  await page.clock.pauseAt('2026-09-18T09:00:00Z');
+}
 test('one live-region update per receipt, no repeat on return or reload', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await mockCreate(page);
@@ -434,8 +449,7 @@ for (const width of [320, 390]) for (const reducedMotion of ['no-preference', 'r
       await route.fallback();
     });
     await startCreation(page);
-    await page.clock.install();
-    await page.clock.pauseAt(new Date());
+    await pauseCreationClock(page);
     await page.evaluate(() => {
       (window as any).__accents = [];
       const animate = Element.prototype.animate;
@@ -492,7 +506,7 @@ test('series success never blocks or clears the next input; pending belongs to i
   const { requests } = await mockCreate(page);
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await startCreation(page, 'Одинаковое название');
-  await page.clock.install(); await page.clock.pauseAt(new Date());
+  await pauseCreationClock(page);
   const title = page.getByRole('textbox', { name: 'Что нужно сделать?' });
   const another = page.locator('.create-action button').last();
   await another.click();
@@ -637,7 +651,7 @@ test('leaving during success cancels old navigation, even after opening a new fo
   await mockCreate(page);
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await startCreation(page);
-  await page.clock.install(); await page.clock.pauseAt(new Date());
+  await pauseCreationClock(page);
   await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();
   await expect(page.locator('[data-create-state=success]')).toBeVisible();
   await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
@@ -794,14 +808,16 @@ for (const width of [320, 390]) {
       await page.evaluate(() => {
         (window as any).__motion = [];
         let previous = '';
+        const state = () => [...document.querySelectorAll<HTMLElement>('.create-action button')].map((item) => item.dataset.createState).join(',') || 'tasks';
         const sample = () => {
-          const buttons = [...document.querySelectorAll<HTMLElement>('.create-action button')];
-          const state = buttons.map((item) => item.dataset.createState).join(',') || 'tasks';
-          if (state !== previous) {
-            (window as any).__motion.push({ time: performance.now(), state }); previous = state;
+          const current = state();
+          if (current !== previous) {
+            (window as any).__motion.push({ time: performance.now(), state: current }); previous = current;
           }
-          requestAnimationFrame(sample);
         };
+        // Measure DOM-state duration; frame polling can miss the start under load.
+        // The video below remains the evidence of rendered motion, not this timer.
+        new MutationObserver(sample).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-create-state'] });
         sample();
       });
       await page.locator('.create-action button').last().hover();
@@ -814,13 +830,16 @@ for (const width of [320, 390]) {
       await expect(page.locator('.main-task-row')).toHaveCount(2);
       await page.waitForTimeout(800);
       const states = await page.evaluate(() => (window as any).__motion as { time: number; state: string }[]);
-      const success = states.find((item) => item.state === 'success,idle')!;
-      const returned = states.find((item) => item.state === 'tasks')!;
-      const confirmationMs = returned.time - success.time;
+      const success = states.find((item) => item.state === 'success,idle');
+      const returned = states.find((item) => item.state === 'tasks');
+      const confirmationMs = success && returned ? returned.time - success.time : 0;
+      await writeFile(`${motionEvidence}/motion-${width}.json`, JSON.stringify({ width, timing: 'dom-state', confirmationMs, states }, null, 2));
+      expect(success).toBeDefined();
+      expect(returned).toBeDefined();
       expect(confirmationMs).toBeGreaterThanOrEqual(280);
       expect(confirmationMs).toBeLessThan(1000);
       expect(await haptics(page)).toEqual(['soft', 'soft']);
-      await writeFile(`${motionEvidence}/motion-${width}.json`, JSON.stringify({ width, confirmationMs, states }, null, 2));
+
       await page.screenshot({ path: `${motionEvidence}/motion-result-${width}.png` });
     } finally {
       await context.close();

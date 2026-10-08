@@ -1,0 +1,570 @@
+{
+  "schema_version": 1,
+  "issue": "https://github.com/MilevskyYakov/tg-task-kanban/issues/176",
+  "generated_at": "2026-10-07T11:29:55.030105+00:00",
+  "branch": "MilevskyYakov/issue-176",
+  "base_commit": "58924f41b3b5f22ee5a4e3bab6a603d0262c5cde",
+  "status": "LOCAL_TEST_AND_FULL_UI_GATES_PASS",
+  "scope": "Local UI stabilization only; no commit, push, PR, merge, deployment or real Telegram sends.",
+  "report": "docs/issue-176-verification.md",
+  "supersedes": "artifacts/evidence/issue-176-review-verification.json",
+  "results": {
+    "test": {
+      "command": "npm run test",
+      "exit_code": 0,
+      "tests": 78,
+      "pass": 78,
+      "fail": 0,
+      "skipped": 0,
+      "log": "artifacts/evidence/issue-176-runtime/ui-stability-test-final.log"
+    },
+    "lint": {
+      "command": "npm run lint",
+      "exit_code": 0,
+      "note": "Project alias for typecheck",
+      "log": "artifacts/evidence/issue-176-runtime/ui-stability-lint-final.log"
+    },
+    "typecheck": {
+      "command": "npm run typecheck",
+      "exit_code": 0,
+      "log": "artifacts/evidence/issue-176-runtime/ui-stability-typecheck-final.log"
+    },
+    "build": {
+      "command": "npm run build",
+      "exit_code": 0,
+      "log": "artifacts/evidence/issue-176-runtime/ui-stability-build-final.log"
+    },
+    "focused_ui": {
+      "command": "npm run screenshots -w @task/web -- visual/branding.spec.ts visual/create.spec.ts --grep 'Tasca entry|creation feedback|series success never blocks|leaving during success|creation, series and reopening' --repeat-each 4",
+      "exit_code": 0,
+      "passed": 40,
+      "failed": 0,
+      "skipped": 0,
+      "log": "artifacts/evidence/issue-176-runtime/ui-stability-targeted-final.log"
+    },
+    "full_ui": {
+      "command": "npm run test:visual",
+      "exit_code": 0,
+      "passed": 291,
+      "failed": 0,
+      "skipped": 0,
+      "retries": 0,
+      "excluded_scenarios": [],
+      "log": "artifacts/evidence/issue-176-runtime/ui-stability-visual-full.log"
+    },
+    "clock_proof": {
+      "exit_code": 0,
+      "controlled_browser_skew_ms": 1000,
+      "callback_boundary_ms": 300,
+      "log": "artifacts/evidence/issue-176-runtime/ui-stability-clock-proof.log"
+    },
+    "reused_unchanged_api": {
+      "source_manifest": "artifacts/evidence/issue-176-review-verification.json",
+      "api_hash_mismatches": [],
+      "public_entry": {
+        "exit_code": 0,
+        "tests": 1,
+        "pass": 1,
+        "fail": 0,
+        "skipped": 0
+      },
+      "cutover": {
+        "exit_code": 0,
+        "tests": 2,
+        "pass": 2,
+        "fail": 0,
+        "skipped": 0,
+        "note": "Baseline API from 58924f4; old runtime remains incompatible after migration 017."
+      }
+    }
+  },
+  "limitations": [
+    "Chrome with isolated Playwright context and mocked Telegram; not physical iOS/Android Telegram acceptance.",
+    "Native scrollend enhancement retains the existing two-frame path on WebViews that do not emit this event.",
+    "Combined #175 package acceptance and production PostgreSQL gate remain separate.",
+    "Old runtime remains incompatible after migration 017; no runtime rollback approval is implied."
+  ],
+  "cleanup": {
+    "listening": {
+      "4177": false,
+      "4178": false,
+      "55476": false
+    },
+    "historical_input_perf_unchanged": true
+  },
+  "sources": [
+    {
+      "path": ".gitignore",
+      "bytes": 485,
+      "sha256": "f397d45eb7a74c867a0bc7352d47d672fe0ba0aac31e7c9e57555e25f9bc84bc"
+    },
+    {
+      "path": "README.md",
+      "bytes": 8684,
+      "sha256": "f2191ad1fa2e15d1c3ede22888487daea7cf0dbd06c0fc899b7997e260cbd5c3"
+    },
+    {
+      "path": "apps/api/migrations/017_chat_directions.sql",
+      "bytes": 4148,
+      "sha256": "bc77a023d8d4c2482da3721218a9dfc4cce2e5b85d1f529e0ab0a3a5b936d746"
+    },
+    {
+      "path": "apps/api/src/app.ts",
+      "bytes": 45563,
+      "sha256": "2ec7012bfa0eb5a2b31418e4218e4eb2c62d2f61922d57eae072d81ab3f65a2d"
+    },
+    {
+      "path": "apps/api/src/bot-entry.ts",
+      "bytes": 10501,
+      "sha256": "3eced972681428b7d880d9a9afe8ac3240ede9b802e73bcb8a5e02df15ac761c"
+    },
+    {
+      "path": "apps/api/src/chat-boards.ts",
+      "bytes": 19532,
+      "sha256": "08e5694030dd3f70a5475b99c67652fb89a27b69796e8ae54483da931b3fe827"
+    },
+    {
+      "path": "apps/api/src/db.ts",
+      "bytes": 50915,
+      "sha256": "866775cc797cb6a0bafe6283eb42d43d572a95676dd026408aef382c72ed16b6"
+    },
+    {
+      "path": "apps/api/src/mcp.ts",
+      "bytes": 56034,
+      "sha256": "cf7ad5eaa0bb38ee0faa5f7f73ee9e1557478b7057d3bc799aec00641369b399"
+    },
+    {
+      "path": "apps/api/src/migrate.ts",
+      "bytes": 1285,
+      "sha256": "32d21d4236531e995c7790403b1981e57f10ac1a77c3aa08a0c13ae7e43b8aa1"
+    },
+    {
+      "path": "apps/api/src/publications.ts",
+      "bytes": 19442,
+      "sha256": "2aba47bc06fd66e43a7282121f6eb15d1d7a236e15c22509247863112fc0e2c0"
+    },
+    {
+      "path": "apps/api/test/chat-board.test.ts",
+      "bytes": 21882,
+      "sha256": "93abc5747cbfa624d413a3c83def76b7a0df89b4ca85ab1926463253f2a97f8a"
+    },
+    {
+      "path": "apps/api/test/chat-directions.test.ts",
+      "bytes": 25985,
+      "sha256": "8b6192cff42410bda3bf32d2ada343956310e23cbbd0a00a99ff6590084f11fc"
+    },
+    {
+      "path": "apps/api/test/chat-migration.test.ts",
+      "bytes": 6046,
+      "sha256": "80a8721f9744e91b7505d4c8aa49cd349ee73e027f5c84c4bb6c26dfbcc34ccc"
+    },
+    {
+      "path": "apps/api/test/cutover.test.ts",
+      "bytes": 18052,
+      "sha256": "f942d29a0624104cc662952080d88c28246f8c1a88d30908e8f69bf3e636053d"
+    },
+    {
+      "path": "apps/api/test/publication-scheduler.test.ts",
+      "bytes": 1799,
+      "sha256": "862a61c1aa9c17cac3a952572705904b0fd1e1bbeaab99c132d891f3ac2690d7"
+    },
+    {
+      "path": "apps/api/test/publications.test.ts",
+      "bytes": 13484,
+      "sha256": "3540e2ad3df3088195759c024b34ae23bc0a91ad05ebe90f654d0603b5cc638b"
+    },
+    {
+      "path": "apps/web/playwright.config.ts",
+      "bytes": 743,
+      "sha256": "4d47979565626ebd4bffc4c3a5a797cbb682963c680027f9f752fdd4891f0e19"
+    },
+    {
+      "path": "apps/web/src/chat-boards.tsx",
+      "bytes": 15658,
+      "sha256": "9923ce6aedfd2d690b3f172630e15f95590aedcbddd0508249e45136f9dff8d8"
+    },
+    {
+      "path": "apps/web/src/domain.ts",
+      "bytes": 1704,
+      "sha256": "46d2325629eb6302eec3b6bfd71f856c0f4dd7d6fd24fac26927f1c43c174477"
+    },
+    {
+      "path": "apps/web/src/environment.ts",
+      "bytes": 6977,
+      "sha256": "3584817cc17441c59803ccb9f2506aef78e1fb6f83bdf0d62d3c03448f46730b"
+    },
+    {
+      "path": "apps/web/src/main.tsx",
+      "bytes": 105533,
+      "sha256": "30b4ebdc97a13e3f0be597cef08e55e56e4c00f749afa38fa1d5c797f6107db4"
+    },
+    {
+      "path": "apps/web/src/settings-editor.tsx",
+      "bytes": 20824,
+      "sha256": "8cc2ed19846ee87bfe06a04ac7c14076af438fd9818c7848fbf020f3a40de601"
+    },
+    {
+      "path": "apps/web/src/style.css",
+      "bytes": 81168,
+      "sha256": "9463a41d6bb310c8a8b959eb66a4da8716831af8b437bd9cb5870ba505f65ce9"
+    },
+    {
+      "path": "apps/web/visual/README.md",
+      "bytes": 3974,
+      "sha256": "bea27ba45a7d3839ab0943a64b189a1a9955fea59577fc23de3f3208e40a43ac"
+    },
+    {
+      "path": "apps/web/visual/branding.spec.ts",
+      "bytes": 4208,
+      "sha256": "24b656e54ec4009e6ed9ceeb90230fbbc868e7935d326b9347c008623efa990c"
+    },
+    {
+      "path": "apps/web/visual/chat-directions.spec.ts",
+      "bytes": 12784,
+      "sha256": "e0cb58a11f1ac84259c3ca7adb99df0d523588597b0d3c95c182b17288423ea1"
+    },
+    {
+      "path": "apps/web/visual/create.spec.ts",
+      "bytes": 56096,
+      "sha256": "63710c774649be8f88920da449b12351e4a9fbc5d0d6183850e5273e849b2837"
+    },
+    {
+      "path": "apps/web/visual/entry.spec.ts",
+      "bytes": 18858,
+      "sha256": "e09f7dbb01f3cb31295d0f0da1c5d94f02f6717c36a3303ef9bc829cfcec7056"
+    },
+    {
+      "path": "apps/web/visual/settings-autosave.spec.ts",
+      "bytes": 28174,
+      "sha256": "7d51711c049c99cc9050be9dd5377d5a4cad8e355147e2bb025358e8e9ffc59d"
+    },
+    {
+      "path": "docs/issue-176-decisions.md",
+      "bytes": 6832,
+      "sha256": "d7329ede9f77a9902a2ece433065016a33cea59eb22172a069cebc1edbab21e7"
+    },
+    {
+      "path": "docs/issue-176-verification.md",
+      "bytes": 27187,
+      "sha256": "494aca086bfc4afcf7bec0a6d82e27b77e1da12a3adc0c8216810a9285441647"
+    },
+    {
+      "path": "docs/tasca-cutover-runbook.md",
+      "bytes": 44047,
+      "sha256": "6f58bc3db98eb08ca9f1f06b131349cba31dca9acb6023e2d19ac86b0179f647"
+    },
+    {
+      "path": "docs/telegram-polling-runbook.md",
+      "bytes": 13301,
+      "sha256": "0bad5121a87f86003ab1a12d6de0061d60ee574ea8ecfc0cd7265f5f59911949"
+    },
+    {
+      "path": "package.json",
+      "bytes": 1497,
+      "sha256": "db63bb4dc0a59c90f30d7d020c332de526cde968270ff33e69c482a16e11ae93"
+    }
+  ],
+  "sources_digest_sha256": "8baec283cbaa7176ed63170afe753bbfe7d915fae465c1a7ba41a60a807a72f3",
+  "artifacts": [
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-branding-cascade-repeat.log",
+      "bytes": 105356,
+      "sha256": "ebd965709bd0d5d963c6d3e6ca8dcae555e018ae0a2d01d1a643e20303065912"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-branding-cascade.log",
+      "bytes": 259,
+      "sha256": "6da6268b4a30e2f7ddf53604478948eca8ac9aa32271842d850bf931b64e5f1e"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-branding-diagnostic.log",
+      "bytes": 6115,
+      "sha256": "6b94c8fe8ef3051bce4d2520c802579bb54f3bc48c2360a91b371fd332145da1"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-branding-styles.log",
+      "bytes": 2439,
+      "sha256": "5e4195f95fc1151fb2c4910754e2c4bbf3f85e83006d08a033b45a44ae1a3f9a"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-branding-transitions.log",
+      "bytes": 71659,
+      "sha256": "3cab8bb72e4a2eb39d7e2598dd95de1a3b0d95de59a542d6ebb086d13a096542"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-build-final.log",
+      "bytes": 485,
+      "sha256": "0b3f5649ce1576e696ab0ee605a200dcd31cc21974457c659881336b29fbd3c7"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-clock-proof.log",
+      "bytes": 111,
+      "sha256": "394de870957315071eae2ab93497a40117a224b9fba92fade86d8492c1a76fee"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-input-perf.jsonl",
+      "bytes": 1414,
+      "sha256": "e3cbe75ab7a48579b9ffc80a0a9b38e32a3c74a8615881b3e145a62f2f8d3b97"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-keyboard-diagnostic.log",
+      "bytes": 33876,
+      "sha256": "34538bb5c4bf0786453bada6a58ef1596b0918b3c9847621550a61b701b90d93"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-keyboard-no-anchor.log",
+      "bytes": 33764,
+      "sha256": "4353b9ce4cf957f6862fe8353f4bc523172a3112a117dfe8d922c337dd37e229"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-keyboard-scroll-calls.log",
+      "bytes": 7744,
+      "sha256": "47bfeed8bfdf910fc525d70f6f927a376fde5d54d645f00ad78ffd42b5e888cb"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-keyboard-scrollend-armed.log",
+      "bytes": 1210,
+      "sha256": "23be0be22985679a54aea45e4508f0089bac324ed8cafa191e41d2b7052bbf88"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-keyboard-scrollend.log",
+      "bytes": 35615,
+      "sha256": "efeb999a98d8799b1f5c71cf2315c539dd838f773f79f2931e3cad842d8421a4"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-lint-final.log",
+      "bytes": 151,
+      "sha256": "f27c57d111ab615aefb7b53e78a6b4d58087630d3a0142331957e136bcfb25ff"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-shutdown.log",
+      "bytes": 56,
+      "sha256": "ca19178a35ab4153b75b494963b66ce8243e1b94c173107c87b44d09db23652d"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-targeted-final.log",
+      "bytes": 5240,
+      "sha256": "a8a294e288705b1ee3fbd01d55e76ed9534ad6a24e00b43e76756fc63f898525"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-targeted.log",
+      "bytes": 6102,
+      "sha256": "27272886b8209663a7df24e9cb8547ba520ad3de36ae89c27023817d40538fb1"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-test-final.log",
+      "bytes": 477377,
+      "sha256": "21273371a94c918c94a42f2ca062b41c8bd924f5566511e308866f8ae9d719a2"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-typecheck-final.log",
+      "bytes": 122,
+      "sha256": "335bd39015b554dbf591809dad6e83edbc369c6c4fc63dd0169349145cc5543b"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/ui-stability-visual-full.log",
+      "bytes": 1837070,
+      "sha256": "88d82f0d271ef8fdd291dcde6c4910cc6d357446d7d6835e9b5fd3536b8cd9e5"
+    },
+    {
+      "path": "artifacts/visual-evidence/tasca-auth-error-320.png",
+      "bytes": 12612,
+      "sha256": "93fa61cf96384a123f9fb46e5dbfa8369f8da013f3bcefa568f0eef0731f2d1a"
+    },
+    {
+      "path": "artifacts/visual-evidence/tasca-denied-320.png",
+      "bytes": 16861,
+      "sha256": "eed15b4617d143c996e7e121d4eb59c5ec03280f3159414e0e936ee9d6fe26f0"
+    },
+    {
+      "path": "artifacts/visual-evidence/tasca-empty-320.png",
+      "bytes": 35377,
+      "sha256": "43086933a3d672b5d8959c00ddef2473004dc3d3fc19ba3415a80b9445c8ec2b"
+    },
+    {
+      "path": "artifacts/visual-evidence/tasca-fallback-320.png",
+      "bytes": 149235,
+      "sha256": "e0d0fc939c77039b51f58c02d0e9d8bcb6b9c9b29c85f755a2e536a266cafea9"
+    },
+    {
+      "path": "artifacts/visual-evidence/tasca-loading-320.png",
+      "bytes": 18035,
+      "sha256": "1ff125f039307c7032f12270c78ac078ccc3969718fd524444e18c8ab3e09f32"
+    },
+    {
+      "path": "artifacts/visual-evidence/tasca-material-320.png",
+      "bytes": 67672,
+      "sha256": "f8750d74a286df31036541924a9b09e0fc6e7b7a4a278eb72ee2a8cb57c26de1"
+    },
+    {
+      "path": "artifacts/visual-evidence/tasca-offline-320.png",
+      "bytes": 43353,
+      "sha256": "7058db84203782d9ad681c87c660ed13bde4467a60ed6a873873fbb66bef228b"
+    },
+    {
+      "path": "artifacts/visual-evidence/tasca-outside-320.png",
+      "bytes": 80491,
+      "sha256": "6aad7fbe554635697602cc5b2a178ea7b97c95ec676041adf7e8c063dc714890"
+    },
+    {
+      "path": "artifacts/visual-evidence/tasca-auth-error-390.png",
+      "bytes": 13167,
+      "sha256": "473951a49888c7b24e861009a4432dfc23bf4cdc6ca638b7f21fbe6e299507c8"
+    },
+    {
+      "path": "artifacts/visual-evidence/tasca-denied-390.png",
+      "bytes": 16604,
+      "sha256": "3d9889835a0c24dd80dece4068dfff2090df2347df40be17b6bfce4bff99368b"
+    },
+    {
+      "path": "artifacts/visual-evidence/tasca-empty-390.png",
+      "bytes": 36412,
+      "sha256": "f07277ffa3b88598df60dab3891c0f65cc836a8a9e5ce94292dc0c3d5395daf2"
+    },
+    {
+      "path": "artifacts/visual-evidence/tasca-fallback-390.png",
+      "bytes": 172595,
+      "sha256": "6bc31714f446941f9b56945f5278339a2375cbbefafa84751aa7faeb5891abcc"
+    },
+    {
+      "path": "artifacts/visual-evidence/tasca-loading-390.png",
+      "bytes": 20948,
+      "sha256": "8f88872bce0d346b34c98d058b71d9d05852f0afc101859cc1248ee5e80a377b"
+    },
+    {
+      "path": "artifacts/visual-evidence/tasca-material-390.png",
+      "bytes": 63882,
+      "sha256": "8d880ee3ae734bcf827cc2119491ba28705a8cf7067937f280153eae001ca865"
+    },
+    {
+      "path": "artifacts/visual-evidence/tasca-offline-390.png",
+      "bytes": 44709,
+      "sha256": "cd9b0b45667bd68d1897232e3fd164d116af96327249ebfb8e2b2c414596ee14"
+    },
+    {
+      "path": "artifacts/visual-evidence/tasca-outside-390.png",
+      "bytes": 89536,
+      "sha256": "d306f47f98952ea44bd331df61e7552b5dc91db0191e16b437e084a0a47a2d09"
+    },
+    {
+      "path": "artifacts/visual-evidence/keyboard-create-chromium-320.png",
+      "bytes": 88029,
+      "sha256": "47a6046cb463d9176391ea2244f1026ed0bc571267647fceb71a4446a398b743"
+    },
+    {
+      "path": "artifacts/visual-evidence/keyboard-create-chromium-390.png",
+      "bytes": 100835,
+      "sha256": "6250258cdb863fed73a8b50e39261c18b07bad7280d3b748b08b018b7add3cf2"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-access-revoked-320.png",
+      "bytes": 18224,
+      "sha256": "1df523ca9fbe9d6b8b8b14dbe6c92fc8260337bc29caf4da4030d9c68dbba9de"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-access-revoked-390.png",
+      "bytes": 18261,
+      "sha256": "d4b8bdf412711e78b355f04f0711afdc7b8332709de3a53aa4d37dda6560eec6"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-chooser-320.png",
+      "bytes": 79261,
+      "sha256": "718eeaafe28b4bd42ad18cd01d22f9f9e7385b5320ec7a171053b5516b7837fd"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-chooser-390.png",
+      "bytes": 88139,
+      "sha256": "6c7f58ce821596acdea2f85f8a3272f71ddc4835989db7757d26357964218743"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-confirmation-320.png",
+      "bytes": 55695,
+      "sha256": "1dab3a429044406a9355482d725e9e12ed8a32eb8109a63c4013e3792f8abae5"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-confirmation-390.png",
+      "bytes": 61801,
+      "sha256": "ecdef37a72cbbb682529191a63e1589ba50cbfb8fb6fddcc6c256ffca0716d26"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-empty-direction-320.png",
+      "bytes": 70158,
+      "sha256": "f9d7704dd890ee2fb4181396ebde3f815d5dd846f49ec2b2797642c59ad7e6c7"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-empty-direction-390.png",
+      "bytes": 72409,
+      "sha256": "047351d83a4a14859c2369255adccf14dc544f675e6ecfb00cac8fc51bdb78b9"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-empty-summary-320.png",
+      "bytes": 58642,
+      "sha256": "967a1fdbe78286b7fd8c1881e418ba45da58ed4d268165006515e90e9d271acf"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-empty-summary-390.png",
+      "bytes": 62160,
+      "sha256": "613a4c4ffb41e39db4f207ffc80a1e2180b61fce263ad1f34d7a2f07e4034253"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-general-link-320.png",
+      "bytes": 69865,
+      "sha256": "ca751756c23b66f948517d3fc5fe418cae034f4dad7c40fd5a9434204d3b7bc1"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-general-link-390.png",
+      "bytes": 77391,
+      "sha256": "95e315648c24f39614f9462b2017a81d2243d256a10e32eb6e66e9653ba6e49d"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-general-link-text200-320.png",
+      "bytes": 60866,
+      "sha256": "bf85027702f3671a4c00a0d980822384c68e2c8d28fbd9086e2415a326a34bb2"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-general-link-text200-390.png",
+      "bytes": 75598,
+      "sha256": "bd50797d53697fa843adde52a838cab2a3ac36144b21cd521cfa0947896b3bcf"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-keyboard-viewport-320.png",
+      "bytes": 26269,
+      "sha256": "a7784cbad8f1b9aa9cdbdc5a305f2568566a1f01de9feec81fdaa0967465e4d0"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-keyboard-viewport-390.png",
+      "bytes": 35623,
+      "sha256": "e9bc813d9f28bef11302e4707fa76e67b4fdc14fdd4ab986c285588ec0196aa2"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-lost-response-320.png",
+      "bytes": 52282,
+      "sha256": "95fe93bee9b1ca7748179746cd9d9d0d008b750ed806c80cad3d6ca54bf0a0ff"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-lost-response-390.png",
+      "bytes": 61246,
+      "sha256": "06535384136f8790b97c9c0aef801bc1052b819ee9c06b5b7e7198476e348eb9"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-selected-summary-320.png",
+      "bytes": 58491,
+      "sha256": "93b100597d400872d9d7af9d3a668e42dc890884a513a05df2f099f056de094c"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-selected-summary-390.png",
+      "bytes": 58963,
+      "sha256": "f95ed399832d101c43cc35819874022ce872481661598bd764c22a61aa7f5348"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-text200-320.png",
+      "bytes": 48355,
+      "sha256": "07323b0e816995f8bfeed028954d658f1123c8e55ac850cd2779b1523264b53e"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-text200-390.png",
+      "bytes": 59014,
+      "sha256": "c7a54ac1f962de07bc9bfd51755c44b8009fcd7be2d99b3751f9ea8007ea314b"
+    }
+  ]
+}

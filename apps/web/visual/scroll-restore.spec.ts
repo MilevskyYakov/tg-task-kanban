@@ -83,6 +83,8 @@ async function openList(page: Page, width: number, options: MockOptions = {}) {
   } else {
     await expect(page.locator('.main-task-row')).toHaveCount(30);
   }
+  // Rows must render before waiting for their font; font-display: swap changes scroll geometry.
+  await expect(page.locator('body')).toHaveCSS('margin', '0px');
   await page.evaluate(() => document.fonts.ready);
 }
 
@@ -119,6 +121,11 @@ async function expectRestored(page: Page, expectedY: number, row: ReturnType<Pag
 
 for (const width of [390, 320]) {
   test(`list ${width}x844: back returns to the original scroll position`, async ({ page }) => {
+    // A slow font must finish loading before the test records its scroll target.
+    await page.route('**/fonts/manrope-variable.ttf', async route => {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      await route.continue();
+    });
     await openList(page, width);
     await scrollToPosition(page, 1200);
     const index = await pickVisibleRowIndex(page, {});

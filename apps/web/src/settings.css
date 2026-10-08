@@ -1,0 +1,130 @@
+/* Approved #182 v2. Settings and their nested surfaces only; task/landing styles stay unchanged. */
+.settings-screen:not(:has(> .settings-root)) { gap: 12px; }
+.settings-detail-header, .mcp-form-screen > header, .pair-screen > header { padding: 12px 14px; border: 1px solid #FFFFFFCC; border-radius: 26px; background: var(--opal); box-shadow: inset 0 1px 0 #FFFFFFE6, 0 12px 24px -14px #183C2C44; }
+.settings-header-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.settings-header-mark { display: grid; place-items: center; margin-left: auto; width: 32px; height: 32px; flex: 0 0 32px; border: 1px solid #FFFFFFB3; border-radius: 50%; background: #FFFFFF80; box-shadow: var(--shadow-control); }
+.settings-header-mark .icon { width: 20px; height: 20px; }
+.settings-screen .settings-detail-header h1, .mcp-form-screen > header h1, .pair-screen > header h1 { margin: 4px 0 8px; font: 550 1.75rem/1.25 var(--font-ui); letter-spacing: -.03em; min-width: 0; }
+.settings-detail-header p { max-width: none; font-size: .875rem; }
+.settings-screen .settings-back { margin: -8px 0 0; padding: 8px 0; min-height: 44px; border: 0; background: transparent; box-shadow: none; font-size: .875rem; }
+.settings-label { margin: 4px 0 0; }
+
+.settings-screen .settings-list-row { border: 1px solid #FFFFFFE6; border-radius: 22px; background: var(--card-fill); box-shadow: var(--shadow-card); }
+.settings-group, .settings-screen .disclosure, .mcp-create > fieldset, .mcp-summary, .pair-content { padding: 14px; border: 1px solid #FFFFFFE6; border-radius: 26px; background: var(--card-fill); box-shadow: inset 0 1px 0 #fff, 0 4px 8px #223E2608, 0 16px 28px -14px #223E2640; min-width: 0; }
+.settings-group[data-tone=board] { background: radial-gradient(ellipse at 100% 0%,#DEEBD4,transparent 70%),var(--card-fill); }
+.settings-group.account-profile { background: var(--accent-fill); }
+.settings-group h2 { display: flex; align-items: center; gap: 10px; }
+.settings-group h2 .icon, .settings-screen .action-row-icon, .settings-screen .disclosure > button > .icon:first-child { box-sizing: border-box; flex: 0 0 32px; width: 32px; height: 32px; padding: 6px; border-radius: 12px; color: var(--primary); background: linear-gradient(145deg,#F0F5DF,#CADFBF); border: 1px solid #FFFFFFB3; box-shadow: inset 0 1px 0 #FFFFFFCC, 0 4px 8px -5px #183C2C44; }
+.settings-group[data-tone=project] h2 .icon, .settings-group[data-tone=assignee] h2 .icon { background: linear-gradient(145deg,#FFF5DC,#E9D8AF); }
+.settings-screen .action-row-icon .icon { width: 18px; height: 18px; }
+:is(.settings-screen, .mcp-screen, .pair-screen, .chat-board-sheet, .settings-choice-sheet, .sheet:has(.mcp-sheet)) :is(h2, legend) { margin: 0 0 10px; font: 600 1.125rem/1.35 var(--font-ui); letter-spacing: -.015em; }
+:is(.settings-screen, .mcp-screen, .pair-screen, .chat-board-sheet, .settings-choice-sheet, .sheet:has(.mcp-sheet)) h3 { margin: 0 0 8px; font-size: 1rem; }
+:is(.settings-screen, .mcp-screen, .pair-screen, .chat-board-sheet, .settings-choice-sheet, .sheet:has(.mcp-sheet)) :is(p, small) { font-size: .875rem; line-height: 1.55; }
+:is(.settings-screen, .mcp-screen, .pair-screen, .chat-board-sheet, .settings-choice-sheet, .sheet:has(.mcp-sheet)) :is(strong, label, span, li) { min-width: 0; overflow-wrap: anywhere; }
+:is(.settings-screen, .mcp-screen, .pair-screen, .chat-board-sheet, .settings-choice-sheet, .sheet:has(.mcp-sheet)) button { max-width: 100%; min-height: 48px; font-size: .9375rem; line-height: 1.45; white-space: normal; overflow-wrap: anywhere; }
+:is(.settings-screen, .mcp-screen, .pair-screen, .chat-board-sheet, .settings-choice-sheet, .sheet:has(.mcp-sheet)) :is(input:not([type=checkbox]):not([type=radio]), select) { width: 100%; min-width: 0; max-width: 100%; min-height: 46px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 16px; background: linear-gradient(145deg,#fff,#F4F7EF); box-shadow: inset 0 2px 4px #183C2C08, 0 1px 0 #fff; font: 400 1rem/1.4 var(--font-ui); color: var(--text); }
+:is(.settings-screen, .mcp-screen, .pair-screen, .chat-board-sheet, .sheet:has(.mcp-sheet)) :is(input, select)[aria-invalid=true] { border-color: var(--danger); }
+.settings-form, .settings-groups, .settings-list { gap: 10px; }
+.settings-groups { gap: 12px; }
+.settings-form label:not(:has(input[type=checkbox])), .publications label:not(:has(input[type=checkbox])), .mcp-name, .pair-name, .chat-board-sheet label:not(:has(input[type=checkbox])) { display: grid; gap: 5px; font-size: .875rem; color: var(--text-muted); }
+.settings-form.inline-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.settings-form.inline-form > :is(label, input) { flex: 1 1 9rem; }
+.settings-form.inline-form > button { flex: 0 1 auto; padding-inline: 12px; }
+.settings-name-editor + .settings-name-editor { padding-top: 10px; margin-top: 10px; border-top: 1px solid #BDCCB580; }
+.settings-name-editor .inline-form { margin-top: 0; }
+.settings-field-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,7rem),1fr)); gap: 10px; align-items: end; }
+.settings-field-grid > * { min-width: 0; }
+.settings-screen .action-row { grid-template-columns: 32px minmax(0,1fr) 16px; min-height: 62px; gap: 8px; padding: 10px; border: 1px solid #FFFFFFE6; border-radius: 20px; background: linear-gradient(140deg,#fff,#EDF3E7); box-shadow: var(--shadow-control); }
+.settings-screen .action-row:not(:has(.action-row-icon)) { grid-template-columns: minmax(0,1fr) 16px; }
+.settings-screen .action-row-copy strong { font-size: 1rem; font-weight: 600; line-height: 1.4; white-space: normal; }
+.settings-screen .action-row-copy > span { font-size: .875rem; }
+.settings-screen .action-row > .icon { width: 16px; height: 16px; }
+.settings-screen .avatar { width: 2.5rem; height: 2.5rem; flex: 0 0 2.5rem; font-size: .875rem; white-space: nowrap; background: linear-gradient(140deg,#F5ECD6,#CCE2C4); color: var(--text); border: 1px solid #FFFFFFCC; box-shadow: var(--shadow-control); }
+.settings-screen .automation-row { flex-wrap: wrap; gap: 8px; margin-top: 10px; padding-top: 10px; }
+.settings-screen .automation-row > span { flex: 1 1 8rem; }
+.settings-screen .disclosure > button { gap: 10px; padding: 0; font-size: 1.125rem; font-weight: 600; }
+.settings-screen .disclosure > div { padding: 10px 0 0; }
+.settings-screen .publications { padding: 0; gap: 16px; border: 0; border-radius: 0; }
+.settings-screen .publications > fieldset { display: grid; gap: 10px; margin: 0; padding: 12px; border: 0; border-radius: 20px; background: linear-gradient(140deg,#F0F5E8,#E5EEDB); min-width: 0; }
+.settings-screen .publications > fieldset + fieldset { margin-top: 4px; }
+.settings-screen .publications > fieldset > legend { float: left; width: 100%; margin-bottom: 0; }
+.settings-screen .publications legend { padding: 0; }
+.settings-screen .publications label { margin: 0; }
+:is(.settings-screen, .chat-board-sheet) label:has(input[type=checkbox]) { display: flex; align-items: center; gap: 12px; min-height: 48px; font-size: .9375rem; line-height: 1.45; }
+:is(.settings-screen, .chat-board-sheet) input[type=checkbox] { appearance: auto; width: 22px; height: 22px; min-height: 22px; flex: 0 0 22px; margin: 0; padding: 0; accent-color: var(--primary); }
+.settings-screen .publications .status-options { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,6.5rem),1fr)); gap: 4px 10px; }
+.settings-screen .publications section { margin: 0; }
+.settings-screen .publications pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8125rem; }
+.settings-feedback:empty { display: none; }
+.settings-feedback { display: grid; gap: 8px; margin-top: 8px; }
+.settings-feedback p { margin: 0; }
+.settings-feedback .detail-save-state { justify-self: start; padding: 4px 8px; border-radius: 10px; background: var(--green-soft); font-size: .875rem; }
+.settings-feedback .detail-save-state[data-state=error] { background: var(--coral-soft); color: var(--danger); }
+.settings-feedback .detail-save-state[data-state=pending], .settings-feedback .detail-save-state[data-state=saving] { background: #F5ECD6; }
+.settings-feedback section, .settings-feedback [role=alert], .chat-board-sheet [role=alert], .mcp-screen .mcp-feedback, .mcp-sheet [role=alert] { margin: 0; padding: 12px; border: 1px solid #C89D8D; border-radius: 18px; background: linear-gradient(125deg,#FBEEE0,#F0DACA); color: var(--text); }
+.settings-feedback section button { margin-top: 8px; }
+.settings-screen .detail-conflict-values { font-size: .875rem; }
+.settings-choice-sheet .choice-row, .sheet:has(.mcp-sheet) .choice-row, .chat-board-sheet .choice-row { padding: 10px 12px; border-radius: 18px; min-width: 0; }
+.settings-choice-sheet .choice-row > span, .sheet:has(.mcp-sheet) .choice-row > span, .chat-board-sheet .choice-row > span { min-width: 0; overflow-wrap: anywhere; }
+.settings-choice-sheet .choice-marker, .sheet:has(.mcp-sheet) .choice-marker, .chat-board-sheet .choice-marker { flex: 0 0 22px; }
+.mcp-screen .mcp-form-screen { min-height: 0; gap: 12px; }
+.mcp-form-screen > header { display: grid; margin: 0; gap: 4px; }
+.mcp-form-screen > header .icon-button { margin: 0; padding: 0; flex: 0 0 44px; }
+.mcp-screen .mcp-create, .mcp-screen .mcp-secret { gap: 12px; }
+.mcp-create > fieldset { display: grid; gap: 10px; margin: 0; }
+.mcp-screen .mcp-name input { margin: 0; }
+.mcp-screen .action-row, .mcp-screen .mcp-modes .choice-row { min-height: 62px; padding: 10px 12px; margin: 0; border-radius: 20px; }
+.mcp-screen .mcp-modes { gap: 8px; }
+.mcp-screen .mcp-modes + p, .mcp-create fieldset > p + p { margin: 0; }
+.mcp-screen .mcp-list { display: grid; gap: 10px; }
+.mcp-screen .mcp-list .action-row { min-height: 80px; }
+.mcp-screen .mcp-primary { min-height: 48px; margin: 12px 0 0; }
+.mcp-screen .mcp-actions { gap: 8px; padding-top: 12px; margin-top: 0; }
+.mcp-screen .mcp-actions button { min-height: 48px; }
+.mcp-screen .mcp-summary { display: grid; gap: 10px; margin: 0; background: var(--card-fill); }
+.mcp-screen .mcp-summary p { margin: 6px 0 0; }
+.mcp-screen .mcp-details { display: grid; gap: 14px; }
+.mcp-screen .mcp-details h2, .mcp-screen .mcp-summary h2 { margin: 0; }
+.mcp-screen .mcp-details ul { margin-block: 8px; }
+.mcp-state { justify-self: start; padding: 4px 10px; border-radius: 10px; background: var(--green-soft); color: var(--primary); font-size: .8125rem; }
+.mcp-state[data-revoked=true] { background: var(--coral-soft); color: var(--danger); }
+.mcp-muted, .mcp-facts dt, .mcp-header-values dt { color: var(--text-muted); }
+.mcp-facts { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,8rem),1fr)); gap: 12px; margin: 0; padding-block: 12px; border-block: 1px solid #BDCCB580; font-size: .875rem; }
+.mcp-facts dd, .mcp-header-values dd { margin: 4px 0 0; }
+.mcp-summary ul { margin: 8px 0 0; padding-left: 20px; font-size: .875rem; line-height: 1.6; }
+.mcp-credentials { display: grid; gap: 10px; min-width: 0; padding: 14px; border-radius: 26px; background: var(--card-fill); box-shadow: var(--shadow-card); }
+.mcp-screen .mcp-credentials :is(p,h3), .mcp-screen .mcp-credentials .mcp-address { margin: 0; }
+.mcp-address { display: grid; gap: 8px; }
+.mcp-screen .mcp-address .mcp-code, .mcp-sheet .mcp-address .mcp-code { margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--surface-soft); }
+.mcp-revoke { display: grid; gap: 8px; padding: 4px 14px; }
+.mcp-revoke p { margin: 0; color: var(--text-muted); }
+.mcp-screen .mcp-feedback[role=status] { border: 0; background: var(--green-soft); }
+.mcp-screen .mcp-empty { margin: 0 0 12px; padding: 14px; border-radius: 26px; background: var(--card-fill); box-shadow: var(--shadow-card); }
+.mcp-screen .mcp-secret h2 + p, .mcp-screen .mcp-address { margin: 0 0 12px; }
+.mcp-sheet { gap: 10px; }
+.mcp-sheet .mcp-help-steps { gap: 14px; padding-left: 22px; }
+.mcp-sheet .mcp-help-steps ul { gap: 8px; }
+.mcp-sheet .mcp-client-picker { grid-template-columns: repeat(auto-fit,minmax(min(100%,8rem),1fr)); padding: 4px; gap: 4px; border-radius: 18px; background: #E3EBDD; }
+.mcp-sheet .mcp-client-picker button { border: 0; border-radius: 14px; box-shadow: none; background: transparent; }
+.mcp-sheet .mcp-client-picker button[aria-pressed=true] { background: #fff; box-shadow: 0 2px 6px #183C2C12; color: var(--primary); font-weight: 600; }
+.mcp-sheet .mcp-client-picker button:first-child { grid-column: 1 / -1; }
+.mcp-sheet .mcp-client-picker button:last-child { grid-column: auto; }
+.mcp-help-sheet .mcp-help-steps { padding: 0; list-style: none; counter-reset: mcp-step; }
+.mcp-help-sheet .mcp-help-steps > li { display: grid; gap: 10px; counter-increment: mcp-step; padding: 14px; border-radius: 20px; background: #FFFFFFA6; }
+.mcp-help-sheet .mcp-help-steps > li::before { content: "Шаг " counter(mcp-step); color: var(--primary); font-size: .8125rem; font-weight: 600; }
+.mcp-help-sheet .mcp-help-steps :is(h3,p,pre), .mcp-help-sheet .mcp-address { margin: 0; }
+.mcp-header-values { display: grid; gap: 10px; padding: 12px; margin: 0; border-radius: 12px; background: var(--surface-soft); }
+.mcp-screen .mcp-auto, .mcp-sheet .mcp-auto { padding: 12px; border: 1px solid #A8BFA0; border-radius: 18px; background: linear-gradient(130deg,#EDF4E4,#DCEBCF); }
+.pair-screen { gap: 12px; }
+.pair-screen > header h1[tabindex="-1"]:focus { outline: none; }
+.pair-content { gap: 10px; }
+.pair-screen .pair-fact { padding: 10px 0; font-size: 1rem; }
+.pair-screen .pair-fact > .icon { flex: 0 0 20px; }
+.pair-screen .pair-notice { padding: 12px 14px; border: 1px solid var(--border); border-radius: 20px; }
+.pair-screen .pair-actions { margin-top: 0; padding-top: 0; }
+.chat-board-sheet > section, .chat-board-sheet .settings-form { min-width: 0; }
+.chat-board-sheet > .settings-form, .chat-board-sheet section[aria-label="Подтверждение состава"] { padding: 12px; border: 1px solid var(--border); border-radius: 20px; background: var(--accent-fill); }
+.chat-board-sheet .chat-member { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.chat-board-sheet .chat-member strong { flex: 1 1 8rem; }
+.chat-board-sheet .settings-form { border: 0; margin: 0; }
+@media (max-width: 340px) { .settings-group, .settings-screen .disclosure, .mcp-create > fieldset, .mcp-summary, .pair-content { padding: 12px; } }

@@ -23,3 +23,9 @@ export const json = (method: string, body: unknown): RequestInit => ({
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify(body)
 });
+
+export function imageUpload(file: File, requestId: string = crypto.randomUUID()): RequestInit {
+  const body = new FormData();
+  body.append('file', file);
+  return { method: 'POST', headers: { 'x-upload-id': requestId }, body };
+}

@@ -22,3 +22,8 @@ export async function isChatAdmin(botToken: string, chatId: string | number, tel
   const member = await telegramCall<{status: string}>(botToken, 'getChatMember', { chat_id: chatId, user_id: telegramUserId });
   return member.status === 'creator' || member.status === 'administrator';
 }
+
+export async function isChatMember(botToken: string, chatId: string | number, telegramUserId: string | number) {
+  const member = await telegramCall<{status: string; is_member?: boolean}>(botToken, 'getChatMember', { chat_id: chatId, user_id: telegramUserId });
+  return ['creator', 'administrator', 'member'].includes(member.status) || (member.status === 'restricted' && member.is_member === true);
+}

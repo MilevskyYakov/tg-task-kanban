@@ -240,6 +240,9 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
   const [historyOpen, setHistoryOpen] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const uploadInFlight = useRef(false);
+  const imageInput = useRef<HTMLInputElement>(null);
+  const [uploadFeedback, setUploadFeedback] = useState<{ text: string; error?: boolean }>();
   const [seriesConfirmation, setSeriesConfirmation] = useState<{ draft: TaskDraft; version: string; recurrenceVersion: string }>();
   const [seriesWorking, setSeriesWorking] = useState(false);
   const seriesInFlight = useRef(false);
@@ -489,6 +492,42 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     catch (caught) { setError(caught instanceof Error ? caught.message : 'Ошибка'); }
     finally { setBusy(false); }
   };
+  const uploadImage = (file: File) => {
+    if (readOnly || busy || uploadInFlight.current) return;
+    uploadInFlight.current = true;
+    setUploadFeedback({ text: 'Изображение загружается…' });
+    void run(async () => {
+      try {
+        await onFileAttachment(file);
+        setUploadFeedback({ text: 'Изображение сохранено во вложениях.' });
+      } catch (caught) {
+        const reason = caught instanceof ApiError || (caught instanceof Error && caught.name !== 'TypeError') ? caught.message : 'Ошибка сети.';
+        setUploadFeedback({ text: `Сохранение изображения не подтверждено. ${reason} Перед повторной загрузкой переоткройте карточку и проверьте вложения.`, error: true });
+      } finally { uploadInFlight.current = false; }
+    });
+  };
+  const pasteImage = (event: ClipboardEvent) => {
+    if (readOnly || event.defaultPrevented || !event.clipboardData) return;
+    // Read only the paste payload, never the system clipboard. Files and items
+    // describe the same bytes, so do not upload from both collections.
+    const files = Array.from(event.clipboardData.files);
+    if (!files.length) return;
+    const images = files.filter((file) => file.type.startsWith('image/'));
+    if (!images.length) return;
+    // Mixed clipboard content keeps the browser's native text insertion.
+    if (!event.clipboardData.types.some((type) => type.startsWith('text/'))) event.preventDefault();
+    if (busy || uploadInFlight.current) return;
+    if (images.length > 1) {
+      setUploadFeedback({ text: 'Вставляйте по одному изображению или выберите файл кнопкой «Прикрепить изображение».', error: true });
+      return;
+    }
+    uploadImage(images[0]);
+  };
+  useEffect(() => {
+    // Opening a card can leave focus on body. Listen only while this card is mounted.
+    document.addEventListener('paste', pasteImage);
+    return () => document.removeEventListener('paste', pasteImage);
+  });
   // Leaving the card must not lose the last edit: flush, then close (issue #129).
   const leave = () => { void flushNow().finally(() => { if (!checklistConfirmationRef.current) onBack(); }); };
   const copyDescription = async () => {
@@ -611,9 +650,11 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     <section className="detail-section detail-discussion" data-tone="discussion"><h2>Обсуждение</h2>{collaboration.comments.map((item) => <article key={item.id}><Avatar initials={item.author_name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toLocaleUpperCase('ru-RU')} label={item.author_name}/><div><small>{item.author_name} · {new Date(item.created_at).toLocaleString('ru-RU')}</small><p>{item.body}</p></div></article>)}{collaboration.attachments.map((item) => item.kind === 'file' ? <button type="button" className="detail-attachment detail-attachment-image" key={item.id} onClick={() => setLightbox({ id: item.id, name: item.file_name })}><img src={`/api/boards/${task.board_id}/tasks/${task.id}/attachments/${item.id}/file`} alt={item.file_name ?? 'Изображение'} loading="lazy"/></button> : <p className="detail-attachment" key={item.id}>{item.url ? <a href={item.url} target="_blank" rel="noreferrer">{item.url}</a> : item.file_name ?? 'Файл из Telegram'}</p>)}
       {showAttachment && !readOnly && <div className="detail-add"><input aria-label="Ссылка" type="url" value={attachmentUrl} onChange={(event) => setAttachmentUrl(event.target.value)} placeholder="https://…"/><button disabled={busy || !attachmentUrl.trim()} onClick={() => void run(() => onUrlAttachment(attachmentUrl.trim()), () => { setAttachmentUrl(''); setShowAttachment(false); })}>Добавить</button></div>}
     </section>
+    {uploadFeedback && <p className={`detail-upload-state${uploadFeedback.error ? ' detail-error' : ''}`} role={uploadFeedback.error ? 'alert' : 'status'}>{uploadFeedback.text}</p>}
     {error && <p className="detail-error" role="alert">{error}</p>}
     {conflict && !conflictOpen && !readOnly && <button type="button" onClick={() => setConflictOpen(true)}>Разрешить конфликт</button>}
-    {!readOnly && <div className="comment-composer"><input aria-label="Комментарий" maxLength={4000} value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Написать комментарий…"/><button className="attach" aria-label="Добавить ссылку" onClick={() => setShowAttachment((value) => !value)}><Icon name="attach"/></button><label className="attach attach-image" aria-label="Прикрепить изображение"><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void run(() => onFileAttachment(file), () => { event.target.value = ''; }); }}/><Icon name="image"/></label><button disabled={busy || !comment.trim()} aria-label="Отправить комментарий" onClick={() => void run(() => onComment(comment.trim()), () => setComment(''))}><Icon name="send"/></button></div>}
+    {!readOnly && <p className="context-note">Вставьте скопированное изображение в карточку. Если вставка недоступна, нажмите «Прикрепить изображение».</p>}
+    {!readOnly && <div className="comment-composer"><input aria-label="Комментарий" maxLength={4000} value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Написать комментарий…"/><button className="attach" aria-label="Добавить ссылку" onClick={() => setShowAttachment((value) => !value)}><Icon name="attach"/></button><button type="button" className="attach attach-image" aria-label="Прикрепить изображение" disabled={busy} onClick={() => imageInput.current?.click()}><Icon name="image"/></button><input ref={imageInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) uploadImage(file); }}/><button disabled={busy || !comment.trim()} aria-label="Отправить комментарий" onClick={() => void run(() => onComment(comment.trim()), () => setComment(''))}><Icon name="send"/></button></div>}
     {!readOnly && choiceSheet}
     {seriesConfirmation && !readOnly && <Sheet className="task-sheet" title="Будущие повторы" onClose={closeSeriesConfirmation}>
       <p tabIndex={0}>В шаблон будут перенесены эти значения. Статус, блокер, срок и уже созданные задачи не изменятся.</p>

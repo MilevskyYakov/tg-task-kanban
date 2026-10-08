@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { assertSettingsLayout } from './settings-layout';
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
@@ -90,7 +91,9 @@ test('settings children use shared controls and keep failed input', async ({ pag
   await expect(page.getByRole('heading', { name: 'Primex' })).toBeVisible();
   await expect(page.locator('.settings-screen select, .settings-screen details, .settings-screen summary')).toHaveCount(0);
   const title = page.getByRole('textbox', { name: 'Название задачи' });
-  await expect(page.locator('.settings-form > .action-row').first()).toHaveCSS('background-image', 'none');
+  // Approved v2 uses the application's coloured, raised action rows.
+  await expect(page.locator('.settings-form > .action-row').first()).not.toHaveCSS('background-image', 'none');
+  await expect(page.locator('.settings-form > .action-row').first()).not.toHaveCSS('box-shadow', 'none');
   await title.fill('Не терять повтор');
   await page.getByRole('button', { name: 'Добавить повтор' }).click();
   await expect(page.getByRole('status')).toContainText('Не удалось создать повтор');
@@ -130,3 +133,68 @@ test('project creation ignores repeated submits while request is pending', async
   await expect(input).toHaveValue('');
   expect(creates).toBe(1);
 });
+
+for (const [width, height, text] of [[390, 844, 100], [320, 844, 100], [320, 844, 200], [320, 440, 100]]) {
+  test(`settings v2 depth ${width}x${height} text ${text}`, async ({ page }) => {
+    await openSettings(page, width);
+    await page.setViewportSize({ width, height });
+    await page.addStyleTag({ content: `html { font-size: ${text}%; }` });
+    await page.evaluate(() => document.fonts.ready);
+    const capture = async (name: string) => {
+      await assertSettingsLayout(page, await page.locator('.sheet').count() ? '.sheet' : '.settings-screen');
+      await page.screenshot({ path: `${evidence}/issue182-${name}-${width}-${height}-${text}.png`, fullPage: true });
+    };
+    await capture('root');
+    await page.getByRole('button', { name: /Рабочее пространство/ }).click();
+    await capture('workspace-list');
+    await page.getByRole('button', { name: /Primex/ }).click();
+    await expect(page.getByRole('textbox', { name: 'Название', exact: true })).toBeVisible();
+    await expect(page.locator('.settings-header h1')).toHaveCSS('font-size', text === 200 ? '56px' : '28px');
+    await capture('workspace');
+    if (text === 200) {
+      const layout = await page.locator('.settings-name-editor').nth(1).evaluate(element => {
+        const row = element.querySelector('.inline-form')!.getBoundingClientRect();
+        return { row: row.width, input: element.querySelector('input')!.getBoundingClientRect().width };
+      });
+      expect(Math.abs(layout.row - layout.input)).toBeLessThanOrEqual(1);
+    }
+    await page.locator('.settings-back').click();
+    await page.getByRole('button', { name: /Автоматизация/ }).click();
+    await capture('automation-list');
+    await page.getByRole('button', { name: /Primex/ }).click();
+    await capture('automation');
+    for (const name of ['Период', 'Проект', 'Исполнитель', 'Приоритет']) {
+      const trigger = page.getByRole('button', { name: new RegExp(`^${name} `) });
+      await trigger.click();
+      await capture(`selector-${name}`);
+      await page.keyboard.press('Tab');
+      expect(await page.locator('.sheet').evaluate(element => element.contains(document.activeElement))).toBe(true);
+      await page.keyboard.press('Escape');
+      await expect(trigger).toBeFocused();
+    }
+    await page.getByRole('button', { name: 'Публикации в чат' }).click();
+    for (const side of ['top','right','bottom','left']) {
+      await expect(page.locator('.publications')).toHaveCSS(`border-${side}-width`, '0px');
+    }
+    const publication = page.getByRole('group', { name: 'План дня', exact: true });
+    await expect(publication).toHaveCSS('border-top-width', '0px');
+    await expect(publication).toHaveCSS('border-right-width', '0px');
+    await expect(publication).toHaveCSS('border-bottom-width', '0px');
+    await expect(publication).toHaveCSS('border-left-width', '0px');
+    await expect(publication).not.toHaveCSS('background-image', 'none');
+    await capture('publication');
+    await page.locator('.settings-back').click();
+    await page.getByRole('button', { name: /Аккаунт/ }).click();
+    const haptic = page.getByRole('checkbox', { name: 'Виброотклик при создании задачи' });
+    await expect(haptic).toHaveCSS('width', '22px');
+    await expect(haptic).toHaveCSS('height', '22px');
+    await haptic.uncheck();
+    expect(await page.evaluate(() => localStorage.getItem('tasks.creationHaptic'))).toBe('off');
+    await capture('account');
+    for (const name of ['Группировка задач', 'Обычная доска']) {
+      await page.getByRole('button', { name: new RegExp(`^${name} `) }).click();
+      await capture(`selector-${name}`);
+      await page.keyboard.press('Escape');
+    }
+  });
+}

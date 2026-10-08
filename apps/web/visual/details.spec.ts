@@ -142,6 +142,247 @@ test.describe('keyboard viewport', () => {
   });
 });
 
+const clipboardPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=', 'base64');
+async function pasteClipboard(page: Page, selector = 'body', options: { text?: string; mime?: string; count?: number; name?: string } = {}) {
+  return page.locator(selector).evaluate((element, input) => {
+    const data = new DataTransfer();
+    for (let index = 0; index < (input.count ?? 1); index++) data.items.add(new File([Uint8Array.from(input.bytes)], input.name ?? 'clipboard.png', { type: input.mime ?? 'image/png' }));
+    if (input.text !== undefined) { data.setData('text/plain', input.text); data.setData('text/html', `<b>${input.text}</b>`); }
+    const event = new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true });
+    element.dispatchEvent(event);
+    return { prevented: event.defaultPrevented, files: data.files.length, items: data.items.length };
+  }, { ...options, bytes: [...clipboardPng] });
+}
+
+for (const width of [320, 390]) test(`clipboard image uploads once, confirms and reopens ${width}`, async ({ page }) => {
+  await openDetails(page, width);
+  const attachments: Record<string, unknown>[] = [];
+  await page.route('**/collaboration', (route) => route.fulfill({ json: { ...collaboration, attachments } }));
+  await page.route('**/attachments/*/file', (route) => route.fulfill({ contentType: 'image/png', body: clipboardPng }));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const uploads: Buffer[] = [];
+  await page.route('**/attachments/file', async (route) => {
+    uploads.push(route.request().postDataBuffer()!);
+    await gate;
+    const item = { id: 'pasted', kind: 'file', file_name: 'clipboard.png' };
+    attachments.push(item);
+    await route.fulfill({ json: item });
+  });
+  const comment = page.getByRole('textbox', { name: 'Комментарий', exact: true });
+  await comment.fill('Черновик комментария');
+  expect(await pasteClipboard(page)).toEqual({ prevented: true, files: 1, items: 1 });
+  await pasteClipboard(page);
+  await expect.poll(() => uploads.length).toBe(1);
+  expect(uploads[0].includes(clipboardPng)).toBe(true);
+  expect(uploads[0].toString()).toContain('filename="clipboard.png"');
+  await expect(page.locator('.detail-upload-state')).toHaveText('Изображение загружается…');
+  await expect(page.getByRole('button', { name: 'Прикрепить изображение' })).toBeDisabled();
+  await expect(comment).toHaveValue('Черновик комментария');
+  await mkdir(evidence, { recursive: true });
+  await page.screenshot({ path: `${evidence}/issue-179-pending-${width}.png` });
+  release();
+  await expect(page.locator('.detail-upload-state')).toHaveText('Изображение сохранено во вложениях.');
+  await page.getByRole('button', { name: 'Назад к задачам' }).click();
+  await page.getByRole('button').filter({ hasText: task.title }).first().click();
+  const image = page.getByRole('img', { name: 'clipboard.png' });
+  await expect(image).toBeVisible();
+  await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(1);
+  await image.click();
+  await expect(page.getByRole('dialog', { name: 'clipboard.png' })).toBeVisible();
+  await page.getByRole('button', { name: 'Закрыть просмотр' }).click();
+  expect(uploads).toHaveLength(1);
+});
+
+test('clipboard leaves text and mixed payloads uncancelled in all editors', async ({ page }) => {
+  await openDetails(page, 320);
+  let uploads = 0;
+  await page.route('**/attachments/file', (route) => { uploads++; return route.fulfill({ json: { id: `image-${uploads}` } }); });
+  await page.locator('.detail-description-actions').getByRole('button', { name: 'Изменить' }).click();
+  for (const label of ['Название задачи', 'Описание', 'Комментарий']) {
+    const selector = `[aria-label="${label}"]`;
+    const field = page.locator(selector);
+    await field.fill('Существующий текст');
+    expect((await pasteClipboard(page, selector, { count: 0, text: 'Новый текст' })).prevented).toBe(false);
+    expect((await pasteClipboard(page, selector, { text: 'Текст с картинкой' })).prevented).toBe(false);
+    await expect(page.locator('.detail-upload-state')).toHaveText('Изображение сохранено во вложениях.');
+    // Synthetic events have no browser default insertion; assert that it was not cancelled
+    // and existing input survived. Native OS insertion is a separate device gate.
+    await expect(field).toHaveValue('Существующий текст');
+  }
+  expect(uploads).toBe(3);
+  expect((await pasteClipboard(page, '.task-details', { count: 0 })).prevented).toBe(false);
+  expect((await pasteClipboard(page, '.task-details', { mime: 'application/pdf' })).prevented).toBe(false);
+  await pasteClipboard(page, '.task-details', { count: 2 });
+  await expect(page.locator('.detail-upload-state')).toContainText('Вставляйте по одному изображению');
+  expect(uploads).toBe(3);
+});
+
+for (const failure of ['network', 'timeout', '403', '413', '415', 'readback'] as const) test(`clipboard reports ${failure} without retry or lost input`, async ({ page }) => {
+  await openDetails(page, 320);
+  if (failure === 'timeout') await page.clock.install();
+  let uploads = 0;
+  await page.route('**/attachments/file', async (route) => {
+    uploads++;
+    if (failure === 'timeout') return;
+    if (failure === 'network') return route.abort();
+    await route.fulfill({ status: failure === 'readback' ? 200 : Number(failure), json: { error: `upload rejected: ${failure}`, id: 'saved' } });
+  });
+  if (failure === 'readback') await page.route('**/collaboration', (route) => route.abort());
+  await page.getByRole('textbox', { name: 'Комментарий', exact: true }).fill('Не терять ввод');
+  await pasteClipboard(page, '[aria-label="Комментарий"]', { mime: failure === '415' ? 'image/svg+xml' : 'image/png' });
+  await expect.poll(() => uploads).toBe(1);
+  if (failure === 'timeout') await page.clock.runFor(30_001);
+  await expect(page.locator('.detail-upload-state')).toContainText('Сохранение изображения не подтверждено.');
+  if (failure === 'timeout') await expect(page.locator('.detail-upload-state')).toContainText('30 секунд');
+  await expect(page.getByRole('textbox', { name: 'Комментарий', exact: true })).toHaveValue('Не терять ввод');
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(page.getByRole('button', { name: 'Прикрепить изображение' })).toBeEnabled();
+  if (failure === 'network') {
+    await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    await page.locator('.detail-upload-state').scrollIntoViewIfNeeded();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: `${evidence}/issue-179-error-320-200.png` });
+  }
+  expect(uploads).toBe(1);
+});
+
+for (const readOnly of ['frozen', 'archived task'] as const) test(`clipboard cannot upload to ${readOnly}`, async ({ page }) => {
+  const archivedTask = { ...task, archived_at: '2026-01-01T00:00:00Z' };
+  await openDetails(page, 390, readOnly === 'frozen' ? { readOnly: true } : { taskOverrides: archivedTask });
+  let uploads = 0;
+  page.on('request', (request) => { if (request.url().endsWith('/attachments/file')) uploads++; });
+  expect((await pasteClipboard(page)).prevented).toBe(false);
+  await expect(page.getByRole('button', { name: 'Прикрепить изображение' })).toHaveCount(0);
+  await expect(page.locator('.detail-upload-state')).toHaveCount(0);
+  expect(uploads).toBe(0);
+});
+
+for (const stage of ['upload', 'readback']) for (const targetKind of ['same', 'task', 'board']) test(`clipboard late ${stage} cannot replace ${targetKind} card`, async ({ page }) => {
+  await mockDetails(page);
+  const second = { ...task, id: 'task-2', board_id: targetKind === 'board' ? 'board-2' : board.id, title: 'Другая задача' };
+  await page.addInitScript(() => localStorage.setItem('tasks.globalBoardId', ''));
+  await page.route('**/api/boards', (route) => route.fulfill({ json: { boards: [board, { ...board, id: 'board-2', name: 'Другая доска' }] } }));
+  await page.route('**/api/tasks/mine', (route) => route.fulfill({ json: { tasks: [task, second] } }));
+  await page.route('**/api/boards/board-1/tasks', (route) => route.fulfill({ json: { tasks: [task, second] } }));
+  await page.goto('/');
+  await page.getByRole('button').filter({ hasText: task.title }).first().click();
+  await expect(page.getByRole('textbox', { name: 'Название задачи' })).toHaveValue(task.title);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let started = false;
+  let uploadDone = false;
+  let readCount = 0;
+  let uploadCount = 0;
+  await page.route('**/attachments/file', async (route) => {
+    uploadCount++;
+    expect(new URL(route.request().url()).pathname).toBe('/api/boards/board-1/tasks/task-1/attachments/file');
+    if (stage === 'upload') { started = true; await gate; }
+    uploadDone = true;
+    await route.fulfill({ json: { id: 'late-file' } });
+  });
+  await page.route('**/collaboration', async (route) => {
+    if (stage === 'readback' && uploadDone && ++readCount === 1) {
+      started = true; await gate;
+      return route.fulfill({ json: { ...collaboration, comments: [{ ...collaboration.comments[0], body: 'STALE CONTENT' }] } });
+    }
+    await route.fulfill({ json: { ...collaboration, comments: [] } });
+  });
+  await pasteClipboard(page);
+  await expect.poll(() => started).toBe(true);
+  await page.getByRole('button', { name: 'Назад к задачам' }).click();
+  expect((await pasteClipboard(page)).prevented).toBe(false);
+  expect(uploadCount).toBe(1);
+  const target = targetKind === 'same' ? task : second;
+  await page.getByRole('button').filter({ hasText: target.title }).first().click();
+  await expect(page.getByRole('textbox', { name: 'Название задачи' })).toHaveValue(target.title);
+  release();
+  await expect.poll(() => uploadDone).toBe(true);
+  await page.waitForTimeout(100);
+  await expect(page.getByText('STALE CONTENT')).toHaveCount(0);
+  await expect(page.locator('.detail-upload-state')).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: 'Название задачи' })).toHaveValue(target.title);
+});
+
+test('clipboard binary persists through real API and DB with picker, link and member preview', async ({ page }) => {
+  test.setTimeout(60_000);
+  const databaseUrl = process.env.TEST_DATABASE_URL;
+  if (!databaseUrl) throw new Error('TEST_DATABASE_URL required for clipboard API/DB verification');
+  const db = createDatabase(databaseUrl);
+  const stamp = randomBytes(6).readUIntBE(0, 6);
+  const config: Config = { botToken: 'test', databaseUrl, sessionSecret: 'clipboard-isolated-session-secret', initDataMaxAgeSeconds: 60,
+    sessionMaxAgeSeconds: 3600, host: '127.0.0.1', port: 0, production: false, webhookSecret: 'clipboard-isolated-webhook',
+    publicUrl: 'https://example.test', botUsername: 'test_bot' };
+  const owner = await login(db, { id: stamp, first_name: 'Clipboard owner' }, 3600, config.sessionSecret);
+  const member = await login(db, { id: stamp + 1, first_name: 'Clipboard member' }, 3600, config.sessionSecret);
+  const boardId = (await db.query("SELECT id FROM boards WHERE type='personal' AND owner_user_id=$1", [owner.userId])).rows[0].id;
+  const app = buildApp(config, db);
+  let uploads = 0;
+  try {
+    await db.query("INSERT INTO memberships (board_id, user_id, role) VALUES ($1,$2,'member')", [boardId, member.userId]);
+    const created = await createTask(db, owner.userId, boardId, { title: 'Clipboard DB task', assigneeUserId: owner.userId });
+    await page.addInitScript((id) => {
+      localStorage.setItem('tasks.globalBoardId', id);
+      localStorage.setItem('tasks.viewState', JSON.stringify({ view: 'list', grouping: 'deadline', filters: { scope: 'all', project: '', assignee: '', status: '', priority: '', deadline: '', unassigned: false, search: '' }, scrollY: 0, kanbanStatus: 'todo' }));
+    }, boardId);
+    await page.route('https://telegram.org/js/telegram-web-app.js', (route) => route.fulfill({ contentType: 'application/javascript',
+      body: "window.Telegram={WebApp:{initData:'clipboard-test',ready(){},expand(){}}};" }));
+    await page.route('**/api/**', async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (url.pathname === '/api/auth/telegram') return route.fulfill({ json: { userId: owner.userId } });
+      if (url.pathname.endsWith('/attachments/file')) uploads++;
+      const contentType = request.headers()['content-type'];
+      const response = await app.inject({ method: request.method() as 'GET' | 'POST' | 'PATCH', url: url.pathname + url.search,
+        cookies: { session: owner.token }, headers: contentType ? { 'content-type': contentType } : {}, payload: request.postDataBuffer() ?? undefined });
+      await route.fulfill({ status: response.statusCode, contentType: String(response.headers['content-type']), body: response.rawPayload });
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    await page.getByRole('button').filter({ hasText: created.title }).first().click();
+    await expect(page.getByRole('textbox', { name: 'Название задачи' })).toHaveValue(created.title);
+    await pasteClipboard(page);
+    await expect(page.locator('.detail-upload-state')).toHaveText('Изображение сохранено во вложениях.');
+    const files = async () => (await db.query("SELECT * FROM task_attachments WHERE board_id=$1 AND task_id=$2 AND kind='file' ORDER BY created_at", [boardId, created.id])).rows;
+    const saved = await files();
+    expect(saved).toHaveLength(1);
+    expect(saved[0].file_data).toEqual(clipboardPng);
+    expect(saved[0].file_name).toBe('clipboard.png');
+    await page.getByRole('button', { name: 'Назад к задачам' }).click();
+    await page.getByRole('button').filter({ hasText: created.title }).first().click();
+    const image = page.getByRole('img', { name: 'clipboard.png' });
+    await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(1);
+    const memberRead = await app.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${created.id}/attachments/${saved[0].id}/file`, cookies: { session: member.token } });
+    expect(memberRead.statusCode).toBe(200);
+    expect(memberRead.rawPayload).toEqual(clipboardPng);
+    const picker = page.getByRole('button', { name: 'Прикрепить изображение' });
+    await picker.focus();
+    const chooser = page.waitForEvent('filechooser');
+    await page.keyboard.press('Enter');
+    await (await chooser).setFiles({ name: 'picker.png', mimeType: 'image/png', buffer: clipboardPng });
+    await expect(page.locator('.detail-upload-state')).toHaveText('Изображение сохранено во вложениях.');
+    await expect.poll(async () => (await files()).length).toBe(2);
+    await page.getByRole('button', { name: 'Добавить ссылку' }).click();
+    await page.getByRole('textbox', { name: 'Ссылка', exact: true }).fill('https://example.test/attachment');
+    await page.locator('.detail-discussion').getByRole('button', { name: 'Добавить', exact: true }).click();
+    await expect(page.getByRole('link', { name: 'https://example.test/attachment', exact: true })).toBeVisible();
+    await page.reload();
+    await page.getByRole('button').filter({ hasText: created.title }).first().click();
+    await expect(page.locator('.detail-attachment-image')).toHaveCount(2);
+    await expect(page.getByRole('link', { name: 'https://example.test/attachment', exact: true })).toBeVisible();
+    expect(uploads).toBe(2);
+    await page.screenshot({ path: `${evidence}/issue-179-persisted-390.png` });
+  } finally {
+    await page.close();
+    await app.close();
+    for (const user of [owner, member]) {
+      await db.query('DELETE FROM boards WHERE owner_user_id=$1', [user.userId]);
+      await db.query('DELETE FROM users WHERE id=$1', [user.userId]);
+    }
+    await db.end();
+  }
+});
+
 async function flushAutosave(page: Page) {
   // The save-state line announces the flush result; wait until it settles on «Сохранено»
   // or an error, not merely the transient «Сохраняется…» of an earlier edit (issue #129).

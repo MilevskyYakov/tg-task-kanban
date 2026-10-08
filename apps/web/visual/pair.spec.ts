@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { assertSettingsLayout } from './settings-layout';
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
@@ -119,6 +120,47 @@ for (const width of [390, 320]) {
   });
 }
 
+for (const [width, height, text] of [[390, 844, 100], [320, 844, 100], [320, 844, 200], [320, 440, 100]]) {
+  test(`pair settings v2 depth ${width}x${height} text ${text}`, async ({ page }) => {
+    await setup(page);
+    await page.setViewportSize({ width, height });
+    await page.goto('/');
+    await page.addStyleTag({ content: `html { font-size: ${text}%; }` });
+    await page.getByRole('button', { name: /Доступ Доска на двоих/ }).click();
+    await expect(page.getByRole('button', { name: 'Отозвать доступ Мария' })).toBeEnabled();
+    await mkdir(evidence, { recursive: true });
+    const shot = async (name: string) => {
+      await assertSettingsLayout(page, '.pair-screen');
+      await page.screenshot({ path: `${evidence}/issue182-pair-${name}-${width}-${height}-${text}.png`, fullPage: true });
+    };
+    await shot('access');
+    await page.getByRole('button', { name: 'Архивировать доску' }).click();
+    await expect(page.getByText('Восстановить доску сможете только вы.')).toBeVisible();
+    await shot('archive');
+    await page.getByRole('button', { name: 'Архивировать доску', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Доска в архиве' })).toBeVisible();
+    await shot('archived');
+    await page.getByRole('button', { name: 'Восстановить доску' }).click();
+    await page.getByRole('button', { name: 'Отозвать доступ Мария' }).click();
+    await expect(page.getByText('Задачи останутся без исполнителя.')).toBeVisible();
+    await shot('revoke');
+    await page.getByRole('button', { name: 'Отозвать доступ', exact: true }).click();
+    await expect(page.getByText(/Доступ участника отозван/)).toBeVisible();
+    await shot('removed');
+    await page.getByRole('button', { name: 'Пригласить другого' }).click();
+    await expect(page.getByText(/Прежние задачи и комментарии не будут скрыты/)).toBeVisible();
+    await shot('replace');
+    await page.getByRole('button', { name: 'Создать приглашение', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Скопировать ссылку' })).toBeVisible();
+    await shot('invite');
+    await page.getByRole('button', { name: 'Отозвать ссылку', exact: true }).click();
+    await shot('link-revoke');
+    await page.getByRole('button', { name: 'Отозвать ссылку', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Приглашение больше не действует.' })).toBeVisible();
+    await shot('link-revoked');
+  });
+}
+
 test('pair owner revokes access, archives with lost response and restores safely', async ({ page }) => {
   const state = await setup(page);
   await page.setViewportSize({ width: 320, height: 844 });
@@ -224,6 +266,8 @@ test('pair lost leave response can be retried without trapping former member', a
 });
 
 test('pair two browser sessions use real API/DB for creation, consent, collaboration and revocation', async ({ page, browser }) => {
+  // Budget for invitation, collaboration and revocation across two browser sessions.
+  test.setTimeout(60_000);
   const url = process.env.TEST_DATABASE_URL;
   if (!url) throw new Error('TEST_DATABASE_URL is required for pair browser/API/DB tests');
   const db = createDatabase(url);

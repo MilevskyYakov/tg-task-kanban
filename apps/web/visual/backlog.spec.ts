@@ -12,6 +12,8 @@ if (!url) throw new Error('TEST_DATABASE_URL is required for backlog browser/API
 
 for (const width of [390, 320]) {
   test(`backlog collection and two-member claim through real API/DB ${width}`, async ({ page, browser }) => {
+    // Budget for the full two-user workflow and screenshots, not for individual assertions.
+    test.setTimeout(60_000);
     const db = createDatabase(url);
     const stamp = randomBytes(6).readUIntBE(0, 6);
     const config: Config = { botToken: 'test', databaseUrl: url, sessionSecret: 'isolated-visual-secret', initDataMaxAgeSeconds: 60, sessionMaxAgeSeconds: 3600,
