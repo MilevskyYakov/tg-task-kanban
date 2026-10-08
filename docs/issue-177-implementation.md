@@ -2,7 +2,7 @@
 
 ## Статус
 
-Реализация находится в task-ветке `MilevskyYakov/issue-177`, поверх `58924f41b3b5f22ee5a4e3bab6a603d0262c5cde`. Кандидат опубликован в [draft PR #186](https://github.com/MilevskyYakov/tg-task-kanban/pull/186); полное завершение #177 заблокировано незакрытой приёмкой. Merge и deploy не выполнялись. Production и чужие базы не затрагивались. Общий браузерный gate пока не зелёный; результаты целевых проверок нельзя считать полным разрешением на выпуск. Актуальные PR/commit и статус зафиксированы в Issue #177.
+Реализация находится в task-ветке `MilevskyYakov/issue-177`, поверх `58924f41b3b5f22ee5a4e3bab6a603d0262c5cde`, и передаётся через [PR #186](https://github.com/MilevskyYakov/tg-task-kanban/pull/186). После подготовки Chromium/FFmpeg и исправления исходной нестабильности branding полный штатный browser-gate прошёл **295/295**, основные тесты — **82/82**. Владелец разрешил merge без отдельной ручной приёмки: она и реальный Telegram/device smoke для #177 **пропущены по решению владельца, не PASS**. Разрешение не распространяется на production-выпуск пакета #175. Итоговые merge SHA и состояние Issue фиксируются в GitHub; ниже сохранена история проверок.
 
 Согласованные решения: [контракт](issue-177-priority-contract.md). HTML-прототип и его прежние 92 проверки остаются отдельным подготовительным результатом, а не проверкой приложения.
 
@@ -45,7 +45,7 @@
 
 До выпуска нужны зелёный общий браузерный gate в подготовленной среде и отдельная приёмка. Известные исходные проблемы не исправлялись под видом #177; merge/deploy не выполнялись.
 
-## Повторная проверка `/taskfinish`
+## Повторная проверка `/taskfinish` до подготовки browser-gate
 
 Проверен код `d351970fe620f4f0d9903a263b62025abd42ca63`; после него меняется только отчёт. Свежий `origin/main` оставался `58924f41b3b5f22ee5a4e3bab6a603d0262c5cde`, слияние новой базы не требовалось.
 
@@ -66,6 +66,29 @@ Issue #177 и #175 остаются открытыми. Project «Таска»: 
 Временная PostgreSQL этого worktree остановлена; закрытие `127.0.0.1:55477` проверено. Тестовые Vite-серверы завершились. Исходники, локальная БД и ignored evidence сохранены в текущем worktree, ветка не удалялась. Новые performance-строки перенесены в `closeout-input-perf.jsonl`; tracked-файл восстановлен без diff.
 
 Дополнительное evidence в `artifacts/visual-evidence/issue-177/`: `closeout-tests.log`, `closeout-lint.log`, `closeout-typecheck.log`, `closeout-build.log`, `closeout-native-ui-ready.log`, `closeout-full-ui-ready.log`, `closeout-branding-repeat.log`, `closeout-baseline-branding.log`, `closeout-baseline-branding-repeat.log`. Это локальные ignored-файлы, не опубликованные вложения GitHub.
+
+## Закрытие локального browser-gate после дополнительного разрешения
+
+Проверенная версия: `096ccef604f291a18e11d9356388196af0e6b086` плюс изменения `apps/web/src/style.css` и `apps/web/visual/branding.spec.ts`. После проверок меняется только этот отчёт. На момент самого browser-gate новые правки ещё не были опубликованы; затем владелец отдельно разрешил merge.
+
+- Установлены браузерные зависимости существующего Playwright: Chromium и headless shell `147.0.7727.15` (`v1217`), FFmpeg `v1011`. Команда: `env -u NODE_ENV ./node_modules/.bin/playwright install chromium ffmpeg`; первый запуск прерван лимитом, повтор завершился с exit 0. Manifest и lockfile не менялись.
+- Причина branding-нестабильности найдена в общем reduced-motion правиле: `transition-duration: .01ms` включал переходы для всех свойств, в том числе сброса стандартного `body margin: 8px`. На первом рендере ширина документа временно была 328 px при viewport 320 px, а затем становилась 320 px. Теперь используется `transition: none`; обычный режим движения и настройки CSS-анимаций не изменены.
+- Регрессионная проверка добавлена в существующий branding-сценарий. До исправления она стабильно падала: `transition-property` был `all` вместо `none`. После исправления пять повторов на каждой ширине 320/390 px дали **10 passed**. Проверка ширины не ослаблена, искусственная задержка не добавлена. Скриншоты загрузки и ошибки входа на 320 px просмотрены: смещения и обрезания нет.
+- Повторные `npm run test`: **82 passed, 0 failed, 0 skipped**; `npm run lint`, `npm run typecheck`, `npm run build`, `git diff --check`: exit 0.
+- Полный штатный `npm run test:visual`: **295 passed, 0 failed, 0 skipped**, exit 0, без исключения тестов и Chrome override. Использовались изолированный Chromium, отдельная локальная `TEST_DATABASE_URL`, `PLAYWRIGHT_PORT=4188`, unset `NODE_ENV` и `PERF_EVIDENCE_DIR` внутри ignored evidence. Включены оба ранее заблокированных видеосценария.
+- После проверки PostgreSQL остановлен, порты 55477/4187/4188 закрыты. Tracked `artifacts/evidence/input-perf.jsonl` остался без изменений.
+
+Evidence в `artifacts/visual-evidence/issue-177/`: `browser-install.log`, `browser-install-retry.log`, `diagnose-branding.mjs`, `branding-diagnostic.log`, `branding-diagnostic-after.log`, `branding-red.log`, `branding-green.log`, `browser-gate-core.log`, `browser-gate-native.log`, `browser-gate-native-results/`, `browser-gate-performance/`.
+
+Browser-gate закрыт для указанной версии. Его результат не доказывает работу реального Telegram, системной клавиатуры или экранного диктора. Эти риски сохраняются после отказа владельца от ручной приёмки #177; общий выпуск и интеграция остальных children остаются в #175.
+
+## Разрешённый merge и подготовка следующей задачи
+
+- Владелец явно попросил пропустить отдельную приёмку, выполнить merge и подготовить следующую задачу. Это завершение разработки #177, не разрешение production-деплоя и не device PASS.
+- Перед merge заново выполнен `git fetch --prune origin`: база не продвинулась. Код после полного зелёного прогона не менялся, только этот отчёт.
+- Проверка автодеплоя выполнена read-only: GitHub workflows/hooks/deployments/rulesets пусты; на `kairos-crm` не обнаружены task/deploy-триггеры в cron и локальных systemd units, процессы типовых deployment runners отсутствуют. В Coolify нет приложения для репозитория/домена Таски, в Portainer нет сохранённых Compose stacks. Контейнеры приложения и poller используют ручные Compose-проекты из `/opt/tg-task-kanban`, без Coolify/Portainer labels. Это проверка обнаруженных механизмов, не утверждение об отсутствии любой возможной внешней системы.
+- Серверные настройки, контейнеры, transport, секреты и пользовательские БД не менялись. До merge зафиксированы image ID и время запуска приложения/poller для сравнения после слияния. Локальное read-only evidence: `artifacts/visual-evidence/issue-177/autodeploy-server-inventory.log`.
+- Следующий самостоятельный результат — #181, единая панель фильтров. Использовать существующий worktree `issue-181` и принятые там композицию/общий сброс; не создавать дубль и не менять его локальный макет. Подготовка старта не запускает реализацию. Перед ней обновить собственную task-ветку от свежего main с сохранением локальных артефактов; интеграция нескольких досок #176 остаётся отдельной зависимостью пакета.
 
 ## Evidence и воспроизведение
 
