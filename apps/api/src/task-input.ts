@@ -27,6 +27,8 @@ export const taskInput = (body: TaskInput | undefined, partial = false, { deferB
   if ((!partial || body?.title !== undefined) && (!title || title.length > 200)) return 'title must contain 1-200 characters';
   if (body.status !== undefined && !['todo', 'in_progress', 'waiting', 'done'].includes(body.status)) return 'invalid status';
   if (body.priority !== undefined && !['normal', 'urgent'].includes(body.priority)) return 'invalid priority';
+  for (const key of ['importance', 'urgency'] as const) if (body[key] !== undefined && body[key] !== null && typeof body[key] !== 'boolean') return `invalid ${key}`;
+  for (const key of ['expectedVersion', 'expectedRecurrenceVersion'] as const) if (body[key] !== undefined && (typeof body[key] !== 'string' || !/^[1-9]\d{0,18}$/.test(body[key]!))) return `invalid ${key}`;
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   if (body.requestId !== undefined && (partial || typeof body.requestId !== 'string' || !uuid.test(body.requestId))) return 'invalid request id';
   if (body.projectId != null && !uuid.test(body.projectId)) return 'invalid project id';

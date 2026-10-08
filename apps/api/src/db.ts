@@ -3,6 +3,7 @@ import pg from 'pg';
 import type { TelegramUser } from './auth.js';
 import { nextOccurrence, type RecurrenceRule } from './recurrence.js';
 import { taskInput } from './task-input.js';
+import { assessment, AssessmentError } from './assessment.js';
 
 const { Pool } = pg;
 export type Database = InstanceType<typeof Pool>;
@@ -217,6 +218,9 @@ export type TaskInput = {
   assigneeUserId?: string | null;
   status?: TaskStatus;
   priority?: TaskPriority;
+  importance?: boolean | null;
+  urgency?: boolean | null;
+  expectedRecurrenceVersion?: string;
   deadline?: string | null;
   deadlineDate?: string | null;
   deadlineTimezone?: string | null;
@@ -282,7 +286,9 @@ export async function updateProject(db: Database, userId: string, boardId: strin
 const taskColumns = `t.id, t.board_id, t.project_id, p.name AS project_name, t.creator_user_id, t.assignee_user_id,
   (SELECT status FROM boards WHERE id = t.board_id) AS board_status,
   assignee.first_name AS assignee_name,
-  t.title, t.description, t.status, t.priority, t.deadline, t.wait_reason, t.wait_check_at, t.issue_url,
+  t.title, t.description, t.status, t.priority, t.importance, t.urgency, t.deadline, t.wait_reason, t.wait_check_at, t.issue_url,
+  task_priority_key(t.importance,t.urgency,t.deadline,t.deadline_date,t.deadline_timezone,t.created_at,t.id) AS priority_key,
+  (SELECT revision::text FROM recurrence_templates WHERE id=t.recurrence_template_id) AS recurrence_version,
   to_char(t.deadline_date, 'YYYY-MM-DD') AS deadline_date, t.deadline_timezone,
   t.blocked_by_task_id, blocker.title AS blocker_title,
   t.recurrence_template_id, t.occurrence_at, t.archived_at, t.created_at, t.updated_at,
@@ -299,7 +305,7 @@ export async function tasksForBoard(db: Database, userId: string, boardId: strin
     LEFT JOIN users assignee ON assignee.id = t.assignee_user_id
     LEFT JOIN tasks blocker ON blocker.id = t.blocked_by_task_id AND blocker.board_id = t.board_id
     WHERE t.board_id = $1 AND m.user_id = $2 AND ($3 OR t.archived_at IS NULL)
-    ORDER BY t.priority = 'urgent' DESC, t.created_at DESC`, [boardId, userId, archived]);
+    ORDER BY priority_key`, [boardId, userId, archived]);
   return result.rows;
 }
 
@@ -320,7 +326,7 @@ export async function tasksForAssignee(db: Database, userId: string) {
     LEFT JOIN users assignee ON assignee.id = t.assignee_user_id
     LEFT JOIN tasks blocker ON blocker.id = t.blocked_by_task_id AND blocker.board_id = t.board_id
     WHERE t.assignee_user_id = $1 AND t.archived_at IS NULL AND b.status = 'active'
-    ORDER BY t.priority = 'urgent' DESC, t.deadline NULLS LAST, t.created_at DESC`, [userId]);
+    ORDER BY priority_key`, [userId]);
   return result.rows;
 }
 
@@ -341,13 +347,14 @@ export async function createTask(db: Database, userId: string, boardId: string, 
     }
     const requestHash = createHash('sha256').update(JSON.stringify(Object.entries(input).filter(([key]) => key !== 'requestId').sort(([a], [b]) => a.localeCompare(b)))).digest('hex');
     if (input.requestId) {
-      const existing = await client.query(`SELECT *, to_char(deadline_date, 'YYYY-MM-DD') AS deadline_date FROM tasks
+      const existing = await client.query(`SELECT *, revision::text AS version, task_priority_key(importance,urgency,deadline,deadline_date,deadline_timezone,created_at,id) AS priority_key, to_char(deadline_date, 'YYYY-MM-DD') AS deadline_date FROM tasks
         WHERE board_id = $1 AND creator_user_id = $2 AND create_request_id = $3`, [boardId, userId, input.requestId]);
       if (existing.rows[0]) {
         if (existing.rows[0].create_request_hash !== requestHash) throw new TaskConflictError('creation request already used with different input');
         if (!transaction) await client.query('COMMIT'); return existing.rows[0];
       }
     }
+    const evaluation = assessment(input);
     const status = input.status ?? 'todo';
     if (status === 'waiting' && Number(Boolean(input.blockerTaskId)) + Number(Boolean(input.waitReason?.trim())) !== 1) {
       throw new TaskConflictError('choose one blocker task or external reason');
@@ -355,20 +362,21 @@ export async function createTask(db: Database, userId: string, boardId: string, 
     if (status === 'waiting' && input.blockerTaskId) await assertBlockerAllowed(client, boardId, input.blockerTaskId);
     const result = await client.query(`INSERT INTO tasks (id, board_id, project_id, creator_user_id, assignee_user_id,
       title, description, status, priority, deadline, wait_reason, wait_check_at, blocked_by_task_id,
-      completed_at, deadline_date, deadline_timezone, create_request_id, create_request_hash, issue_url)
+      completed_at, deadline_date, deadline_timezone, create_request_id, create_request_hash, issue_url, importance, urgency)
     SELECT $3, b.id, $4, $2, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-      CASE WHEN $8 = 'done' THEN now() ELSE NULL END, $14, $15, $16, $17, $18
+      CASE WHEN $8 = 'done' THEN now() ELSE NULL END, $14, $15, $16, $17, $18, $19, $20
     FROM boards b JOIN memberships creator ON creator.board_id = b.id
     LEFT JOIN projects p ON p.id = $4 AND p.board_id = b.id AND p.archived_at IS NULL
     LEFT JOIN memberships assignee ON assignee.board_id = b.id AND assignee.user_id = $5
     WHERE b.id = $1 AND b.status = 'active' AND creator.user_id = $2
       AND ($4::uuid IS NULL OR p.id IS NOT NULL) AND ($5::bigint IS NULL OR assignee.user_id IS NOT NULL)
-    RETURNING *, to_char(deadline_date, 'YYYY-MM-DD') AS deadline_date, revision::text AS version`, [boardId, userId, randomUUID(), input.projectId ?? null, input.assigneeUserId ?? null,
-      input.title!, input.description ?? null, input.status ?? 'todo', input.priority ?? 'normal',
+    RETURNING *, to_char(deadline_date, 'YYYY-MM-DD') AS deadline_date, revision::text AS version,
+      task_priority_key(importance,urgency,deadline,deadline_date,deadline_timezone,created_at,id) AS priority_key`, [boardId, userId, randomUUID(), input.projectId ?? null, input.assigneeUserId ?? null,
+      input.title!, input.description ?? null, input.status ?? 'todo', evaluation.priority,
       input.deadline ?? null, status === 'waiting' ? input.waitReason?.trim() || null : null,
       status === 'waiting' ? input.waitCheckAt ?? null : null, status === 'waiting' ? input.blockerTaskId ?? null : null,
       input.deadlineDate ?? null, input.deadlineTimezone ?? null, input.requestId ?? null, input.requestId ? requestHash : null,
-      input.issueUrl ?? null]);
+      input.issueUrl ?? null, evaluation.importance, evaluation.urgency]);
     const task = result.rows[0];
     if (!task) { if (!transaction) await client.query('ROLLBACK'); return null; }
     await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, after_data)
@@ -420,6 +428,7 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
       if (!transaction) await client.query('ROLLBACK');
       throw new TaskVersionConflictError(input.expectedVersion);
     }
+    const evaluation = assessment(input, task);
     const status = input.status ?? task.status;
     if (input.status === 'done' && input.confirmIncompleteChecklist !== true) {
       const incomplete = await client.query<{count: number}>('SELECT count(*)::int AS count FROM task_checklist_items WHERE task_id = $1 AND completed_at IS NULL', [taskId]);
@@ -451,15 +460,17 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
     const result = await client.query(`UPDATE tasks SET project_id = $3, assignee_user_id = $4, title = $5,
       description = $6, status = $7, priority = $8, deadline = $9, wait_reason = $10,
       wait_check_at = $11, blocked_by_task_id = $12, deadline_date = $13, deadline_timezone = $14,
-      issue_url = $15,
+      issue_url = $15, importance = $16, urgency = $17,
       completed_at = CASE WHEN $7 = 'done' AND status <> 'done' THEN now() WHEN $7 <> 'done' THEN NULL ELSE completed_at END,
-      updated_at = now() WHERE id = $1 AND board_id = $2 RETURNING *, to_char(deadline_date, 'YYYY-MM-DD') AS deadline_date, revision::text AS version`,
+      updated_at = now() WHERE id = $1 AND board_id = $2 RETURNING *, to_char(deadline_date, 'YYYY-MM-DD') AS deadline_date, revision::text AS version,
+        task_priority_key(importance,urgency,deadline,deadline_date,deadline_timezone,created_at,id) AS priority_key,
+        (SELECT revision::text FROM recurrence_templates WHERE id=tasks.recurrence_template_id) AS recurrence_version`,
       [taskId, boardId, projectId, assigneeId, input.title ?? task.title, input.description === undefined ? task.description : input.description,
-        status, input.priority ?? task.priority, input.deadline === undefined ? (input.deadlineDate ? null : task.deadline) : input.deadline,
+        status, evaluation.priority, input.deadline === undefined ? (input.deadlineDate ? null : task.deadline) : input.deadline,
         waitReason, waiting ? (input.waitCheckAt === undefined ? task.wait_check_at : input.waitCheckAt) : null, blockerTaskId,
         input.deadlineDate === undefined ? (input.deadline === undefined ? task.deadline_date : null) : input.deadlineDate,
         input.deadlineTimezone === undefined ? (input.deadline === undefined ? task.deadline_timezone : null) : input.deadlineTimezone,
-        input.issueUrl === undefined ? task.issue_url : input.issueUrl]);
+        input.issueUrl === undefined ? task.issue_url : input.issueUrl, evaluation.importance, evaluation.urgency]);
     await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, before_data, after_data)
       VALUES ($1, $2, $3, $4, 'updated', $5, $6)`, [randomUUID(), boardId, taskId, userId, task, result.rows[0]]);
     const blockerChanged = task.blocked_by_task_id !== blockerTaskId || task.wait_reason !== waitReason;
@@ -677,7 +688,7 @@ export async function pendingNotificationForTask(db: Database, taskId: string, k
 }
 
 export const recurrenceColumns = `r.id, r.board_id, r.creator_user_id, r.project_id, r.assignee_user_id,
-  r.title, r.description, r.priority, r.frequency, r.weekdays, r.day_of_month,
+  r.title, r.description, r.priority, r.importance, r.urgency, r.revision::text AS version, r.frequency, r.weekdays, r.day_of_month,
   to_char(r.local_time, 'HH24:MI') AS local_time, r.timezone, r.starts_at, r.ends_at,
   r.next_occurrence_at, r.paused_at, r.archived_at, r.created_at, r.updated_at`;
 
@@ -689,21 +700,22 @@ export async function recurrencesForBoard(db: Database, userId: string, boardId:
 }
 
 export async function createRecurrence(db: Database, userId: string, boardId: string, input: RecurrenceInput, transaction?: pg.PoolClient) {
+  const evaluation = assessment(input);
   const first = nextOccurrence(input, new Date(new Date(input.startAt).getTime() - 1));
   if (!first) return null;
   const run = async (client: pg.PoolClient) => {
   const result = await client.query(`INSERT INTO recurrence_templates (id, board_id, creator_user_id, project_id,
       assignee_user_id, title, description, priority, frequency, weekdays, day_of_month, local_time,
-      timezone, starts_at, ends_at, next_occurrence_at)
-    SELECT $3, b.id, $2, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+      timezone, starts_at, ends_at, next_occurrence_at, importance, urgency)
+    SELECT $3, b.id, $2, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
     FROM boards b JOIN memberships creator ON creator.board_id = b.id
     LEFT JOIN projects p ON p.id = $4 AND p.board_id = b.id AND p.archived_at IS NULL
     LEFT JOIN memberships assignee ON assignee.board_id = b.id AND assignee.user_id = $5
     WHERE b.id = $1 AND b.status = 'active' AND creator.user_id = $2
       AND ($4::uuid IS NULL OR p.id IS NOT NULL) AND ($5::bigint IS NULL OR assignee.user_id IS NOT NULL)
-    RETURNING *`, [boardId, userId, randomUUID(), input.projectId ?? null, input.assigneeUserId ?? null,
-      input.title!, input.description ?? null, input.priority ?? 'normal', input.frequency, input.weekdays ?? null,
-      input.dayOfMonth ?? null, input.localTime, input.timezone, input.startAt, input.endAt ?? null, first.toISOString()]);
+    RETURNING *, revision::text AS version`, [boardId, userId, randomUUID(), input.projectId ?? null, input.assigneeUserId ?? null,
+      input.title!, input.description ?? null, evaluation.priority, input.frequency, input.weekdays ?? null,
+      input.dayOfMonth ?? null, input.localTime, input.timezone, input.startAt, input.endAt ?? null, first.toISOString(), evaluation.importance, evaluation.urgency]);
   return result.rows[0] ?? null;
   };
   return transaction ? run(transaction) : withBoardLock(db, boardId, run);
@@ -718,6 +730,8 @@ export async function updateRecurrence(db: Database, userId: string, boardId: st
       WHERE r.id = $1 AND r.board_id = $2 AND b.status = 'active' FOR UPDATE`, [recurrenceId, boardId, userId]);
     const row = current.rows[0];
     if (!row || (row.creator_user_id !== userId && row.assignee_user_id !== userId)) return null;
+    if (input.expectedVersion !== undefined && input.expectedVersion !== String(row.revision)) throw new AssessmentError('recurrence version conflict', 409);
+    const evaluation = assessment(input, row);
     const projectId = input.projectId === undefined ? row.project_id : input.projectId;
     const assigneeId = input.assigneeUserId === undefined ? row.assignee_user_id : input.assigneeUserId;
     if (projectId && !(await client.query('SELECT 1 FROM projects WHERE id = $1 AND board_id = $2 AND (archived_at IS NULL OR id = $3)', [projectId, boardId, row.project_id])).rowCount) return null;
@@ -738,11 +752,11 @@ export async function updateRecurrence(db: Database, userId: string, boardId: st
       local_time = $11, timezone = $12, starts_at = $13, ends_at = $14, next_occurrence_at = $15,
       paused_at = CASE WHEN $16::boolean IS NULL THEN paused_at WHEN $16 THEN now() ELSE NULL END,
       archived_at = CASE WHEN $17::boolean IS NULL THEN archived_at WHEN $17 THEN now() ELSE NULL END,
-      updated_at = now() WHERE id = $1 AND board_id = $2 RETURNING *`,
+      importance = $18, urgency = $19, updated_at = now() WHERE id = $1 AND board_id = $2 RETURNING *, revision::text AS version`,
       [recurrenceId, boardId, projectId, assigneeId, input.title ?? row.title,
-        input.description === undefined ? row.description : input.description, input.priority ?? row.priority,
+        input.description === undefined ? row.description : input.description, evaluation.priority,
         rule.frequency, rule.weekdays ?? null, rule.dayOfMonth ?? null, rule.localTime, rule.timezone,
-        rule.startAt, rule.endAt ?? null, next?.toISOString() ?? null, input.paused ?? null, input.archived ?? null]);
+        rule.startAt, rule.endAt ?? null, next?.toISOString() ?? null, input.paused ?? null, input.archived ?? null, evaluation.importance, evaluation.urgency]);
     return result.rows[0];
   };
   if (transaction) return run(transaction);
@@ -759,12 +773,13 @@ export async function updateTaskAndFuture(db: Database, userId: string, boardId:
   return withBoardLock(db, boardId, async (client) => {
     const task = await updateTask(db, userId, boardId, taskId, input, client);
     if (!task?.recurrence_template_id) throw new TaskActionError('task has no accessible recurrence template');
-    // Only the five shared fields belong to the series. Never forward task-only or extra request fields.
-    const { title, description, projectId, assigneeUserId, priority } = input;
+    // Never forward task-only fields or the task's revision to the template.
+    const { title, description, projectId, assigneeUserId, priority, importance, urgency } = input;
+    if (input.expectedRecurrenceVersion === undefined) throw new AssessmentError('expectedRecurrenceVersion is required', 409);
     const template = await updateRecurrence(db, userId, boardId, task.recurrence_template_id,
-      { title, description, projectId, assigneeUserId, priority }, client);
+      { title, description, projectId, assigneeUserId, priority, importance, urgency, expectedVersion: input.expectedRecurrenceVersion }, client);
     if (!template) throw new TaskActionError('recurrence action is not allowed');
-    return task;
+    return { ...task, recurrence_version: template.version };
   });
 }
 
@@ -783,11 +798,11 @@ export async function runRecurrenceScheduler(db: Database, now = new Date()) {
         localTime: row.local_time.slice(0, 5), timezone: row.timezone, startAt: row.starts_at.toISOString(), endAt: row.ends_at?.toISOString() };
       while (occurrence && occurrence <= now) {
         const result = await client.query(`INSERT INTO tasks (id, board_id, project_id, creator_user_id, assignee_user_id,
-            title, description, priority, recurrence_template_id, occurrence_at)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            title, description, priority, recurrence_template_id, occurrence_at, importance, urgency)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
           ON CONFLICT (recurrence_template_id, occurrence_at) DO NOTHING RETURNING id`,
           [randomUUID(), row.board_id, row.project_id, row.creator_user_id, row.assignee_user_id,
-            row.title, row.description, row.priority, row.id, occurrence]);
+            row.title, row.description, row.priority, row.id, occurrence, row.importance, row.urgency]);
         created += result.rowCount ?? 0;
         occurrence = nextOccurrence(rule, occurrence);
       }

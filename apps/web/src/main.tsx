@@ -2,12 +2,15 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import './style.css';
+import './task-priority.css';
 import { api, ApiError, json } from './api';
 import { ActionRow, AppShell, Avatar, Badge, ChoiceAction, ChoiceRow, CreateScreen, Disclosure, EnvironmentStatus, FieldRow, Icon, SectionHeader, SettingsScreen, Sheet, Skeleton, TaskGlyph, TasksScreen, type IconName } from './app-shell';
 import type { Board, Collaboration, Member, Project, Recurrence, Schedule } from './domain';
 import { countLabel, initialNavigation, settingsSections, type NavigationState } from './navigation';
 import { TaskDetails } from './task-details';
 import { DeadlineField } from './deadline-field';
+import { PriorityField, PrioritySheet, PriorityTasks, AssessmentFilters } from './task-priority';
+import { assessmentText, emptyAssessment, compareTaskPriority, normalizeTaskFilters, type Assessment } from './tasks';
 import { deadlineDraft, deadlinePatch, formatTaskDeadline, isTaskOverdue } from './tasks';
 import { activeFilterCount, dateInputToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveStartupContext, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, taskStatusRestriction, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
 import { TaskKanban } from './task-kanban';
@@ -24,7 +27,7 @@ import { McpConnections } from './mcp-connections';
 import { NameSetting, PublicationSetting, useSettingsEdits } from './settings-editor';
 import { Landing } from './landing';
 
-type TaskView = 'list' | 'kanban';
+type TaskView = 'list' | 'kanban' | 'matrix';
 type FilterChoice = 'project' | 'assignee' | 'status' | 'priority' | 'deadline';
 type CreateChoice = 'board' | 'project' | 'assignee' | 'priority' | 'status';
 const statuses = Object.keys(statusDisplayName) as TaskStatus[];
@@ -61,6 +64,9 @@ function App() {
   const [blockerKind, setBlockerKind] = useState<'external' | 'task'>('external');
   const [blockerSearch, setBlockerSearch] = useState('');
   const [priority, setPriority] = useState<Task['priority']>('normal');
+  const [assessmentDraft, setAssessmentDraft] = useState<Assessment>(emptyAssessment);
+  const [recurrenceAssessment, setRecurrenceAssessment] = useState<Assessment>(emptyAssessment);
+  const [matrixGroup, setMatrixGroup] = useState<number>();
   const [notifyAssignee, setNotifyAssignee] = useState(false);
   const [openTask, setOpenTask] = useState<Task>();
   const [collaboration, setCollaboration] = useState<Collaboration>();
@@ -102,7 +108,7 @@ function App() {
   const [recurrenceFrequency, setRecurrenceFrequency] = useState<Recurrence['frequency']>('daily');
   const [recurrenceProjectId, setRecurrenceProjectId] = useState('');
   const [recurrenceAssigneeId, setRecurrenceAssigneeId] = useState('');
-  const [recurrencePriority, setRecurrencePriority] = useState<Task['priority']>('normal');
+
   const [settingsCounts, setSettingsCounts] = useState<{ projects: number; automations: number }>();
   const [createBoardId, setCreateBoardId] = useState('');
   const [createOrigin, setCreateOrigin] = useState<NavigationState>(initialNavigation);
@@ -356,7 +362,7 @@ function App() {
     let cancelled = false;
     setFiltersLoadedFor('');
     void api<{filters: Partial<TaskFilters>}>(`/api/boards/${board.id}/task-filters`)
-      .then((data) => { if (!cancelled) { setFilters({ ...defaultFilters, ...data.filters }); setFiltersLoadedFor(board.id); } })
+      .then((data) => { if (!cancelled) { setFilters(normalizeTaskFilters(data.filters)); setFiltersLoadedFor(board.id); } })
       .catch((error: Error) => { if (!cancelled) setMessage(error.message); });
     return () => { cancelled = true; };
   }, [userId, board?.id]);
@@ -387,7 +393,7 @@ function App() {
       if (createStatus === 'waiting' && createWaitCheck && !waitCheckAt) throw new Error('Проверьте дату проверки');
       const payload = {
         title: title.trim(), description: description.trim() || null, projectId: project || null,
-        assigneeUserId: assignee || null, ...deadlinePatch(due), priority, notifyAssignee, status: createStatus,
+        assigneeUserId: assignee || null, ...deadlinePatch(due), ...assessmentDraft, notifyAssignee, status: createStatus,
         blockerTaskId: createStatus === 'waiting' ? createBlockerId || null : null,
         waitReason: createStatus === 'waiting' && !createBlockerId ? createWaitReason.trim() : null, waitCheckAt
       };
@@ -401,7 +407,7 @@ function App() {
       const presentedTask = presentCreatedTask(task, boards.find((item) => item.id === createBoardId)?.name, projects.find((item) => item.id === project)?.name, members.find((item) => item.id === assignee)?.first_name);
       presentedTask.blocker_title = createTasks.find((item) => item.id === task.blocked_by_task_id)?.title;
       setTasks((current: Task[]) => current.some((item: Task) => item.id === task.id) ? current : [presentedTask, ...current]);
-      setTitle(''); setDescription(''); if (!another) setProject(''); setAssignee(''); setDue(deadlineDraft()); setPriority('normal'); setNotifyAssignee(false);
+      setTitle(''); setDescription(''); if (!another) setProject(''); setAssignee(''); setDue(deadlineDraft()); setPriority('normal'); setAssessmentDraft(emptyAssessment); setNotifyAssignee(false);
       setCreateStatus('todo'); setCreateWaitReason(''); setCreateBlockerId(''); setCreateWaitCheck(''); createRequest.current = undefined;
       setBlockerKind('external'); setBlockerSearch(''); setCreateBlockerOpen(false); setStatusChoice('todo'); setCreateReset((value) => value + 1); setCreateUncertain(false);
       setCreateTasks((current) => [presentedTask, ...current]);
@@ -543,9 +549,9 @@ function App() {
       timezone: String(data.get('timezone')), weekdays: recurrenceFrequency === 'weekdays' || recurrenceFrequency === 'weekly' ? weekdays : undefined,
       dayOfMonth: recurrenceFrequency === 'monthly' ? Number(data.get('dayOfMonth')) : undefined,
       startAt: new Date(`${startDate}T00:00:00`).toISOString(), endAt: endDate ? new Date(`${endDate}T23:59:59`).toISOString() : null,
-      projectId: data.get('projectId') || null, assigneeUserId: data.get('assigneeUserId') || null, priority: data.get('priority')
+      projectId: data.get('projectId') || null, assigneeUserId: data.get('assigneeUserId') || null, ...recurrenceAssessment
     })), 'Повтор создан')) return;
-    form.reset(); setRecurrenceFrequency('daily'); setRecurrenceProjectId(''); setRecurrenceAssigneeId(''); setRecurrencePriority('normal');
+    form.reset(); setRecurrenceFrequency('daily'); setRecurrenceProjectId(''); setRecurrenceAssigneeId(''); setRecurrenceAssessment(emptyAssessment);
   };
   const chooseTaskBoard = (boardId: string) => {
     setBacklog(false);
@@ -577,7 +583,7 @@ function App() {
     <div onClick={() => { if (!board && task.board_id) setNavigation({ screen: 'board', boardId: task.board_id }); }}>
       <span>{task.board_name ?? statusDisplayName[task.status]}</span><strong>{task.title}</strong>
       {task.description && <small>{task.description}</small>}
-      <div className="meta">{task.project_name && <small>{task.project_name}</small>}<small>{task.assignee_name ?? 'Без ответственного'}</small>{(task.deadline || task.deadline_date) && <small>{formatTaskDeadline(task)}</small>}</div>
+      <div className="meta">{task.project_name && <small>{task.project_name}</small>}<small>{task.assignee_name ?? 'Без ответственного'}</small>{(task.deadline || task.deadline_date) && <small>{formatTaskDeadline(task)}</small>}<small>{assessmentText(task)}</small></div>
       {task.overdue && <small className="flag">Дедлайн прошёл</small>}{task.wait_check_due && <small className="flag">Пора проверить ожидание</small>}{task.blocker_title ? <small>Блокирует: {task.blocker_title}</small> : task.wait_reason && <small>Внешний блокер: {task.wait_reason}</small>}
     </div>
     {board && <div className="actions"><button onClick={() => openCollaboration(task)}>Открыть</button>{task.archived_at ? <button onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}/reopen`, {method: 'POST'}), 'Задача восстановлена')}>Восстановить</button> : <>
@@ -594,8 +600,8 @@ function App() {
       <div className="task-meta">
         <span>{task.project_name ?? task.board_name ?? 'Без проекта'}</span>
         {(task.deadline || task.deadline_date) && <span className={task.overdue ? 'deadline-overdue' : ''}>{formatTaskDeadline(task)}{task.overdue ? ' · Дедлайн прошёл' : ''}</span>}
-        {task.priority === 'urgent' && <Badge tone="urgent">Срочно</Badge>}
-        {task.status === 'waiting' && !task.wait_reason && <Badge tone="blocker">Блокер</Badge>}
+        <span className="task-assessment">{assessmentText(task)}</span>
+        {task.status === 'waiting' && <Badge tone="blocker">Блокер</Badge>}
         {Boolean(task.checklist_total) && <span>{task.checklist_completed}/{task.checklist_total}</span>}
       </div>
       {task.status === 'waiting' && task.wait_reason && <small className="blocker-reason">{task.wait_reason}</small>}
@@ -607,13 +613,13 @@ function App() {
     { id: 'overdue', label: 'Просрочено', icon: 'alert' }, { id: 'today', label: 'Сегодня', icon: 'sun' },
     { id: 'upcoming', label: 'Ближайшие', icon: 'clock' }, { id: 'none', label: 'Без срока', icon: 'noDeadline' }
   ];
-  const groupedTaskList = () => <div className="grouped-task-list">{grouping === 'deadline'
+  const groupedTaskList = () => taskView === 'matrix' || grouping === 'priority' ? <PriorityTasks tasks={filteredTasks} matrix={taskView === 'matrix'} renderTask={mainTaskRow} selected={matrixGroup} onSelect={setMatrixGroup}/> : <div className="grouped-task-list">{grouping === 'deadline'
     ? deadlineSections.map((section) => deadlineGroups[section.id].length > 0 && <section className="task-section" key={section.id}><SectionHeader count={deadlineGroups[section.id].length} tone={section.id}><span className="section-title"><span aria-hidden="true"><Icon name={section.icon}/></span>{section.label}</span></SectionHeader>{deadlineGroups[section.id].map(mainTaskRow)}</section>)
     : groupTasksByProject(filteredTasks).map((group) => <section className="task-section project-section" key={group.id ?? 'none'}><SectionHeader count={group.tasks.length} tone="upcoming">{group.name}</SectionHeader>{group.tasks.map(mainTaskRow)}</section>)
   }</div>;
-  const kanbanColumns = Object.fromEntries(statuses.map((status) => [status, filterTasks(tasks, { ...filters, status }, userId)])) as Record<TaskStatus, Task[]>;
+  const kanbanColumns = Object.fromEntries(statuses.map((status) => [status, filterTasks(tasks, { ...filters, status }, userId).sort(compareTaskPriority)])) as Record<TaskStatus, Task[]>;
   const kanbanTaskRow = (task: Task) => <article className={`kanban-task-row status-${task.status}`} data-task-id={task.id} data-priority={task.priority} key={task.id}>
-    <button className="task-summary" onClick={() => void openCollaboration(task)}><strong>{task.title}</strong><div className="task-meta"><span>{task.project_name ?? task.board_name ?? 'Без проекта'}</span>{(task.deadline || task.deadline_date) && <span className={task.overdue ? 'deadline-overdue' : ''}>{formatTaskDeadline(task)}{task.overdue ? ' · Дедлайн прошёл' : ''}</span>}{task.priority === 'urgent' && <Badge tone="urgent">Срочно</Badge>}</div></button>
+    <button className="task-summary" onClick={() => void openCollaboration(task)}><strong>{task.title}</strong><div className="task-meta"><span>{task.project_name ?? task.board_name ?? 'Без проекта'}</span>{(task.deadline || task.deadline_date) && <span className={task.overdue ? 'deadline-overdue' : ''}>{formatTaskDeadline(task)}{task.overdue ? ' · Дедлайн прошёл' : ''}</span>}<span>{assessmentText(task)}</span>{task.status === 'waiting' && <Badge tone="blocker">Блокер</Badge>}</div></button>
     {task.assignee_name && <Avatar initials={initials(task.assignee_name)} label={`Исполнитель: ${task.assignee_name}`}/>}
     <button className="kanban-status-action" aria-label={`Сменить статус: ${task.title}`} disabled={Boolean(task.archived_at || taskStatusRestriction(task))} title={taskStatusRestriction(task) ?? undefined} onClick={() => setKanbanStatusTask(task)}><span>Сменить статус</span><Icon name="chevron"/></button>
   </article>;
@@ -631,12 +637,14 @@ function App() {
       <select aria-label="Проект" value={filters.project} onChange={(event) => setFilter('project', event.target.value)}><option value="">Все проекты</option>{projects.filter((item) => !item.archived_at).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
       <select aria-label="Исполнитель" value={filters.assignee} onChange={(event) => setFilter('assignee', event.target.value)}><option value="">Все исполнители</option>{members.map((member) => <option key={member.id} value={member.id}>{member.first_name}</option>)}</select>
       <select aria-label="Статус" value={filters.status} onChange={(event) => setFilter('status', event.target.value as TaskFilters['status'])}><option value="">Все статусы</option>{statuses.map((status) => <option key={status} value={status}>{statusDisplayName[status]}</option>)}</select>
-      <select aria-label="Приоритет" value={filters.priority} onChange={(event) => setFilter('priority', event.target.value as TaskFilters['priority'])}><option value="">Любой приоритет</option><option value="normal">Обычный</option><option value="urgent">Срочный</option></select>
+      <AssessmentFilters value={filters} onChange={setFilters}/>
       <select aria-label="Дедлайн" value={filters.deadline} onChange={(event) => setFilter('deadline', event.target.value as TaskFilters['deadline'])}><option value="">Любой дедлайн</option><option value="overdue">Просрочено</option><option value="today">Сегодня</option><option value="week">7 дней</option><option value="none">Без дедлайна</option></select>
       <label className="checkbox"><input type="checkbox" checked={filters.unassigned} onChange={(event) => setFilter('unassigned', event.target.checked)}/> Без ответственного</label>
       <button className="secondary" onClick={() => setFilters(defaultFilters)}>Сбросить</button>
     </div></details></>;
   const viewControls = <div className="list-controls">
+      <button className={`secondary${taskView === 'matrix' ? ' active' : ''}`} aria-pressed={taskView === 'matrix'} onClick={() => setTaskView('matrix')}>Матрица</button>
+
       <div className="view-switch" aria-label="Вид задач"><button className={taskView === 'list' ? 'active' : ''} aria-label="Список" aria-pressed={taskView === 'list'} onClick={() => setTaskView('list')}><svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h3v3H5zM11 6h8M5 11h3v3H5zM11 11h8M5 16h3v3H5zM11 16h8"/></svg></button><button className={taskView === 'kanban' ? 'active' : ''} aria-label="Канбан" aria-pressed={taskView === 'kanban'} onClick={() => setTaskView('kanban')}><svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h4v14H5zM10 5h4v14h-4zM15 5h4v14h-4z"/></svg></button></div>
     </div>;
   const closeSearch = () => {
@@ -659,7 +667,7 @@ function App() {
     <h2 className="backlog-heading">На разбор</h2><p className="bulk-context">Без исполнителя · К выполнению</p>
     {taskLoadState === 'loading' ? <Skeleton label="Загрузка общей очереди"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Нет связи. Очередь не обновилась.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : <>
       {!backlogTasks.length && <div className="task-state"><h3>Всё разобрано</h3><p>Здесь появятся новые задачи без исполнителя. Добавьте одну или вставьте готовый список.</p></div>}
-      {backlogTasks.map((task) => <article className="backlog-row" data-task-id={task.id} key={task.id}><button className="task-summary" onClick={() => void openCollaboration(task)}><strong>{task.title}</strong><div className="task-meta"><span>{task.project_name ?? task.board_name ?? 'Без проекта'}</span>{(task.deadline || task.deadline_date) && <span className={task.overdue ? 'deadline-overdue' : ''}>{formatTaskDeadline(task)}{task.overdue ? ' · Дедлайн прошёл' : ''}</span>}{task.priority === 'urgent' && <Badge tone="urgent">Срочно</Badge>}</div></button><button className="secondary" disabled={board?.status !== 'active' || claimingRow === task.id} onClick={() => void claimFromBacklog(task)}>{claimingRow === task.id ? 'Назначаем…' : 'Взять себе'}</button></article>)}
+      {backlogTasks.map((task) => <article className="backlog-row" data-task-id={task.id} key={task.id}><button className="task-summary" onClick={() => void openCollaboration(task)}><strong>{task.title}</strong><div className="task-meta"><span>{task.project_name ?? task.board_name ?? 'Без проекта'}</span>{(task.deadline || task.deadline_date) && <span className={task.overdue ? 'deadline-overdue' : ''}>{formatTaskDeadline(task)}{task.overdue ? ' · Дедлайн прошёл' : ''}</span>}<span>{assessmentText(task)}</span></div></button><button className="secondary" disabled={board?.status !== 'active' || claimingRow === task.id} onClick={() => void claimFromBacklog(task)}>{claimingRow === task.id ? 'Назначаем…' : 'Взять себе'}</button></article>)}
     </>}
     <p className="bulk-context">Другие статусы — во вкладке «Все».</p>
   </>;
@@ -675,11 +683,11 @@ function App() {
     <button className="sheet-close secondary" onClick={() => setShowBoardSheet(false)}>Закрыть</button>
   </Sheet>;
   const filterSheet = showFilterSheet && !showAdvancedFilters && !filterChoice && <Sheet className="task-sheet filter-choice-sheet" title="Фильтры" onClose={() => setShowFilterSheet(false)}>
-    {taskView === 'list' && <div className="filter-grouping"><h3>Группировка списка</h3><div className="segmented" role="group" aria-label="Группировка списка"><button aria-pressed={grouping === 'deadline'} className={grouping === 'deadline' ? 'active' : ''} onClick={() => setGrouping('deadline')}>По срокам</button><button aria-pressed={grouping === 'project'} className={grouping === 'project' ? 'active' : ''} onClick={() => setGrouping('project')}>По проектам</button></div></div>}
+    {taskView === 'list' && <div className="filter-grouping"><h3>Группировка списка</h3><div className="segmented" role="group" aria-label="Группировка списка"><button aria-pressed={grouping === 'priority'} className={grouping === 'priority' ? 'active' : ''} onClick={() => setGrouping('priority')}>По приоритету</button><button aria-pressed={grouping === 'deadline'} className={grouping === 'deadline' ? 'active' : ''} onClick={() => setGrouping('deadline')}>По срокам</button><button aria-pressed={grouping === 'project'} className={grouping === 'project' ? 'active' : ''} onClick={() => setGrouping('project')}>По проектам</button></div></div>}
     <div className="quick-filters">
       <ChoiceRow kind="check" label="Только мои" selected={filters.scope === 'mine'} onClick={() => setFilter('scope', filters.scope === 'mine' ? 'all' : 'mine')}/>
-      <ChoiceRow kind="check" label="Срочные" selected={filters.priority === 'urgent'} onClick={() => setFilter('priority', filters.priority === 'urgent' ? '' : 'urgent')}/>
-      {taskView === 'list' && <ChoiceRow kind="check" label="С блокером" selected={filters.status === 'waiting'} onClick={() => setFilter('status', filters.status === 'waiting' ? '' : 'waiting')}/>}
+      <ChoiceRow kind="check" label="Срочные" selected={filters.urgency === 'true'} onClick={() => setFilters(current => ({ ...current, priority: '', urgency: current.urgency === 'true' ? 'any' : 'true' }))}/>
+      {taskView !== 'kanban' && <ChoiceRow kind="check" label="С блокером" selected={filters.status === 'waiting'} onClick={() => setFilter('status', filters.status === 'waiting' ? '' : 'waiting')}/>}
     </div>
     <div className="filter-links"><button onClick={() => setShowAdvancedFilters(true)}>Другие фильтры</button><button onClick={() => setFilters(defaultFilters)}>Сбросить</button></div>
     <button className="filter-apply" onClick={() => setShowFilterSheet(false)}>Показать {taskView === 'kanban' ? statuses.reduce((total, status) => total + kanbanColumns[status].length, 0) : filteredTasks.length} задач</button>
@@ -688,8 +696,8 @@ function App() {
     <div>
       {board && <ActionRow label="Проект" value={projects.find((item) => item.id === filters.project)?.name ?? 'Все проекты'} onClick={() => setFilterChoice('project')}/>}
       {board && <ActionRow label="Исполнитель" value={members.find((item) => item.id === filters.assignee)?.first_name ?? 'Все исполнители'} onClick={() => setFilterChoice('assignee')}/>}
-      {taskView === 'list' && <ActionRow label="Статус" value={filters.status ? statusDisplayName[filters.status] : 'Без завершённых'} onClick={() => setFilterChoice('status')}/>}
-      <ActionRow label="Приоритет" value={filters.priority === 'urgent' ? 'Срочный' : filters.priority === 'normal' ? 'Обычный' : 'Любой'} onClick={() => setFilterChoice('priority')}/>
+      {taskView !== 'kanban' && <ActionRow label="Статус" value={filters.status ? statusDisplayName[filters.status] : 'Без завершённых'} onClick={() => setFilterChoice('status')}/>}
+      <AssessmentFilters value={filters} onChange={setFilters}/>
       <ActionRow label="Дедлайн" value={{ overdue: 'Просрочено', today: 'Сегодня', week: '7 дней', none: 'Без дедлайна', '': 'Любой' }[filters.deadline]} onClick={() => setFilterChoice('deadline')}/>
       <ChoiceRow kind="check" label="Без ответственного" selected={filters.unassigned} onClick={() => setFilters((current) => ({ ...current, scope: 'all', assignee: '', unassigned: !current.unassigned }))}/>
     </div>
@@ -703,11 +711,12 @@ function App() {
     deadline: { title: 'Дедлайн', current: filters.deadline, options: [{ value: '', label: 'Любой' }, { value: 'overdue', label: 'Просрочено' }, { value: 'today', label: 'Сегодня' }, { value: 'week', label: '7 дней' }, { value: 'none', label: 'Без дедлайна' }] }
   } satisfies Record<FilterChoice, { title: string; current: string; options: { value: string; label: string }[] }>;
   const filterChoiceSheet = filterChoice && (() => {
+    if (filterChoice === 'priority') return <Sheet className="task-sheet" title="Приоритет" onClose={() => setFilterChoice(undefined)}><AssessmentFilters value={filters} onChange={setFilters}/><button onClick={() => setFilterChoice(undefined)}>Применить</button></Sheet>;
     const choice = filterChoiceDefinitions[filterChoice];
     const choose = (value: string) => {
       if (filterChoice === 'project' || filterChoice === 'assignee') setFilter(filterChoice, value);
       else if (filterChoice === 'status') setFilter('status', value as TaskFilters['status']);
-      else if (filterChoice === 'priority') setFilter('priority', value as TaskFilters['priority']);
+
       else setFilter('deadline', value as TaskFilters['deadline']);
       setFilterChoice(undefined);
     };
@@ -721,6 +730,7 @@ function App() {
     status: { title: 'Статус задачи', current: createStatus, options: statuses.map((value) => ({ value, label: value === 'todo' ? 'К выполнению' : statusDisplayName[value] })) }
   } satisfies Record<CreateChoice, { title: string; current: string; options: { value: string; label: string }[] }>;
   const createChoiceSheet = createChoice && (() => {
+    if (createChoice === 'priority') return <PrioritySheet value={assessmentDraft} onApply={setAssessmentDraft} onClose={() => setCreateChoice(undefined)}/>;
     const choice = createChoiceDefinitions[createChoice];
     const choose = (value: string) => {
       if (createChoice === 'board') { setMessage(''); setCreateBoardId(value); setProject(''); setAssignee(''); setNotifyAssignee(false); setCreateBlockerId(''); }
@@ -876,7 +886,7 @@ function App() {
         <label>Название задачи<input name="title" maxLength={200} required/></label><ChoiceAction label="Период" value={recurrenceFrequency} options={frequencyOptions} onChange={(value) => setRecurrenceFrequency(value as Recurrence['frequency'])}/>
         {(recurrenceFrequency === 'weekdays' || recurrenceFrequency === 'weekly') && <label>Дни недели (0–6)<input name="weekdays" defaultValue={recurrenceFrequency === 'weekdays' ? '1,2,3,4,5' : String(new Date().getDay())} pattern="[0-6](,[0-6])*" required/></label>}{recurrenceFrequency === 'monthly' && <label>День месяца<input name="dayOfMonth" type="number" min="1" max="31" defaultValue={new Date().getDate()} required/></label>}
         <label>Время<input name="localTime" type="time" defaultValue="09:00" required/></label><label>Часовой пояс<input name="timezone" defaultValue={Intl.DateTimeFormat().resolvedOptions().timeZone} required/></label><label>Дата начала<input name="startDate" type="date" defaultValue={new Date().toISOString().slice(0, 10)} required/></label><label>Дата окончания<input name="endDate" type="date"/></label>
-        <ChoiceAction label="Проект" name="projectId" value={recurrenceProjectId} options={projectOptions} onChange={setRecurrenceProjectId}/><ChoiceAction label="Исполнитель" name="assigneeUserId" value={recurrenceAssigneeId} options={assigneeOptions} onChange={setRecurrenceAssigneeId}/><ChoiceAction label="Приоритет" name="priority" value={recurrencePriority} options={priorityOptions} onChange={(value) => setRecurrencePriority(value as Task['priority'])}/><button>Добавить повтор</button>
+        <ChoiceAction label="Проект" name="projectId" value={recurrenceProjectId} options={projectOptions} onChange={setRecurrenceProjectId}/><ChoiceAction label="Исполнитель" name="assigneeUserId" value={recurrenceAssigneeId} options={assigneeOptions} onChange={setRecurrenceAssigneeId}/><PriorityField value={recurrenceAssessment} onChange={setRecurrenceAssessment}/><button>Добавить повтор</button>
       </form>{recurrences.filter((item) => !item.archived_at).map((item) => <div className="automation-row" key={item.id}><span><strong>{item.title}</strong><small>{item.frequency} · {item.local_time}</small></span><button className="secondary" onClick={() => void action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {paused: !item.paused_at})), item.paused_at ? 'Повтор включён' : 'Повтор приостановлен')}>{item.paused_at ? 'Включить' : 'Пауза'}</button></div>)}</section>
       {publicationSettings}<section className="settings-group"><h2>Уведомления</h2><p>Уведомление исполнителю выбирается при назначении задачи. Новых глобальных типов уведомлений пока нет.</p></section>
     </fieldset>}
@@ -914,7 +924,7 @@ function App() {
         {createStatus === 'waiting' && <ActionRow label="Причина блокера" value={createTasks.find((item) => item.id === createBlockerId)?.title ?? (createWaitReason || 'Укажите причину')} onClick={() => setCreateBlockerOpen(true)}/>}
         <ActionRow label="Доска" value={boards.find((item) => item.id === createBoardId)?.name ?? 'Выберите доску'} icon={<Icon name="board"/>} onClick={() => setCreateChoice('board')}/>
       </div>
-      <Disclosure key={createReset} label="Дополнительно" icon={<Icon name="sliders"/>}><div className="create-additional-fields"><ActionRow label="Приоритет" value={priority === 'urgent' ? 'Срочный' : 'Обычный'} onClick={() => setCreateChoice('priority')}/><label className="checkbox"><input type="checkbox" checked={notifyAssignee} disabled={!assignee} onChange={(event) => setNotifyAssignee(event.target.checked)}/> Уведомить исполнителя</label></div></Disclosure>
+      <Disclosure key={createReset} label="Дополнительно" icon={<Icon name="sliders"/>}><div className="create-additional-fields"><ActionRow label="Приоритет" value={assessmentText(assessmentDraft)} onClick={() => setCreateChoice('priority')}/><label className="checkbox"><input type="checkbox" checked={notifyAssignee} disabled={!assignee} onChange={(event) => setNotifyAssignee(event.target.checked)}/> Уведомить исполнителя</label></div></Disclosure>
       <p className="create-additional-hint">Приоритет и уведомление исполнителя</p>
     </fieldset><div className="create-action"><CreateButton label="Создать задачу" pending={createPending && !createAnother} success={Boolean(createSuccess && !createSuccess.another)} disabled={createPending || !title.trim() || !createBoardId || Boolean(createSuccess && !createSuccess.another)}/><CreateButton label="Создать и добавить ещё" pending={createPending && createAnother} success={Boolean(createSuccess?.another)} type="button" className="secondary" disabled={createPending || !title.trim() || !createBoardId || Boolean(createSuccess && !createSuccess.another)} onClick={() => void create(true)}/></div></form>
     {createChoiceSheet}

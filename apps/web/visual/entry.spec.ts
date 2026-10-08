@@ -137,6 +137,7 @@ for (const width of [390, 320]) {
       await expect(page.locator('.created-result')).toContainText('Задача создана, но скрыта фильтрами');
       await expect(page.getByRole('button', { name: 'Мои', exact: true })).toHaveAttribute('aria-pressed', 'true');
       await page.getByRole('button', { name: 'Все', exact: true }).click();
+      await page.locator('.unassessed-tasks summary').click();
       await expect(page.getByRole('button', { name: /Первая задача команды/ })).toBeVisible();
       await second.getByRole('button', { name: 'Проверить готовность' }).click();
       await second.getByRole('button', { name: /Бэклог/ }).click();
@@ -146,6 +147,7 @@ for (const width of [390, 320]) {
       await expect(second.getByRole('button', { name: 'Студия', exact: true })).toBeVisible();
       await expect(second.getByRole('heading', { name: /Как начать|Ожидаем|Начните работу/ })).toHaveCount(0);
       await second.getByRole('button', { name: 'Все', exact: true }).click();
+      await second.locator('.unassessed-tasks summary').click();
       await expect(second.getByRole('button', { name: /Первая задача команды/ })).toBeVisible();
       await second.screenshot({ path: `${evidence}/entry-group-return-${width}.png` });
       const task = (await db.query('SELECT id, board_id FROM tasks WHERE creator_user_id = $1', [owner.userId])).rows[0];

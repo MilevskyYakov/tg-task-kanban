@@ -5,6 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { AssessmentError } from './assessment.js';
 import { ChecklistConfirmationError, claimTask, createTask, createProject, ProjectConflictError, sessionUserId, setTaskArchived, TaskActionError, TaskConflictError, updateTask, updateProject, addChecklistItem, addTaskAttachment, addTaskComment, deleteChecklistItem, updateChecklistItem, taskCollaboration, type Database, type RecurrenceInput, type TaskInput } from './db.js';
 import type { Config } from './config.js';
 import { taskInput } from './task-input.js';
@@ -25,16 +26,18 @@ const blocker = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('task'), taskId: uuid }).strict(),
   z.object({ kind: z.literal('external'), reason: z.string().trim().min(1).max(1000), checkAt: z.string().optional() }).strict()
 ]);
-const changes = z.object({ title: z.string().trim().min(1).max(200).optional(), description: z.string().refine((s) => [...s].length <= 8000).nullable().optional(), projectId: uuid.nullable().optional(), priority: z.enum(['normal', 'urgent']).optional(), assigneeUserId: userId.nullable().optional(), deadline: deadline.optional(), status: status.optional(), blocker: blocker.optional(), issueUrl: z.string().trim().max(500).nullable().optional(), notifyAssignee: z.boolean().optional() }).strict().refine((value) => Object.keys(value).length > 0);
+const evaluation = { importance: z.boolean().nullable().optional().describe('Важная: true/false; null — не оценено. Независимо от срочности.'), urgency: z.boolean().nullable().optional().describe('Срочная: true/false; null — не оценено. Не выводится из дедлайна.') };
+const assessmentFilter = z.enum(['any', 'true', 'false', 'unassessed']).optional();
+const changes = z.object({ ...evaluation, title: z.string().trim().min(1).max(200).optional(), description: z.string().refine((s) => [...s].length <= 8000).nullable().optional(), projectId: uuid.nullable().optional(), priority: z.enum(['normal', 'urgent']).optional(), assigneeUserId: userId.nullable().optional(), deadline: deadline.optional(), status: status.optional(), blocker: blocker.optional(), issueUrl: z.string().trim().max(500).nullable().optional(), notifyAssignee: z.boolean().optional() }).strict().refine((value) => Object.keys(value).length > 0);
 const httpUrl = z.string().trim().max(2048).refine((value) => { try { return ['http:', 'https:'].includes(new URL(value).protocol); } catch { return false; } });
 const checklistPatch = z.object({ text: z.string().trim().min(1).max(500).optional(), completed: z.boolean().optional(), position: z.number().int().min(0).max(10000).optional() }).strict().refine((value) => Object.keys(value).length > 0);
 const schemas = {
   list_boards: z.object(page).strict(),
   list_projects: z.object({ boardId: uuid, ...search, archived: z.boolean().default(false) }).strict(),
   list_members: z.object({ boardId: uuid, ...search }).strict(),
-  list_tasks: z.object({ boardId: uuid, ...search, projectId: uuid.optional(), assignee: z.union([userId, z.enum(['self', 'unassigned'])]).optional(), statuses: z.array(status).min(1).max(4).optional(), backlog: z.boolean().optional(), archived: z.boolean().default(false) }).strict(),
+  list_tasks: z.object({ boardId: uuid, ...search, importance: assessmentFilter, urgency: assessmentFilter, unassessed: z.boolean().optional(), sort: z.enum(['created', 'priority']).optional(), projectId: uuid.optional(), assignee: z.union([userId, z.enum(['self', 'unassigned'])]).optional(), statuses: z.array(status).min(1).max(4).optional(), backlog: z.boolean().optional(), archived: z.boolean().default(false) }).strict(),
   get_task: z.object({ boardId: uuid, taskId: uuid, descriptionOffset: z.number().int().min(0).max(2147483646).default(0), descriptionLimit: z.number().int().min(1).max(8000).default(8000), version: z.string().regex(/^[1-9]\d*$/).max(20).optional() }).strict(),
-  create_task: z.object({ boardId: uuid, requestId: uuid, title: z.string().trim().min(1).max(200), description: z.string().refine((s) => [...s].length <= 8000).nullable().optional(), projectId: uuid.nullable().optional(), assigneeUserId: userId.nullable().optional(), priority: z.enum(['normal', 'urgent']).default('normal'), deadline: deadline.default({kind: 'none'}), status: status.default('todo'), blocker: blocker.optional(), issueUrl: z.string().trim().max(500).nullable().optional(), notifyAssignee: z.boolean().optional() }).strict(),
+  create_task: z.object({ ...evaluation, boardId: uuid, requestId: uuid, title: z.string().trim().min(1).max(200), description: z.string().refine((s) => [...s].length <= 8000).nullable().optional(), projectId: uuid.nullable().optional(), assigneeUserId: userId.nullable().optional(), priority: z.enum(['normal', 'urgent']).optional(), deadline: deadline.default({kind: 'none'}), status: status.default('todo'), blocker: blocker.optional(), issueUrl: z.string().trim().max(500).nullable().optional(), notifyAssignee: z.boolean().optional() }).strict(),
   update_task: z.object({ boardId: uuid, taskId: uuid, requestId: uuid, expectedVersion: z.string().regex(/^[1-9]\d*$/).max(20), changes, confirmIncompleteChecklist: z.boolean().default(false) }).strict(),
   claim_task: z.object({ boardId: uuid, taskId: uuid, requestId: uuid }).strict(),
   archive_task: z.object({ boardId: uuid, taskId: uuid, requestId: uuid, archived: z.boolean() }).strict(),
@@ -47,8 +50,8 @@ const schemas = {
   delete_checklist_item: z.object({ boardId: uuid, taskId: uuid, itemId: uuid, requestId: uuid }).strict(),
   add_task_attachment: z.object({ boardId: uuid, taskId: uuid, requestId: uuid, url: httpUrl, title: z.string().trim().max(500).optional() }).strict(),
   list_recurrences: z.object({ boardId: uuid, ...search, showArchived: z.boolean().default(false) }).strict(),
-  create_recurrence: z.object({ boardId: uuid, requestId: uuid, title: z.string().trim().min(1).max(200), description: z.string().refine((s) => [...s].length <= 8000).nullable().optional(), projectId: uuid.nullable().optional(), assigneeUserId: userId.nullable().optional(), priority: z.enum(['normal', 'urgent']).default('normal'), frequency: z.enum(['daily', 'weekdays', 'weekly', 'monthly']), weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(), dayOfMonth: z.number().int().min(1).max(31).optional(), localTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), timezone: z.string().min(1).max(100), startAt: z.string().min(4), endAt: z.string().min(4).nullable().optional() }).strict(),
-  update_recurrence: z.object({ boardId: uuid, recurrenceId: uuid, requestId: uuid, paused: z.boolean().optional(), archived: z.boolean().optional(), title: z.string().trim().min(1).max(200).optional(), description: z.string().refine((s) => [...s].length <= 8000).nullable().optional(), projectId: uuid.nullable().optional(), assigneeUserId: userId.nullable().optional(), priority: z.enum(['normal', 'urgent']).optional(), frequency: z.enum(['daily', 'weekdays', 'weekly', 'monthly']).optional(), weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(), dayOfMonth: z.number().int().min(1).max(31).optional(), localTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(), timezone: z.string().min(1).max(100).optional(), startAt: z.string().min(4).optional(), endAt: z.string().min(4).nullable().optional() }).strict().refine((value) => ['paused','archived','title','description','projectId','assigneeUserId','priority','frequency','weekdays','dayOfMonth','localTime','timezone','startAt','endAt'].some((key) => value[key as keyof typeof value] !== undefined))
+  create_recurrence: z.object({ ...evaluation, boardId: uuid, requestId: uuid, title: z.string().trim().min(1).max(200), description: z.string().refine((s) => [...s].length <= 8000).nullable().optional(), projectId: uuid.nullable().optional(), assigneeUserId: userId.nullable().optional(), priority: z.enum(['normal', 'urgent']).optional(), frequency: z.enum(['daily', 'weekdays', 'weekly', 'monthly']), weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(), dayOfMonth: z.number().int().min(1).max(31).optional(), localTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), timezone: z.string().min(1).max(100), startAt: z.string().min(4), endAt: z.string().min(4).nullable().optional() }).strict(),
+  update_recurrence: z.object({ ...evaluation, expectedVersion: z.string().regex(/^[1-9]\d{0,18}$/).optional(), boardId: uuid, recurrenceId: uuid, requestId: uuid, paused: z.boolean().optional(), archived: z.boolean().optional(), title: z.string().trim().min(1).max(200).optional(), description: z.string().refine((s) => [...s].length <= 8000).nullable().optional(), projectId: uuid.nullable().optional(), assigneeUserId: userId.nullable().optional(), priority: z.enum(['normal', 'urgent']).optional(), frequency: z.enum(['daily', 'weekdays', 'weekly', 'monthly']).optional(), weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(), dayOfMonth: z.number().int().min(1).max(31).optional(), localTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(), timezone: z.string().min(1).max(100).optional(), startAt: z.string().min(4).optional(), endAt: z.string().min(4).nullable().optional() }).strict().refine((value) => ['importance','urgency','paused','archived','title','description','projectId','assigneeUserId','priority','frequency','weekdays','dayOfMonth','localTime','timezone','startAt','endAt'].some((key) => value[key as keyof typeof value] !== undefined))
 };
 type ToolName = keyof typeof schemas;
 const descriptions: Record<ToolName, string> = {
@@ -70,7 +73,7 @@ const descriptions: Record<ToolName, string> = {
   add_task_attachment: 'Добавить ссылку-вложение (HTTP/HTTPS URL). Telegram-файлы через MCP не поддерживаются.',
   list_recurrences: 'Шаблоны повторяющихся задач доски. По умолчанию активные (включая на паузе); showArchived=true добавляет заархивированные. Повторение — правило-серия: задачи-экземпляры создаёт сервер по расписанию, не агент.',
   create_recurrence: 'Создать серию повторяющихся задач (шаблон: частота, время, часовой пояс). Существующие карточки не создаёт и не меняет; экземпляры создаст планировщик по расписанию, уведомления о создании экземпляров не отправляются. requestId — UUID одного намерения; повтор с тем же requestId возвращает созданную серию без дубля. weekly требует ровно один weekday, monthly — dayOfMonth. Для изменения карточки-экземпляра используйте update_task — серия при этом не меняется.',
-  update_recurrence: 'Изменить серию: пауза (paused), архив (archived), поля правила (frequency/localTime/timezone/weekdays/dayOfMonth/startAt/endAt) или содержания (title/description/projectId/assigneeUserId/priority). Одна операция за вызов, хотя бы одно поле. Возобновление (paused=false) пересчитывает next_occurrence_at; archived=true останавливает серию навсегда. Изменение серии не меняет уже созданные карточки-экземпляры — меняйте их отдельно через update_task.'
+  update_recurrence: 'Изменить серию: пауза (paused), архив (archived), поля правила (frequency/localTime/timezone/weekdays/dayOfMonth/startAt/endAt) или содержания (title/description/projectId/assigneeUserId/importance/urgency). Для изменения оценки передавайте expectedVersion из list_recurrences; null сбрасывает одну оценку. priority — только legacy-проекция срочности. Одна операция за вызов, хотя бы одно поле. Возобновление (paused=false) пересчитывает next_occurrence_at; archived=true останавливает серию навсегда. Изменение серии не меняет уже созданные карточки-экземпляры — меняйте их отдельно через update_task.'
 };
 const connectionInput = z.object({ requestId: uuid, name: z.string().trim().min(1).max(80), boardIds: z.array(uuid).min(1).max(100).transform((ids) => [...new Set(ids)].sort()), mode: z.enum(['read', 'write']) }).strict();
 class McpFailure extends Error {
@@ -116,17 +119,23 @@ function cursorFor(args: Record<string, unknown>, context: string) {
   const fingerprint = hash(context + canonical(filters));
   let after: string | null = null;
   let createdAt: string | null = null;
+  let priorityKey: string[] | null = null;
   if (cursor) {
     try {
       const parsed = JSON.parse(Buffer.from(String(cursor), 'base64url').toString());
       if (parsed.fingerprint !== fingerprint || typeof parsed.after !== 'string' || parsed.after.length > 80 || (parsed.createdAt !== null && (typeof parsed.createdAt !== 'string' || parsed.createdAt.length > 80))) throw Error();
       after = parsed.after; createdAt = parsed.createdAt;
+      if (args.sort === 'priority') {
+        if (!Array.isArray(parsed.priorityKey) || parsed.priorityKey.length !== 5 || parsed.priorityKey.some((v: unknown) => typeof v !== 'string' || v.length > 80)
+          || !/^[0-4]$/.test(parsed.priorityKey[0]) || !/^[01]$/.test(parsed.priorityKey[1]) || parsed.priorityKey[4] !== after) throw Error();
+        priorityKey = parsed.priorityKey;
+      }
     } catch { throw new McpFailure('INVALID_CURSOR', 'Начните поиск заново'); }
   }
-  return { after, createdAt, next: (after: string, createdAt: string | null = null) => Buffer.from(JSON.stringify({fingerprint, after, createdAt})).toString('base64url') };
+  return { after, createdAt, priorityKey, next: (after: string, createdAt: string | null = null, priorityKey?: string[]) => Buffer.from(JSON.stringify({fingerprint, after, createdAt, ...(priorityKey ? {priorityKey} : {})})).toString('base64url') };
 }
 const taskColumns = `t.id, t.board_id AS "boardId", t.project_id AS "projectId", t.title,
-  t.creator_user_id AS "creatorUserId", t.assignee_user_id AS "assigneeUserId", t.status, t.priority,
+  t.creator_user_id AS "creatorUserId", t.assignee_user_id AS "assigneeUserId", t.status, t.priority, t.importance, t.urgency,
   t.deadline, to_char(t.deadline_date, 'YYYY-MM-DD') AS "deadlineDate", t.deadline_timezone AS "deadlineTimezone",
   t.issue_url AS "issueUrl",
   t.archived_at IS NOT NULL AS archived, t.revision::text AS version,
@@ -137,7 +146,7 @@ async function projectForMcp(client: pg.PoolClient, boardId: string, projectId: 
 }
 function recurrenceDto(row: Record<string, any>) {
   return { id: row.id, boardId: row.board_id, projectId: row.project_id, assigneeUserId: row.assignee_user_id,
-    title: row.title, description: row.description, priority: row.priority, frequency: row.frequency,
+    title: row.title, description: row.description, priority: row.priority, importance: row.importance, urgency: row.urgency, version: row.version, frequency: row.frequency,
     weekdays: row.weekdays, dayOfMonth: row.day_of_month, localTime: row.local_time, timezone: row.timezone,
     startAt: row.starts_at, endAt: row.ends_at, nextOccurrenceAt: row.next_occurrence_at,
     paused: row.paused_at != null, archived: row.archived_at != null,
@@ -179,6 +188,8 @@ function toTaskInput(value: Record<string, any>, partial: boolean, current?: Rec
 }
 async function runTool(db: Database, keyHash: string, name: ToolName, raw: unknown) {
   const args = parse(schemas[name] as z.ZodType<Record<string, any>>, raw);
+  // Keep the old parsed intent (and its receipt hash) for legacy creates.
+  if ((name === 'create_task' || name === 'create_recurrence') && args.importance === undefined && args.urgency === undefined) args.priority ??= 'normal';
   return transaction(db, async (client) => {
     const connection = await connectionForKey(client, keyHash, true);
     const writes = ['create_task', 'update_task', 'claim_task', 'archive_task', 'create_project', 'update_project', 'add_task_comment', 'add_checklist_item', 'update_checklist_item', 'delete_checklist_item', 'add_task_attachment', 'create_recurrence', 'update_recurrence'];
@@ -249,7 +260,7 @@ async function runTool(db: Database, keyHash: string, name: ToolName, raw: unkno
           const current = (await client.query('SELECT status, revision::text, blocked_by_task_id, wait_reason, wait_check_at FROM tasks WHERE id=$1 AND board_id=$2 AND archived_at IS NULL FOR UPDATE', [args.taskId, args.boardId])).rows[0];
           if (!current) throw missing();
           if (current.revision !== args.expectedVersion) throw new McpFailure('VERSION_CONFLICT', 'Задача изменилась. Прочитайте её заново', 409);
-          task = await updateTask(db, connection.user_id, args.boardId, args.taskId, {...toTaskInput(args.changes, true, current), confirmIncompleteChecklist: args.confirmIncompleteChecklist}, client);
+          task = await updateTask(db, connection.user_id, args.boardId, args.taskId, {...toTaskInput(args.changes, true, current), expectedVersion: args.expectedVersion, confirmIncompleteChecklist: args.confirmIncompleteChecklist}, client);
           notify = task?.unblockedTaskIds ?? [];
         } else if (name === 'claim_task') {
           const exists = await client.query('SELECT 1 FROM tasks WHERE id=$1 AND board_id=$2', [args.taskId, args.boardId]);
@@ -305,7 +316,7 @@ async function runTool(db: Database, keyHash: string, name: ToolName, raw: unkno
             recurrence = await updateRecurrence(db, connection.user_id, boardId, recurrenceId, {...input, paused: args.paused, archived: args.archived}, client);
           }
           if (!recurrence) throw missing();
-          task = { id: recurrence.id, revision: 1 }; taskId = recurrence.id;
+          task = { id: recurrence.id, revision: recurrence.version }; taskId = recurrence.id;
         } else {
           const changed = await setTaskArchived(db, connection.user_id, args.boardId, args.taskId, args.archived, client);
           if (!changed) throw new McpFailure('ACTION_FORBIDDEN', 'Действие недоступно или выбранные данные изменились', 403);
@@ -350,20 +361,26 @@ async function runTool(db: Database, keyHash: string, name: ToolName, raw: unkno
       rows = (await client.query(`SELECT u.id, u.first_name AS "firstName", u.username FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.board_id=$1 AND (u.first_name ILIKE $2 OR u.username ILIKE $2) AND ($3::bigint IS NULL OR u.id>$3) ORDER BY u.id LIMIT $4`, [args.boardId, term, cursor.after, args.limit+1])).rows;
     } else {
       if (args.backlog && (args.archived || (args.assignee && args.assignee !== 'unassigned') || (args.statuses && (args.statuses.length !== 1 || args.statuses[0] !== 'todo')))) throw new McpFailure('INVALID_ARGUMENT', 'Бэклог: только неназначенные активные задачи «К работе»');
-      if (cursor.after && (!cursor.createdAt || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(cursor.createdAt) || Number.isNaN(Date.parse(cursor.createdAt)) || new Date(cursor.createdAt).toISOString().slice(0,19) !== cursor.createdAt.slice(0,19))) throw new McpFailure('INVALID_CURSOR', 'Начните поиск заново');
+      if (args.sort !== 'priority' && cursor.after && (!cursor.createdAt || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(cursor.createdAt) || Number.isNaN(Date.parse(cursor.createdAt)) || new Date(cursor.createdAt).toISOString().slice(0,19) !== cursor.createdAt.slice(0,19))) throw new McpFailure('INVALID_CURSOR', 'Начните поиск заново');
       const assignee = args.backlog ? 'unassigned' : args.assignee === 'self' ? connection.user_id : args.assignee;
-      rows = (await client.query(`SELECT ${taskColumns}, to_char(t.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS boundary FROM tasks t WHERE t.board_id=$1
+      const key = 'task_priority_key(t.importance,t.urgency,t.deadline,t.deadline_date,t.deadline_timezone,t.created_at,t.id)';
+      rows = (await client.query(`SELECT ${taskColumns}, ${key} AS priority_key, to_char(t.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS boundary FROM tasks t WHERE t.board_id=$1
         AND (t.title ILIKE $2 OR t.description ILIKE $2) AND (t.archived_at IS NOT NULL)=$3
         AND t.status=ANY($4::text[]) AND ($5::uuid IS NULL OR t.project_id=$5)
         AND ($6::text IS NULL OR ($6='unassigned' AND t.assignee_user_id IS NULL) OR t.assignee_user_id::text=$6)
-        AND ($7::uuid IS NULL OR (t.created_at,t.id)<($8::timestamptz,$7::uuid)) ORDER BY t.created_at DESC,t.id DESC LIMIT $9`, [args.boardId, term, args.archived, args.backlog ? ['todo'] : args.statuses ?? ['todo','in_progress','waiting'], args.projectId ?? null, assignee ?? null, cursor.after, cursor.createdAt, args.limit+1])).rows;
+        AND ($10::text='any' OR CASE $10 WHEN 'unassessed' THEN t.importance IS NULL WHEN 'true' THEN t.importance IS TRUE ELSE t.importance IS FALSE END)
+        AND ($11::text='any' OR CASE $11 WHEN 'unassessed' THEN t.urgency IS NULL WHEN 'true' THEN t.urgency IS TRUE ELSE t.urgency IS FALSE END)
+        AND (NOT $12::boolean OR t.importance IS NULL OR t.urgency IS NULL)
+        AND CASE WHEN $13::boolean THEN ($14::text[] IS NULL OR ${key} COLLATE "C" > $14::text[] COLLATE "C")
+          ELSE ($7::uuid IS NULL OR (t.created_at,t.id)<($8::timestamptz,$7::uuid)) END
+        ORDER BY ${args.sort === 'priority' ? `${key} COLLATE "C"` : 't.created_at DESC,t.id DESC'} LIMIT $9`, [args.boardId, term, args.archived, args.backlog ? ['todo'] : args.statuses ?? ['todo','in_progress','waiting'], args.projectId ?? null, assignee ?? null, cursor.after, cursor.createdAt, args.limit+1, args.importance ?? 'any', args.urgency ?? 'any', args.unassessed ?? false, args.sort === 'priority', cursor.priorityKey])).rows;
     }
     const more = rows.length > args.limit;
     rows = rows.slice(0, args.limit);
     const last = rows.at(-1);
     const items = rows.map(({boundary, ...row}) => name === 'list_tasks' ? taskDto(row) : row);
     const user = name === 'list_boards' ? (await client.query('SELECT id, first_name AS "firstName" FROM users WHERE id=$1', [connection.user_id])).rows[0] : undefined;
-    return {data: {items, nextCursor: more && last ? cursor.next(last.id, last.boundary ?? null) : null, ...(user ? {user, mode: connection.mode} : {})}, notify: [] as string[]};
+    return {data: {items, nextCursor: more && last ? cursor.next(last.id, last.boundary ?? null, args.sort === 'priority' ? last.priority_key : undefined) : null, ...(user ? {user, mode: connection.mode} : {})}, notify: [] as string[]};
   });
 }
 
@@ -492,6 +509,7 @@ export function registerMcp(app: FastifyInstance, config: Config, db: Database, 
           data = {ok:true,...result.data};
         } catch (error) {
           isError = true;
+          if (error instanceof AssessmentError) error = new McpFailure(error.status === 409 ? 'VERSION_CONFLICT' : 'INVALID_ARGUMENT', error.message, error.status);
           const failure = error instanceof McpFailure ? error : error instanceof ChecklistConfirmationError ? new McpFailure('CHECKLIST_CONFIRMATION_REQUIRED','Подтвердите завершение незавершённого чек-листа',409,{count:error.count}) : error instanceof TaskActionError ? new McpFailure('ACTION_FORBIDDEN',error.message,403) : error instanceof TaskConflictError ? new McpFailure('INVALID_ARGUMENT',error.message) : new McpFailure('TEMPORARY_UNAVAILABLE','Не удалось получить результат. Повторяйте тот же requestId',503);
           data = {ok:false,error:{code:failure.code,message:failure.message,retryable:failure.status===503,...failure.details}};
         }

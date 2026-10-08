@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+<meta name="color-scheme" content="light">
+<title>Таска · Приоритет и матрица · #177</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../../../apps/web/src/style.css">
+<style>
+@font-face { font-family: PrototypeManrope; src: url('../../../apps/web/public/fonts/manrope-variable.ttf') format('truetype'); font-weight: 200 800; font-display: swap; }
+:root { --font-ui: PrototypeManrope, system-ui, sans-serif; font-family: var(--font-ui); }
+body { overflow-x: visible; }
+[hidden] { display: none !important; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .55; }
+.review { padding: 28px; max-width: 340px; }
+.review h1 { font-size: 2rem; line-height: 1.15; margin: 12px 0; }
+.review p { font-size: .875rem; }
+.review label { display: grid; gap: 6px; margin: 14px 0; font-size: .8125rem; }
+.review select { width: 100%; min-width: 0; padding: 12px; border: 1px solid var(--border); background: var(--surface-raised); border-radius: 14px; color: var(--text); }
+.review .secondary { width: 100%; margin: 0; }
+.review summary { cursor: pointer; min-height: 44px; padding-block: 12px; }
+.review small { display: block; line-height: 1.6; }
+#device { width: min(100%, var(--preview-width, 390px)); margin: 24px auto; background: var(--opal); border: 1px solid #ffffffb3; border-radius: 36px; box-shadow: 0 22px 64px #183c2c18; overflow-wrap: anywhere; }
+main { min-height: 800px; padding: 22px 16px; gap: 18px; overflow-x: visible; }
+section { margin: 0; }
+.demo-label { display: block; text-align: center; font-size: .6875rem; color: var(--text-muted); padding: 14px 14px 0; }
+.heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.heading h1 { margin: 0; font-size: 2.25rem; font-weight: 500; }
+.board-tag { font-size: .8125rem; padding: 10px 14px; border: 1px solid #fff9; border-radius: 22px; background: #fff7; }
+.scope { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--border); }
+.scope button { color: var(--text-muted); background: transparent; border-radius: 0; font-size: .875rem; font-weight: 500; }
+.scope button[aria-pressed=true] { color: var(--primary); border-bottom: 3px solid var(--primary); }
+.views { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px; border-radius: 24px; background: #ffffff70; }
+.views button { flex: 1 1 auto; padding: 10px 12px; border-radius: 20px; background: transparent; color: var(--text-muted); font-size: .8125rem; font-weight: 500; }
+.views button[aria-pressed=true] { background: var(--control-fill); box-shadow: var(--shadow-control); color: var(--text); }
+.tools { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.tools input { min-width: 0; width: 100%; padding: 12px 14px; border-radius: 22px; border: 1px solid #fffc; background: #ffffffb3; color: var(--text); }
+.tools button { background: var(--control-fill); box-shadow: var(--shadow-control); color: var(--text); border: 1px solid #fffc; border-radius: 22px; }
+.current-filters { margin: 0; font-size: .75rem; color: var(--text-muted); }
+.groups { display: grid; gap: 24px; }
+.group h2 { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: .9375rem; font-weight: 650; margin: 0 4px 12px; line-height: 1.4; }
+.count { font-variant-numeric: tabular-nums; font-size: .8125rem; font-weight: 500; color: var(--text-muted); }
+.unrated { border-radius: 24px; border: 1px dashed #8fa387; padding: 0 14px; background: #ffffff50; }
+.unrated summary { min-height: 54px; padding: 16px 0; cursor: pointer; font-size: .875rem; font-weight: 650; }
+.unrated summary .count { float: right; }
+.unrated .hint { margin: 0 0 14px; }
+.hint { font-size: .75rem; line-height: 1.5; color: var(--text-muted); }
+.rows { display: grid; gap: 10px; }
+.unrated .rows { padding-bottom: 14px; }
+.row { display: grid; grid-template-columns: minmax(0, 1fr) 28px; gap: 10px; align-items: start; padding: 16px; border: 1px solid #ffffffcc; border-radius: 26px; background: var(--card-fill); box-shadow: var(--shadow-card); }
+.row > button { text-align: left; min-width: 0; min-height: 44px; background: transparent; color: var(--text); padding: 0; font-weight: 450; border-radius: 8px; }
+.row strong { display: block; font-size: 1rem; line-height: 1.4; font-weight: 550; }
+.row .meta-line { display: block; margin-top: 8px; font-size: .75rem; color: var(--text-muted); }
+.marks { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+.mark { font-size: .6875rem; font-weight: 600; line-height: 1.4; padding: 5px 8px; border-radius: 10px; background: #e8ede3; color: var(--text); }
+.mark.urgent { background: var(--coral-soft); color: var(--danger); }
+.mark.unknown { background: transparent; border: 1px dashed #8fa387; }
+.mark.blocker { background: #e2e6de; border: 1px solid #bdccb5; }
+.avatar { width: 28px; height: 28px; font-size: .625rem; }
+.matrix-frame { container-type: inline-size; }
+
+.matrix-board { display: grid; grid-template-columns: 28px minmax(0, 1fr); grid-template-rows: auto 1fr 1fr; }
+.matrix-columns { grid-area: 1 / 2; display: grid; grid-template-columns: 1fr 1fr; padding-bottom: 10px; text-align: center; font-size: .75rem; font-weight: 650; }
+.matrix-row-label { display: flex; align-items: center; justify-content: center; writing-mode: vertical-rl; transform: rotate(180deg); padding-inline: 8px; font-size: .75rem; font-weight: 650; }
+.matrix-row-label.urgent { grid-area: 2 / 1; color: var(--danger); }
+.matrix-row-label.not-urgent { grid-area: 3 / 1; }
+.matrix-grid { grid-area: 2 / 2 / 4 / 3; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 2px; border: 2px solid #70836b; border-radius: 14px; overflow: hidden; background: #70836b; }
+.matrix-grid .quadrant { display: flex; flex-direction: column; min-width: 0; padding: 4px 10px 10px; min-height: 140px; background: var(--card-fill); }
+.quadrant-title { display: none; margin: 12px 0; font-size: .875rem; font-weight: 650; }
+.cell-tasks { display: grid; }
+.cell-task { display: block; width: 100%; min-width: 0; min-height: 44px; padding: 12px 0; background: transparent; color: var(--text); border-radius: 0; border-bottom: 1px solid var(--border); text-align: left; }
+.cell-task:last-child { border-bottom: 0; }
+.cell-task strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; font-size: .8125rem; font-weight: 550; line-height: 1.5; }
+.cell-task small { display: block; margin-top: 6px; font-size: .6875rem; font-weight: 450; color: var(--text-muted); }
+.cell-task .mark { display: inline-block; margin-top: 6px; }
+.cell-more { margin-top: auto; align-self: stretch; min-height: 44px; padding: 8px; border-radius: 12px; background: var(--primary-soft); color: var(--primary); font-size: .75rem; font-weight: 650; }
+.cell-task:focus-visible, .cell-more:focus-visible { outline-offset: -3px; }
+.cell-empty { margin: 12px 0; font-size: .75rem; color: var(--text-muted); }
+#category-dialog .rows { margin-top: 16px; }
+@container (max-width: 16rem) { .matrix-board { display: block; } .matrix-grid { grid-template-columns: minmax(0, 1fr); grid-auto-rows: auto; } .matrix-columns, .matrix-row-label { display: none; } .quadrant-title { display: block; } .cell-task strong { display: block; overflow: visible; } }
+.bottom { position: static; display: flex; justify-content: center; padding: 16px; margin-top: auto; border: 1px solid #fffc; border-radius: 30px; background: #f8faf5e6; }
+.bottom button { min-height: 50px; width: 100%; background: var(--action-fill); border-radius: 26px; font-size: .875rem; }
+.backline { display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: .8125rem; }
+.backline button { background: var(--control-fill); color: var(--text); box-shadow: var(--shadow-control); border: 1px solid #fffc; border-radius: 50%; width: 44px; padding: 0; }
+.detail-heading { padding: 20px; }
+.detail-heading h1 { font-size: 1.75rem; line-height: 1.3; font-weight: 450; margin: 0; }
+.detail-property-grid { margin-top: 0; }
+.property { display: block; min-width: 0; background: var(--card-fill); padding: 14px; border: 1px solid #fffc; border-radius: 24px; box-shadow: var(--shadow-card); color: var(--text); text-align: left; font-weight: 500; }
+.property small { display: block; font-size: .6875rem; color: var(--text-muted); margin-bottom: 6px; }
+.property strong { display: block; font-size: .875rem; line-height: 1.5; font-weight: 550; }
+.priority-property, .wide-property { grid-column: 1 / -1; }
+.priority-property .marks { margin-top: 8px; }
+.panel { padding: 18px; border: 1px solid #fffc; border-radius: 28px; background: var(--card-fill); box-shadow: var(--shadow-card); }
+.panel h2 { font-size: 1rem; font-weight: 550; margin: 0 0 12px; }
+.panel p { margin: 0; font-size: .875rem; }
+.panel label { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: .8125rem; }
+textarea { width: 100%; min-width: 0; min-height: 110px; padding: 14px; border: 1px solid var(--border); border-radius: 18px; background: #f9fbf7; color: var(--text); line-height: 1.5; resize: vertical; scroll-margin-block: 24px; }
+.save-status { font-size: .75rem; color: var(--primary); margin: 0; }
+.warning { padding: 16px; border: 1px solid #d1b09d; border-radius: 24px; background: var(--coral-soft); }
+.warning p { margin: 0 0 12px; font-size: .8125rem; }
+.warning button { font-size: .8125rem; margin: 4px 0; }
+.prototype-dialog { width: min(calc(100% - 16px), 420px); max-height: calc(100dvh - 24px); margin: auto auto 0; padding: 26px 20px; border: 1px solid #fffc; border-bottom: 0; border-radius: 32px 32px 0 0; color: var(--text); background: #f0f3ed; box-shadow: 0 -12px 48px #183c2c26; overflow-y: auto; overflow-wrap: anywhere; }
+.prototype-dialog::backdrop { background: #183c2c55; }
+.prototype-dialog header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.prototype-dialog h2 { margin: 0; font-size: 1.625rem; font-weight: 500; }
+.prototype-dialog header button { border-radius: 50%; padding: 0; width: 44px; min-height: 44px; flex: 0 0 44px; background: #fff9; color: var(--text); }
+.prototype-dialog fieldset { min-width: 0; border: 0; padding: 0; margin: 24px 0; }
+.prototype-dialog legend { font-size: 1rem; margin-bottom: 10px; font-weight: 600; }
+.choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.choices label { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 10px; min-height: 48px; border: 1px solid #bdccb5; border-radius: 18px; font-size: .8125rem; background: var(--card-fill); cursor: pointer; }
+.choices label:has(:checked) { background: #dce8d5; border-color: #176447; }
+.choices input { accent-color: var(--primary); margin: 0; }
+.prototype-dialog .actions { display: grid; gap: 10px; }
+.prototype-dialog .actions button { width: 100%; border-radius: 24px; font-size: .875rem; }
+.prototype-dialog .secondary { margin: 0; }
+.prototype-dialog .result { background: #e2e6de; padding: 12px; border-radius: 18px; font-size: .8125rem; line-height: 1.5; }
+#filters-dialog label { display: grid; gap: 8px; margin: 18px 0; font-size: .875rem; }
+#filters-dialog select { min-width: 0; width: 100%; min-height: 48px; border: 1px solid var(--border); border-radius: 18px; padding: 10px; color: var(--text); background: #fff; }
+html[data-large] { font-size: 32px; }
+html[data-large] .heading { flex-wrap: wrap; }
+html[data-large] .heading h1 { flex-basis: 100%; }
+html[data-large] .detail-property-grid { grid-template-columns: 1fr; }
+html[data-large] .review { font-size: 16px; }
+@media (min-width: 850px) { body { display: grid; grid-template-columns: 340px minmax(0, 1fr); align-items: start; max-width: 1180px; margin: auto; } .review { position: sticky; top: 0; } }
+@media (max-width: 849px) { .review { max-width: none; padding: 16px; } .review h1 { font-size: 1.125rem; margin: 0; } .review > p { margin: 8px 0; } #device { margin: 0 auto; border-radius: 0; border-inline: 0; box-shadow: none; } }
+@media (max-width: 350px) { main { padding-inline: 12px; } }
+</style>
+</head>
+<body>
+<aside class="review" aria-label="Проверка макета">
+  <span class="eyebrow">Таска / #177 / HTML-макет</span>
+  <h1>Важность.<br>Срочность.<br>Без второй очереди.</h1>
+  <p>Список, матрица, карточка и оценка — один сценарий в текущем стиле Таски.</p>
+  <details id="review-controls"><summary>Режимы проверки</summary>
+    <label>Ширина макета<select id="width"><option value="390">390 px</option><option value="320">320 px</option><option value="100%">По экрану</option></select></label>
+    <label>Размер текста<select id="text-size"><option value="100">100%</option><option value="200">200%</option></select></label>
+    <label>Состояние<select id="scenario"><option value="ready">Обычная работа</option><option value="loading">Загрузка</option><option value="error">Ошибка загрузки</option><option value="empty">Пустая выдача</option><option value="readonly">Только чтение</option><option value="save-error">Ошибка сохранения оценки</option><option value="conflict">Конфликт оценки</option></select></label>
+    <button class="secondary" id="reset-demo">Сбросить демо</button>
+    <p>Все задачи вымышлены. Правки живут только до перезагрузки. Ошибки, конфликты и сохранение — локальная имитация, не подключение к API.</p>
+    <small>«Фильтры» здесь показывают только семантику #177. Полная панель относится к #181. Канбан не меняется этим макетом.</small>
+  </details>
+</aside>
+<div id="device"><span class="demo-label">Интерактивный макет · не рабочая доска</span><main id="app"></main></div>
+<dialog id="category-dialog" class="prototype-dialog" aria-labelledby="category-title">
+  <header><h2 id="category-title"></h2><button type="button" id="close-category" aria-label="Закрыть список категории">×</button></header>
+  <div class="rows" id="category-tasks"></div>
+</dialog>
+<dialog id="priority-dialog" class="prototype-dialog" aria-labelledby="priority-title">
+  <header><h2 id="priority-title">Приоритет</h2><button type="button" aria-label="Отменить оценку" id="cancel-priority">×</button></header>
+  <p class="hint" id="priority-context"></p>
+  <form id="priority-form">
+    <fieldset><legend>Важная?</legend><div class="choices">
+      <label><input type="radio" name="importance" value="true">Да</label><label><input type="radio" name="importance" value="false">Нет</label><label><input type="radio" name="importance" value="null">Не оценено</label>
+    </div></fieldset>
+    <fieldset><legend>Срочная?</legend><div class="choices">
+      <label><input type="radio" name="urgency" value="true">Да</label><label><input type="radio" name="urgency" value="false">Нет</label><label><input type="radio" name="urgency" value="null">Не оценено</label>
+    </div></fieldset>
+    <p class="result" id="priority-result" aria-live="polite"></p>
+    <p class="hint">Срок не назначает срочность. Можно оценить только один признак.</p>
+    <div class="actions"><button type="submit">Применить</button><button type="button" class="secondary" id="clear-priority">Сбросить оценку</button><button type="button" class="secondary" id="cancel-priority-bottom">Отмена</button></div>
+  </form>
+</dialog>
+<dialog id="filters-dialog" class="prototype-dialog" aria-labelledby="filters-title">
+  <header><h2 id="filters-title">Фильтры</h2><button aria-label="Закрыть фильтры" id="close-filters">×</button></header>
+  <p class="hint">Фрагмент для согласования условий. Полная панель — #181.</p>
+  <label>Статус<select id="status-filter"><option value="active">Новые, в работе и блокеры</option><option value="waiting">Блокер</option><option value="done">Готово</option></select></label>
+  <label>Важность<select id="importance-filter"><option value="any">Любая</option><option value="true">Важная</option><option value="false">Неважная</option><option value="null">Не оценена</option></select></label>
+  <label>Срочность<select id="urgency-filter"><option value="any">Любая</option><option value="true">Срочная</option><option value="false">Несрочная</option><option value="null">Не оценена</option></select></label>
+  <label class="checkbox"><input id="unrated-filter" type="checkbox">Только «Не разобрано»</label>
+  <button id="apply-filters" class="filter-apply">Показать задачи</button>
+</dialog>
+<script>
+'use strict';
+// This prototype has no backend, storage, analytics or external requests.
+const categories = [
+  { name: 'Важное и срочное', importance: true, urgency: true },
+  { name: 'Неважное и срочное', importance: false, urgency: true },
+  { name: 'Важное и несрочное', importance: true, urgency: false },
+  { name: 'Неважное и несрочное', importance: false, urgency: false }
+];
+const seed = [
+  { id: '01', title: 'Согласовать смету перед запуском', project: 'Запуск', importance: true, urgency: true, due: '2026-10-08', status: 'todo', mine: true, created: '2026-09-01' },
+  { id: '02', title: 'Получить финальные материалы от подрядчика', project: 'Запуск', importance: true, urgency: true, due: '2026-10-09', status: 'waiting', mine: false, created: '2026-09-02' },
+  { id: '03', title: 'Подтвердить время встречи', project: 'Команда', importance: false, urgency: true, due: '2026-10-08', status: 'todo', mine: true, created: '2026-09-03' },
+  { id: '04', title: 'Проверить доступность переговорной', project: 'Команда', importance: false, urgency: true, due: null, status: 'todo', mine: false, created: '2026-09-04' },
+  { id: '05', title: 'Подготовить план развития продукта на следующий квартал и согласовать зависимости между направлениями', project: 'Продукт', importance: true, urgency: false, due: '2026-10-30', status: 'in_progress', mine: true, created: '2026-09-05' },
+  { id: '06', title: 'Описать процесс приёмки', project: 'Продукт', importance: true, urgency: false, due: null, status: 'todo', mine: false, created: '2026-09-06' },
+  { id: '07', title: 'Разобрать старые заметки', project: 'Команда', importance: false, urgency: false, due: null, status: 'todo', mine: true, created: '2026-09-07' },
+  { id: '08', title: 'Уточнить запрос партнёра', project: 'Входящие', importance: null, urgency: true, due: '2026-10-08', status: 'todo', mine: true, created: '2026-09-08' },
+  { id: '09', title: 'Обсудить идею нового отчёта', project: 'Входящие', importance: null, urgency: null, due: null, status: 'todo', mine: false, created: '2026-09-09' },
+  { id: '10', title: 'Собрать обратную связь', project: 'Входящие', importance: true, urgency: null, due: null, status: 'todo', mine: true, created: '2026-09-10' },
+  { id: '11', title: 'Отправить утверждённый договор', project: 'Запуск', importance: true, urgency: true, due: '2026-10-07', status: 'done', mine: true, created: '2026-09-11' },
+  { id: '12', title: 'Архивный пример', project: 'Архив', importance: true, urgency: true, due: null, status: 'todo', mine: true, archived: true, created: '2026-09-12' },
+  { id: '13', title: 'Проверить договор с поставщиком', project: 'Запуск', importance: true, urgency: true, due: '2026-10-10', status: 'todo', mine: true, created: '2026-09-13' },
+  { id: '14', title: 'Утвердить бюджет запуска', project: 'Запуск', importance: true, urgency: true, due: '2026-10-11', status: 'todo', mine: false, created: '2026-09-14' },
+  { id: '15', title: 'Назначить ответственного за приёмку', project: 'Запуск', importance: true, urgency: true, due: null, status: 'todo', mine: true, created: '2026-09-15' }
+];
+let tasks = structuredClone(seed);
+let view = new URLSearchParams(location.search).get('view') === 'list' ? 'list' : 'matrix';
+let expandedCategory = null, scope = 'all', query = '', scenario = 'ready', currentId = null, creating = false, draftTask = null, pending = null, saveMessage = '', unratedOpen = false;
+const filters = { status: 'active', importance: 'any', urgency: 'any', unrated: false };
+const app = document.getElementById('app'), dialog = document.getElementById('priority-dialog'), form = document.getElementById('priority-form');
+const escapeHtml = (value) => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const category = task => task.importance === null || task.urgency === null ? -1 : categories.findIndex(c => c.importance === task.importance && c.urgency === task.urgency);
+const compare = (a, b) => (a.due === null) - (b.due === null) || (a.due ?? '').localeCompare(b.due ?? '') || a.created.localeCompare(b.created) || a.id.localeCompare(b.id);
+const label = task => category(task) < 0 ? 'Не разобрано' : categories[category(task)].name;
+const currentTask = () => creating ? draftTask : tasks.find(t => t.id === currentId);
+function marks(task) {
+  const items = [task.importance === null ? ['Важность не оценена', 'unknown'] : [task.importance ? 'Важная' : 'Неважная', ''], task.urgency === null ? ['Срочность не оценена', 'unknown'] : [task.urgency ? 'Срочная' : 'Несрочная', task.urgency ? 'urgent' : '']];
+  if (task.status === 'waiting') items.push(['Блокер', 'blocker']);
+  if (task.status === 'done') items.push(['Готово', '']);
+  return `<span class="marks">${items.map(([text, tone]) => `<span class="mark ${tone}">${text}</span>`).join('')}</span>`;
+}
+function visibleTasks() {
+  if (scenario === 'empty') return [];
+  return tasks.filter(t => !t.archived && (scope === 'all' || t.mine) && (filters.status === 'active' ? t.status !== 'done' : t.status === filters.status) && t.title.toLocaleLowerCase('ru-RU').includes(query.toLocaleLowerCase('ru-RU')) && ['importance', 'urgency'].every(key => filters[key] === 'any' || String(t[key]) === filters[key]) && (!filters.unrated || category(t) < 0)).sort(compare);
+}
+function row(task) {
+  return `<article class="row" data-id="${task.id}"><button data-open="${task.id}" aria-label="Открыть: ${escapeHtml(task.title)}"><strong>${escapeHtml(task.title)}</strong><span class="meta-line">${escapeHtml(task.project)} · ${task.due ? task.due.split('-').reverse().join('.') : 'Без срока'}</span>${marks(task)}</button><span class="avatar" aria-label="${task.mine ? 'Вы' : 'Коллега'}">${task.mine ? 'Я' : 'К'}</span></article>`;
+}
+function unrated(items) {
+  return `<details class="unrated" ${unratedOpen ? 'open' : ''}><summary>Не разобрано <span class="count">${items.length}</span></summary><p class="hint">Оцените недостающий признак. Известные значения уже сохранены.</p><div class="rows">${items.map(row).join('') || '<p class="hint">Все видимые задачи оценены.</p>'}</div></details>`;
+}
+function listContent(items) {
+  // Matrix previews share the same filtered, sorted tasks as the list.
+  if (scenario === 'loading') return '<div class="skeleton" role="status" aria-label="Загрузка задач"><span></span><span></span><span></span></div>';
+  if (scenario === 'error') return '<section class="warning" role="alert"><p>Не удалось загрузить задачи. Оценки не изменены.</p><button data-action="retry-load">Повторить</button></section>';
+  if (!items.length) return '<section class="task-state"><h2>Задач не найдено</h2><p>Попробуйте изменить поиск или фильтры.</p><button data-action="clear-filters">Сбросить фильтры</button></section>';
+  const unknown = unrated(items.filter(t => category(t) < 0));
+  if (view === 'list') return `<div class="groups">${unknown}${categories.map((c, i) => { const group = items.filter(t => category(t) === i); return group.length ? `<section class="group" data-category="${i}"><h2>${c.name}<span class="count">${group.length}</span></h2><div class="rows">${group.map(row).join('')}</div></section>` : ''; }).join('')}</div>`;
+  return `${unknown}<div class="matrix-frame"><div class="matrix-board"><div class="matrix-columns" aria-hidden="true"><span>Важное</span><span>Неважное</span></div><span class="matrix-row-label urgent" aria-hidden="true">Срочное</span><span class="matrix-row-label not-urgent" aria-hidden="true">Несрочное</span><div class="matrix-grid" role="group" aria-label="Категории приоритета: столбцы — важность, строки — срочность">${categories.map((c, i) => { const group = items.filter(t => category(t) === i); return `<section class="quadrant" data-category="${i}" aria-label="${c.name}"><h2 class="quadrant-title">${c.name}</h2><div class="cell-tasks">${group.slice(0, 3).map(cellTask).join('') || '<p class="cell-empty">Нет задач</p>'}</div>${group.length > 3 ? `<button class="cell-more" data-more="${i}" aria-label="Ещё ${group.length - 3}: ${c.name}" aria-haspopup="dialog">Ещё ${group.length - 3}</button>` : ''}</section>`; }).join('')}</div></div></div>`;
+}
+function cellTask(task) {
+  return `<button class="cell-task" data-open="${task.id}" aria-label="Открыть: ${escapeHtml(task.title)}"><strong>${escapeHtml(task.title)}</strong><small>${task.due ? task.due.split('-').reverse().join('.') : 'Без срока'}</small>${task.status === 'waiting' ? '<span class="mark blocker">Блокер</span>' : task.status === 'done' ? '<span class="mark">Готово</span>' : ''}</button>`;
+}
+function openCategory() {
+  document.getElementById('category-title').textContent = categories[expandedCategory].name;
+  const items = visibleTasks().filter(task => category(task) === expandedCategory);
+  document.getElementById('category-tasks').innerHTML = items.map(row).join('') || '<p class="hint">В этой категории пока нет задач.</p>';
+  document.getElementById('category-dialog').showModal();
+}
+function openTask(id) { currentId = id; saveMessage = ''; render(); app.querySelector('[data-action="back"]').focus(); }
+function render() {
+  if (currentId || creating) return renderDetail();
+  const items = visibleTasks();
+  app.innerHTML = `<header class="heading"><h1>Задачи</h1><span class="board-tag">Команда</span></header><div class="scope" aria-label="Область задач"><button data-scope="mine" aria-pressed="${scope === 'mine'}">Мои</button><button data-scope="all" aria-pressed="${scope === 'all'}">Все</button></div><div class="views" aria-label="Вид задач"><button data-view="list" aria-pressed="${view === 'list'}">Список</button><button disabled title="Существующий вид, вне этого макета">Канбан</button><button data-view="matrix" aria-pressed="${view === 'matrix'}">Матрица</button></div><div class="tools"><input id="search" type="search" aria-label="Поиск задач" placeholder="Поиск задач" value="${escapeHtml(query)}"><button data-action="filters" aria-label="Фильтры">☷</button></div><p class="current-filters">${view === 'list' ? 'По приоритету · ' : ''}${filters.status === 'done' ? 'Готово' : filters.status === 'waiting' ? 'Блокеры' : 'Без завершённых'} · ${items.length} задач${filters.importance !== 'any' || filters.urgency !== 'any' || filters.unrated ? ' · Оценка отфильтрована' : ''}</p>${scenario === 'readonly' ? '<p class="notice">Доска доступна только для чтения.</p>' : ''}${listContent(items)}<footer class="bottom"><button data-action="create" ${scenario === 'readonly' ? 'disabled' : ''}>＋ Новая задача</button></footer>`;
+  app.querySelector('.unrated')?.addEventListener('toggle', event => { unratedOpen = event.target.open; });
+}
+function renderDetail() {
+  const task = currentTask(), readonly = scenario === 'readonly';
+  app.innerHTML = `<div class="backline"><button data-action="back" aria-label="Назад к задачам">←</button><span>Команда / ${creating ? 'Новая задача' : 'Карточка задачи'}</span></div>${readonly ? '<p class="notice">Только чтение. Оценку может изменить участник активной доски.</p>' : ''}<section class="detail-heading">${creating ? '<label class="hint" for="new-title">Название задачи</label><textarea id="new-title" maxlength="200" placeholder="Что нужно сделать?">' + escapeHtml(task.title) + '</textarea>' : '<h1>' + escapeHtml(task.title) + '</h1>'}<div class="marks"><span class="mark">${({todo:'Новая',in_progress:'В работе',waiting:'Блокер',done:'Готово'})[task.status]}</span>${task.status === 'waiting' ? '<span class="hint">Ожидаем материалы подрядчика</span>' : ''}</div></section><div class="detail-property-grid"><div class="property"><small>Проект</small><strong>${escapeHtml(task.project)}</strong></div><div class="property"><small>Исполнитель</small><strong>${task.mine ? 'Вы' : 'Коллега'}</strong></div><div class="property wide-property"><small>Срок</small><strong>${task.due ? task.due.split('-').reverse().join('.') : 'Без срока'}</strong></div><button class="property priority-property" data-action="priority" ${readonly ? 'disabled' : ''}><small>Приоритет · ${readonly ? 'Только чтение' : 'Изменить'}</small><strong>${label(task)}</strong>${marks(task)}</button></div><p class="save-status" role="status">${escapeHtml(saveMessage || (creating ? 'Черновик только в этом макете' : 'Демонстрационные данные'))}</p>${pending ? pendingPanel() : ''}<section class="panel"><h2>Описание</h2><p>Согласовать результат с командой. Срок и оценка независимы: наличие даты не делает задачу срочной.</p></section><section class="panel"><h2>Комментарий</h2><label class="visually-hidden" for="comment">Текст комментария</label><textarea id="comment" placeholder="Поле для проверки клавиатуры и длинного текста" ${readonly ? 'disabled' : ''}></textarea><p class="hint">Тестовое поле. Комментарий никому не отправляется.</p></section>${creating ? '<button data-action="save-create">Создать в демо</button>' : ''}`;
+}
+function pendingPanel() {
+  const mine = `<p>Ваш выбор: ${marks(pending)}</p>`;
+  return scenario === 'conflict' ? `<section class="warning" role="alert"><p>Оценка изменилась у другого участника. Ваш выбор ещё не сохранён.</p><p>На сервере: важная, срочность не оценена.</p>${mine}<button data-action="keep-server">Оставить серверную</button><button class="secondary" data-action="retry-save">Применить мой выбор</button></section>` : `<section class="warning" role="alert"><p>Не удалось сохранить оценку. Ваш выбор удерживается в этом окне; остальные поля не изменены.</p>${mine}<button data-action="retry-save">Повторить</button><button class="secondary" data-action="discard-save">Отменить изменение</button></section>`;
+}
+function dialogValue() { return { importance: JSON.parse(form.elements.importance.value), urgency: JSON.parse(form.elements.urgency.value) }; }
+function previewPriority() { document.getElementById('priority-result').textContent = `Категория: ${label(dialogValue())}`; }
+function openPriority() {
+  const task = currentTask();
+  for (const key of ['importance', 'urgency']) form.elements[key].value = String(task[key]);
+  document.getElementById('priority-context').textContent = task.title || 'Новая задача';
+  previewPriority(); dialog.showModal();
+}
+function applyPending() { Object.assign(currentTask(), pending); pending = null; saveMessage = creating ? 'Оценка добавлена в черновик демо' : 'Сохранено в демо · без обращения к серверу'; render(); }
+form.addEventListener('change', previewPriority);
+form.addEventListener('submit', event => {
+  event.preventDefault(); pending = dialogValue(); dialog.close();
+  if (scenario === 'save-error' || scenario === 'conflict') { saveMessage = 'Не сохранено'; render(); }
+  else applyPending();
+  app.querySelector('[data-action="priority"]').focus();
+});
+for (const id of ['cancel-priority', 'cancel-priority-bottom']) document.getElementById(id).onclick = () => dialog.close();
+document.getElementById('clear-priority').onclick = () => { form.elements.importance.value = 'null'; form.elements.urgency.value = 'null'; previewPriority(); };
+app.addEventListener('input', event => {
+  if (event.target.id === 'search') { query = event.target.value; render(); const search = document.getElementById('search'); search.focus(); }
+  if (event.target.id === 'new-title') draftTask.title = event.target.value;
+});
+app.addEventListener('click', event => {
+  const button = event.target.closest('button'); if (!button || button.disabled) return;
+  if (button.dataset.view) { view = button.dataset.view; render(); app.querySelector(`[data-view="${view}"]`).focus(); }
+  if (button.dataset.scope) { scope = button.dataset.scope; render(); app.querySelector(`[data-scope="${scope}"]`).focus(); }
+  if (button.dataset.more !== undefined) { expandedCategory = Number(button.dataset.more); openCategory(); }
+  if (button.dataset.open) openTask(button.dataset.open);
+  const action = button.dataset.action;
+  if (action === 'back') { if (pending) { saveMessage = 'Сначала повторите или отмените изменение оценки'; app.querySelector('.save-status').textContent = saveMessage; return; } const previous = currentId; currentId = null; creating = false; render(); if (expandedCategory !== null) { openCategory(); (document.querySelector(`#category-tasks [data-open="${previous}"]`) || document.getElementById('close-category')).focus(); } else (app.querySelector(`[data-open="${previous}"]`) || app.querySelector('[data-action="create"]')).focus(); }
+  if (action === 'priority') openPriority();
+  if (action === 'filters') document.getElementById('filters-dialog').showModal();
+  if (action === 'retry-load') { scenario = 'ready'; document.getElementById('scenario').value = scenario; render(); }
+  if (action === 'clear-filters') { query = ''; filters.status = 'active'; filters.importance = filters.urgency = 'any'; filters.unrated = false; scenario = 'ready'; for (const key of ['status','importance','urgency']) document.getElementById(`${key}-filter`).value = filters[key]; document.getElementById('unrated-filter').checked = false; document.getElementById('scenario').value = scenario; render(); }
+  if (action === 'retry-save') applyPending();
+  if (action === 'discard-save') { pending = null; saveMessage = 'Изменение отменено'; render(); }
+  if (action === 'keep-server') { pending = {importance: true, urgency: null}; applyPending(); }
+  if (action === 'create') { creating = true; saveMessage = ''; draftTask = {id: crypto.randomUUID(), title: '', project: 'Без проекта', importance: null, urgency: null, due: null, status: 'todo', mine: true, created: '2026-10-07'}; render(); document.getElementById('new-title').focus(); }
+  if (action === 'save-create') { if (!draftTask.title.trim() || pending) { app.querySelector('.save-status').textContent = pending ? 'Сначала разрешите несохранённую оценку' : 'Введите название задачи'; return; } draftTask.title = draftTask.title.trim(); tasks.push(draftTask); currentId = draftTask.id; creating = false; saveMessage = 'Создано только в демо'; render(); }
+});
+document.getElementById('category-tasks').onclick = event => { const button = event.target.closest('[data-open]'); if (!button) return; document.getElementById('category-dialog').close(); document.getElementById('category-tasks').innerHTML = ''; openTask(button.dataset.open); };
+function closeCategory() { const previous = expandedCategory; expandedCategory = null; document.getElementById('category-dialog').close(); document.getElementById('category-tasks').innerHTML = ''; (app.querySelector(`[data-more="${previous}"]`) || app.querySelector('.quadrant [data-open]') || app.querySelector('[data-action="create"]')).focus(); }
+document.getElementById('close-category').onclick = closeCategory;
+document.getElementById('category-dialog').addEventListener('cancel', event => { event.preventDefault(); closeCategory(); });
+document.getElementById('close-filters').onclick = () => document.getElementById('filters-dialog').close();
+document.getElementById('apply-filters').onclick = () => { for (const key of ['status', 'importance', 'urgency']) filters[key] = document.getElementById(`${key}-filter`).value; filters.unrated = document.getElementById('unrated-filter').checked; document.getElementById('filters-dialog').close(); render(); app.querySelector('[data-action="filters"]').focus(); };
+document.getElementById('width').onchange = event => document.getElementById('device').style.setProperty('--preview-width', event.target.value === '100%' ? '100%' : event.target.value + 'px');
+document.getElementById('text-size').onchange = event => document.documentElement.toggleAttribute('data-large', event.target.value === '200');
+document.getElementById('scenario').onchange = event => { scenario = event.target.value; pending = null; saveMessage = ''; render(); };
+document.getElementById('reset-demo').onclick = () => location.reload();
+render();
+</script>
+</body>
+</html>

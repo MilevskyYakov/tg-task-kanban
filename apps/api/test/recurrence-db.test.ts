@@ -68,7 +68,7 @@ test('explicit future apply is atomic, versioned, isolated and preserves occurre
     const snapshot = async () => ({ task: await readTask(), template: await readTemplate(),
       audit: (await db.query('SELECT * FROM task_audit_events WHERE board_id=$1 ORDER BY id', [boardId])).rows,
       notifications: (await db.query('SELECT * FROM task_assignment_notifications WHERE task_id=$1 ORDER BY id', [task.id])).rows });
-    const apply = (payload: Record<string, unknown>, user = users[0], target = path) => app.inject({ method: 'PATCH', url: `${target}?scope=future`, cookies: { session: user.token }, payload });
+    const apply = async (payload: Record<string, unknown>, user = users[0], target = path) => app.inject({ method: 'PATCH', url: `${target}?scope=future`, cookies: { session: user.token }, payload: { expectedRecurrenceVersion: String((await readTemplate()).revision), ...payload } });
     const initial = await snapshot();
     const pastInitial = await readTask(past.id);
     const denied = await apply({ title: 'Not authorized', expectedVersion: initial.task.version }, users[1]);
@@ -137,11 +137,11 @@ test('explicit future apply is atomic, versioned, isolated and preserves occurre
 
     // Without delivery: exercise notification outbox idempotency via the real DB function.
     const { updateTaskAndFuture } = await import('../src/db.js');
-    const notificationInput = { assigneeUserId: users[0].userId, notifyAssignee: true, expectedVersion: (await readTask()).version };
+    const notificationInput = { assigneeUserId: users[0].userId, notifyAssignee: true, expectedVersion: (await readTask()).version, expectedRecurrenceVersion: String((await readTemplate()).revision) };
     await updateTaskAndFuture(db, users[0].userId, boardId, task.id, notificationInput);
     assert.equal((await snapshot()).notifications.length, 1);
     await assert.rejects(() => updateTaskAndFuture(db, users[0].userId, boardId, task.id, notificationInput), /version conflict/);
-    await updateTaskAndFuture(db, users[0].userId, boardId, task.id, { ...notificationInput, expectedVersion: (await readTask()).version });
+    await updateTaskAndFuture(db, users[0].userId, boardId, task.id, { ...notificationInput, expectedVersion: (await readTask()).version, expectedRecurrenceVersion: String((await readTemplate()).revision) });
     assert.equal((await snapshot()).notifications.length, 1, 'safe retry does not duplicate assignment notification');
     const plain = await createTask(db, users[0].userId, boardId, { title: 'No template' });
     assert.equal((await apply({ title: 'Must not change' }, users[0], `/api/boards/${boardId}/tasks/${plain.id}`)).statusCode, 403);

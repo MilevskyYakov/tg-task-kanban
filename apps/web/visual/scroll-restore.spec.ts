@@ -75,7 +75,6 @@ async function openList(page: Page, width: number, options: MockOptions = {}) {
   await mockScrollList(page, options);
   await page.setViewportSize({ width, height: 844 });
   await page.goto('/');
-  await page.evaluate(() => document.fonts.ready);
   if (options.backlog) {
     await page.getByRole('button', { name: /Бэклог/ }).click();
     await expect(page.locator('.backlog-row')).toHaveCount(30);
@@ -84,6 +83,7 @@ async function openList(page: Page, width: number, options: MockOptions = {}) {
   } else {
     await expect(page.locator('.main-task-row')).toHaveCount(30);
   }
+  await page.evaluate(() => document.fonts.ready);
 }
 
 const rowSelector = (options: MockOptions) => options.backlog ? '.backlog-row' : options.view === 'kanban' ? '.kanban-task-row' : '.main-task-row';
@@ -94,11 +94,11 @@ async function scrollToPosition(page: Page, target: number) {
 }
 
 // Returns a row fully inside the viewport so the click does not trigger Playwright auto-scroll.
-async function pickVisibleRowIndex(page: Page, options: MockOptions) {
-  const index = await page.locator(rowSelector(options)).evaluateAll((rows) => rows.findIndex((row) => {
+async function pickVisibleRowIndex(page: Page, options: MockOptions, excludedIndex = -1) {
+  const index = await page.locator(rowSelector(options)).evaluateAll((rows, excluded) => rows.findIndex((row, index) => {
     const rect = row.getBoundingClientRect();
-    return rect.top >= 0 && rect.bottom <= window.innerHeight && rect.height > 0;
-  }));
+    return index !== excluded && rect.top >= 0 && rect.bottom <= window.innerHeight && rect.height > 0;
+  }), excludedIndex);
   expect(index).toBeGreaterThanOrEqual(0);
   return index;
 }
@@ -159,7 +159,7 @@ test('delayed response after cancel does not hijack the next open', async ({ pag
   // The details body is still loading; the plain back button is the visible escape hatch.
   await page.locator('.task-details').getByRole('button', { name: 'Назад к задачам' }).click();
   await expectRestored(page, 1200, row);
-  const otherIndex = (index + 5) % 30;
+  const otherIndex = await pickVisibleRowIndex(page, {}, index);
   await openRow(page, otherIndex, {});
   await expect(page.locator('.detail-title textarea')).toHaveValue(listTitles[otherIndex]);
   await page.waitForTimeout(4000);

@@ -112,6 +112,7 @@ for (const width of [390, 320]) {
     await page.screenshot({ path: `${evidence}/pair-accept-${width}.png` });
     await page.getByRole('button', { name: 'Присоединиться', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Запуск сайта', exact: true })).toBeVisible();
+    await page.locator('.unassessed-tasks summary').click();
     await expect(page.getByRole('button', { name: /Проверить макет/ })).toBeVisible();
     expect(state.calls.filter((call) => call.path.endsWith('/redeem'))).toHaveLength(1);
     expect(state.calls.some((call) => call.path.includes('publications'))).toBe(false);
@@ -157,6 +158,7 @@ test('pair archived member has read-only task details and no owner controls', as
   await expect(page.getByRole('button', { name: /Восстановить|Отозвать|Пригласить/ })).toHaveCount(0);
   await page.screenshot({ path: `${evidence}/pair-archived-member.png` });
   await page.getByRole('button', { name: 'Просмотреть задачи' }).click();
+  await page.locator('.unassessed-tasks summary').click();
   await expect(page.getByRole('checkbox', { name: /Завершить задачу/ })).toBeDisabled();
   await page.getByRole('button', { name: /Проверить макет/ }).click();
   await expect(page.getByText('История сохранена')).toBeVisible();
@@ -178,6 +180,7 @@ test('pair member leave and stale open app lose access', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Все доски', exact: true })).toBeVisible();
   state.removed = false;
   await page.reload();
+  await page.locator('.unassessed-tasks summary').click();
   await page.getByRole('button', { name: /Проверить макет/ }).click();
   await expect(page.getByText('История сохранена')).toBeVisible();
   state.removed = true;
@@ -265,6 +268,7 @@ test('pair two browser sessions use real API/DB for creation, consent, collabora
     await createTask(db, owner.userId, createdId, { title: 'Общая задача', assigneeUserId: guest.userId });
     await second.reload();
     await second.getByRole('button', { name: 'Открыть доску', exact: true }).click();
+    await second.locator('.unassessed-tasks summary').click();
     await second.getByRole('button', { name: /Общая задача/ }).click();
     await second.getByRole('textbox', { name: 'Комментарий', exact: true }).fill('Совместное обсуждение');
     await second.getByRole('button', { name: 'Отправить комментарий' }).click();

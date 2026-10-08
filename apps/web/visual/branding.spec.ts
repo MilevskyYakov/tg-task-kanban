@@ -29,6 +29,8 @@ for (const width of [390, 320]) {
     await mkdir(evidence, { recursive: true });
     const shot = async () => {
       await page.evaluate(() => document.fonts.ready);
+      // Reduced motion must not animate the browser's default body margin into the CSS reset.
+      await expect(page.locator('body')).toHaveCSS('transition-property', 'none');
       await expect(page).toHaveTitle('Таска');
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({ path: `${evidence}/tasca-${mode}-${width}.png` });

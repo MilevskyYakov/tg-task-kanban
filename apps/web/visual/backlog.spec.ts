@@ -37,7 +37,10 @@ for (const width of [390, 320]) {
       for (const status of ['in_progress', 'waiting', 'done'] as const) await createTask(db, owner.userId, boardId, { title: `Статус ${status}`, status, ...(status === 'waiting' ? { waitReason: 'Проверка' } : {}) });
       const attach = async (target: Page, person: typeof owner) => {
         target.on('pageerror', (error) => errors.push(error.message));
-        await target.addInitScript((id) => localStorage.setItem('tasks.globalBoardId', id), boardId);
+        await target.addInitScript((id) => {
+          localStorage.setItem('tasks.globalBoardId', id);
+          localStorage.setItem('tasks.viewState', JSON.stringify({ view: 'list', grouping: 'deadline', filters: { scope: 'all', project: '', assignee: '', status: '', priority: '', deadline: '', unassigned: false, search: '' }, scrollY: 0, kanbanStatus: 'todo' }));
+        }, boardId);
         await target.route('https://telegram.org/js/telegram-web-app.js', (route) => route.fulfill({ contentType: 'application/javascript', body: "window.Telegram={WebApp:{initData:'isolated-browser-test',ready(){},expand(){}}};" }));
         await target.route('**/api/**', async (route) => {
           const request = route.request();
@@ -120,13 +123,13 @@ for (const width of [390, 320]) {
       // Both users see the same unassigned task; instant claim from the row keeps the backlog open.
       await shot('backlog-rows');
       await second.getByRole('button', { name: 'Бэклог 1', exact: true }).click();
-      await second.locator('.backlog-row').filter({ hasText: candidate.title }).last().getByRole('button', { name: 'Взять себе' }).click();
+      await second.locator(`.backlog-row[data-task-id="${candidate.id}"]`).getByRole('button', { name: 'Взять себе' }).click();
       await expect(second.getByRole('status').filter({ hasText: 'Задача теперь ваша' })).toContainText('Задача теперь ваша');
       await expect(second.getByRole('button', { name: /^Бэклог/ })).toHaveAttribute('aria-pressed', 'true');
       await expect(second.locator('.backlog-row').filter({ hasText: candidate.title })).toHaveCount(0);
       expect((await db.query('SELECT status, assignee_user_id FROM tasks WHERE id = $1', [candidate.id])).rows[0]).toEqual({ status: 'todo', assignee_user_id: member.userId });
       // Competing claim from the first user loses; the row leaves the backlog after the refresh.
-      await page.locator('.backlog-row').filter({ hasText: candidate.title }).last().getByRole('button', { name: 'Взять себе' }).click();
+      await page.locator(`.backlog-row[data-task-id="${candidate.id}"]`).getByRole('button', { name: 'Взять себе' }).click();
       await expect(page.getByRole('status').filter({ hasText: 'Задача уже назначена: Анна' })).toContainText('Задача уже назначена: Анна');
       await shot('claim-conflict');
       await expect(page.locator('.backlog-row')).toHaveCount(3);
@@ -177,8 +180,9 @@ for (const width of [390, 320]) {
       await page.getByRole('button', { name: 'Подтвердить блокер' }).click();
       await page.getByRole('button', { name: 'Дополнительно' }).click();
       await page.getByRole('textbox', { name: 'Описание', exact: true }).fill('Только первая задача');
-      await page.getByRole('button', { name: /Приоритет.*Обычный/ }).click();
-      await page.getByRole('radio', { name: 'Срочный' }).click();
+      await page.getByRole('button', { name: /^Приоритет/ }).click();
+      await page.getByRole('radiogroup', { name: 'Срочная?' }).getByRole('radio', { name: 'Да', exact: true }).click();
+      await page.getByRole('dialog', { name: 'Приоритет', exact: true }).getByRole('button', { name: 'Применить', exact: true }).click();
       await page.getByRole('button', { name: 'Создать и добавить ещё' }).click();
       await expect(page.getByRole('textbox', { name: 'Что нужно сделать?' })).toHaveValue('');
       await expect(page.getByRole('textbox', { name: 'Что нужно сделать?' })).toBeFocused();
@@ -189,7 +193,8 @@ for (const width of [390, 320]) {
       await page.getByRole('button', { name: 'Создать и добавить ещё' }).click();
       await expect(page.getByRole('textbox', { name: 'Что нужно сделать?' })).toHaveValue('');
       const last = requests.at(-1)!;
-      expect(last).toMatchObject({ projectId: project.id, status: 'todo', priority: 'normal', assigneeUserId: null, description: null, deadline: null, deadlineDate: null, waitReason: null, blockerTaskId: null, waitCheckAt: null, notifyAssignee: false });
+      expect(last).toMatchObject({ projectId: project.id, status: 'todo', importance: null, urgency: null, assigneeUserId: null, description: null, deadline: null, deadlineDate: null, waitReason: null, blockerTaskId: null, waitCheckAt: null, notifyAssignee: false });
+      expect(last).not.toHaveProperty('priority');
       await page.getByRole('textbox', { name: 'Что нужно сделать?' }).fill('Третья в серии');
       failure = 'single-response';
       await page.getByRole('button', { name: 'Создать задачу', exact: true }).click();

@@ -55,6 +55,7 @@ for (const width of [390, 320]) test(`archived project: edit, complete, apply an
     await expect(title).toHaveValue('Edited after archive');
     await expect(projectButton).toBeVisible();
     await page.getByRole('button', { name: 'Назад к задачам' }).click();
+    await page.locator('.unassessed-tasks summary').click();
     await page.locator('.task-summary').filter({ hasText: 'Edited after archive' }).click();
     await expect(projectButton).toBeVisible();
     await projectButton.click();
