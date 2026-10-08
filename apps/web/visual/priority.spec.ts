@@ -164,7 +164,6 @@ test('priority editor retains failed input and reconciles independent remote cha
 test('priority filters keep matrix/list counts, search and empty state aligned', async ({ page }) => {
   await fixture(page); await page.goto('/'); await page.getByRole('button', { name: 'Матрица', exact: true }).click();
   await page.getByRole('button', { name: 'Фильтры', exact: true }).click();
-  await page.getByRole('button', { name: 'Другие фильтры', exact: true }).click();
   await page.getByLabel('Срочность', { exact: true }).selectOption('true');
   await page.getByLabel('Не разобрано', { exact: true }).check();
   await page.getByRole('button', { name: /Показать 1 задач/ }).click();

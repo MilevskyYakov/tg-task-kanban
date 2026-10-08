@@ -91,25 +91,25 @@ export function resolveChoiceIndex(current: number, count: number, key: string):
   return null;
 }
 
-export function ChoiceSheet({ title, children, onClose, className = '' }: { title: string; children: ReactNode; onClose: () => void; className?: string }) {
+export function ChoiceSheet({ title, children, onClose, className = '', headerActions }: { title: string; children: ReactNode; onClose: () => void; className?: string; headerActions?: ReactNode }) {
   const sheet = useRef<HTMLElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
   const titleId = useId();
   useEffect(() => {
     previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     (sheet.current?.querySelector<HTMLElement>('[aria-checked="true"]')
-      ?? sheet.current?.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'))?.focus();
+      ?? sheet.current?.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'))?.focus();
     return () => previousFocus.current?.focus();
   }, []);
   const handleKeyDown = (event: KeyboardEvent) => {
-    if (event.key === 'Escape') { onClose(); return; }
+    if (event.key === 'Escape') { event.stopPropagation(); onClose(); return; }
     if (event.key !== 'Tab') return;
-    const focusable = [...(sheet.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])') ?? [])].filter((element) => element.tabIndex >= 0);
+    const focusable = [...(sheet.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])') ?? [])].filter((element) => element.tabIndex >= 0);
     const current = focusable.indexOf(document.activeElement as HTMLElement);
     const next = resolveFocusIndex(current, focusable.length, event.shiftKey);
     if (next !== null) { event.preventDefault(); focusable[next]?.focus(); }
   };
-  return <div className="sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section ref={sheet} className={`sheet ${className}`} role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={handleKeyDown}><header><h2 id={titleId}>{title}</h2>{!className.includes('task-sheet') && <IconButton label="Закрыть" onClick={onClose}><Icon name="close"/></IconButton>}</header>{children}</section></div>;
+  return <div className="sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section ref={sheet} className={`sheet ${className}`} role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={handleKeyDown}><header><h2 id={titleId}>{title}</h2>{headerActions ?? (!className.includes('task-sheet') && <IconButton label="Закрыть" onClick={onClose}><Icon name="close"/></IconButton>)}</header>{children}</section></div>;
 }
 
 export const Sheet = ChoiceSheet;

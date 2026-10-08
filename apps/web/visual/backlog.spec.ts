@@ -152,19 +152,15 @@ for (const width of [390, 320]) {
 
       await page.getByRole('button', { name: 'Все', exact: true }).click();
       await page.getByRole('button', { name: 'Фильтры', exact: true }).click();
-      await page.getByRole('button', { name: 'Другие фильтры' }).click();
       // «Все» keeps the project filter; clear it to see unassigned tasks of all projects.
-      await page.getByRole('button', { name: /Проект.*Запуск сайта/ }).click();
-      await page.getByRole('radio', { name: 'Все проекты' }).click();
-      await page.getByRole('checkbox', { name: 'Без ответственного', exact: true }).click();
+      await page.getByRole('combobox', { name: 'Проект', exact: true }).selectOption('');
+      await page.getByRole('combobox', { name: 'Исполнитель', exact: true }).selectOption('unassigned');
       await page.getByRole('button', { name: /Показать .* задач/ }).click();
       await expect(page.locator('.main-task-row').filter({ hasText: 'Статус in_progress' })).toBeVisible();
       await expect(page.locator('.main-task-row').filter({ hasText: 'Статус waiting' })).toBeVisible();
       await shot('all-unassigned');
       await page.getByRole('button', { name: /Фильтры/ }).click();
-      await page.getByRole('button', { name: 'Другие фильтры' }).click();
-      await page.getByRole('button', { name: /Статус.*Без завершённых/ }).click();
-      await page.getByRole('radio', { name: 'Готово', exact: true }).click();
+      await page.getByRole('combobox', { name: 'Статус', exact: true }).selectOption('done');
       await page.getByRole('button', { name: /Показать .* задач/ }).click();
       await expect(page.locator('.main-task-row').filter({ hasText: 'Статус done' })).toBeVisible();
 

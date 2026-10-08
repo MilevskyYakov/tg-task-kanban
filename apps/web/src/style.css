@@ -223,7 +223,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .sheet-options button.selected { background: var(--primary-soft); border-color: var(--border); }
 .sheet-options small { color: var(--text-muted); font-weight: 400; }
 .manage-boards { width: 100%; }
-.choice-list, .quick-filters { display: grid; gap: 4px; margin-top: 18px; }
+.choice-list { display: grid; gap: 4px; margin-top: 18px; }
 .detail-conflict-values dd { margin: 4px 0 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .detail-conflict-values dt { font-weight: 700; }
 .choice-row { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 8px 12px; background: transparent; color: var(--text); text-align: left; }
@@ -243,13 +243,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .task-sheet h2 { font-size: 2rem; font-weight: 500; }
 .board-sheet { min-height: 398px; }
 .board-sheet .sheet-close { width: 100%; margin-top: 24px; background: var(--surface-soft); border: 0; }
-.filter-choice-sheet { min-height: 454px; }
-.quick-filters .choice-row { min-height: 56px; }
-.filter-links { display: flex; justify-content: space-between; gap: 8px; margin: 20px 0; }
-.filter-links button { min-width: 0; padding-inline: 8px; background: transparent; color: var(--text-muted); }
 .filter-apply { width: 100%; min-height: 56px; border-radius: 12px; }
-.filter-choice-sheet .filter-apply { margin-top: 24px; }
-.advanced-filter-sheet .action-row { padding-inline: 4px; }
 .action-row { display: grid; grid-template-columns: auto minmax(0, 1fr) 24px; align-items: center; gap: 12px; width: 100%; min-height: var(--control-height); padding: 8px 4px; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; color: var(--text); text-align: left; }
 .action-row:disabled { color: var(--text-muted); opacity: .65; }
 .action-row-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--primary-soft); color: var(--primary); }
@@ -616,11 +610,8 @@ input[type=checkbox] { accent-color: var(--primary); }
 .task-search .icon-button { background: transparent; border-radius: 50%; }
 .task-search input::-webkit-search-cancel-button { display: none; }
 .board-selector, .search-trigger, .filter-trigger, .task-search { background: linear-gradient(145deg, #FFFFFF, #F4F6F1); box-shadow: var(--shadow-control); }
-.filter-grouping h3 { margin: 24px 0 12px; font-size: .8125rem; font-weight: 500; }
-.filter-grouping .segmented, .scope-tabs { border-radius: 26px; }
-.filter-grouping .segmented button { min-width: 0; padding-inline: 4px; border-radius: 24px; font-size: .875rem; }
+.scope-tabs { border-radius: 26px; }
 .scope-tabs button { border-radius: 24px; }
-.filter-grouping .segmented button.active { color: var(--text); background: #fff; }
 .active-kanban-column { background: #E2E8DF; border: 1px solid #FFFFFF80; box-shadow: inset 0 1px 0 #FFFFFFB3; }
 .grouped-task-list { padding: 4px 0; gap: 24px; }
 .grouped-task-list:empty { padding: 0; }
@@ -676,7 +667,7 @@ input[type=checkbox] { accent-color: var(--primary); }
 .sheet { background: #F0F3ED; border: 1px solid #FFFFFFCC; border-bottom: 0; border-radius: 34px 34px 0 0; box-shadow: inset 0 1px 0 #fff, 0 -12px 48px #183C2C26; }
 .sheet h2, .task-sheet h2 { font-size: 1.625rem; }
 .sheet-backdrop { background: #183C2C33; }
-.sheet .choice-list, .sheet .quick-filters, .sheet-options { gap: 10px; }
+.sheet .choice-list, .sheet-options { gap: 10px; }
 .sheet .choice-row, .sheet-options button { border: 1px solid #FFFFFFCC; border-radius: 24px; background: var(--card-fill); box-shadow: var(--shadow-control); font-weight: 500; }
 .sheet .choice-row.selected, .sheet-options button.selected { background: var(--accent-fill); border-color: #A7BE9E; }
 .sheet .choice-row strong { font-weight: 500; }
@@ -684,7 +675,7 @@ input[type=checkbox] { accent-color: var(--primary); }
 .action-row:not(:has(.action-row-icon)) { grid-template-columns: minmax(0, 1fr) 24px; }
 .sheet .icon-button, .sheet .secondary, .settings-screen .secondary, .settings-back, .pair-screen .secondary { border: 1px solid #FFFFFFCC; border-radius: 24px; background: var(--control-fill); color: var(--text); box-shadow: var(--shadow-control); }
 .filter-apply, .mcp-primary, .detail-add button, .detail-save, .settings-form > button:not(.secondary):not(.action-row):not(.danger), .pair-actions button:not(.secondary):not(.danger), .entry-choices button:not(.secondary) { border: 1px solid #176447; border-radius: 26px; background: var(--action-fill); color: #fff; box-shadow: inset 0 1px 0 #FFFFFF4D, 0 6px 12px #17644726; }
-.sheet .filter-links button { border-radius: 22px; }
+
 .sheet-search, .filter-sheet select, .settings-form input, .settings-form select { border-radius: 20px; background: #F9FBF7; }
 .filter-apply, .create-action button, .mcp-primary { border-radius: 26px; }
 .create-screen > header { grid-template-columns: 44px minmax(0, 1fr); gap: 12px; border: 0; min-height: 56px; }

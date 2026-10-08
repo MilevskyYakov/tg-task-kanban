@@ -13,6 +13,15 @@ Set `PLAYWRIGHT_PORT` when default port 4173 is occupied, for example `PLAYWRIGH
 
 Generated PNG files are written to `artifacts/visual-evidence/` and intentionally ignored by Git.
 
+`filters.spec.ts` covers the unified #181 panel: native category values, result
+counts, assignment exclusivity, independent and full reset, all-board/kanban
+restrictions, persisted and stale filters, retry, read-only boards, focus/Back,
+long directories, 200% text, simulated keyboard visibility, and context after
+creation/details. Its images are in `artifacts/visual-evidence/issue-181/`.
+See `docs/issue-181-filters.md` for the contract and remaining device gates.
+Use a UTF-8 database with Unicode-aware locale (for example `en_US.UTF-8`);
+SQL_ASCII does not implement the application's Cyrillic length/case semantics.
+
 Tasca (#134) keeps the light-only contract under dark Telegram/browser settings.
 The suite checks local Manrope loading, blocked-font/system fallback, disabled
 blur, 200% text, collapsed search and query preservation, grouping in filters,
