@@ -9,8 +9,17 @@ import type { Config } from '../src/config.js';
 const url = process.env.TEST_DATABASE_URL;
 if (!url) throw new Error('TEST_DATABASE_URL is required');
 
-test('scheduler catches up, stays idempotent and template lifecycle preserves tasks', async () => {
-  const db = createDatabase(url!);
+test('scheduler catches up, stays idempotent and template lifecycle preserves tasks', async t => {
+  // Pair-board tests also tick the global scheduler; use the same isolation as the next test.
+  const setup = createDatabase(url!);
+  const schema = `recurrence_${randomUUID().replaceAll('-', '')}`;
+  await setup.query(`CREATE SCHEMA ${schema}`);
+  const databaseUrl = new URL(url!);
+  databaseUrl.searchParams.set('options', `-c search_path=${schema}`);
+  const db = createDatabase(databaseUrl.toString());
+  t.after(async () => { await db.end(); await setup.query(`DROP SCHEMA ${schema} CASCADE`); await setup.end(); });
+  const migrations = new URL('../migrations/', import.meta.url);
+  for (const file of (await readdir(migrations)).filter(name => name.endsWith('.sql')).sort()) await db.query(await readFile(new URL(file, migrations), 'utf8'));
   const stamp = randomBytes(6).readUIntBE(0, 6);
   const userId = (await db.query<{id: string}>('INSERT INTO users (telegram_id, first_name) VALUES ($1, $2) RETURNING id', [stamp, 'Recurring'])).rows[0].id;
   const boardId = randomUUID();
@@ -32,7 +41,6 @@ test('scheduler catches up, stays idempotent and template lifecycle preserves ta
   assert.equal((await tasksForBoard(db, userId, boardId)).length, 4, 'archive keeps instance history');
   await db.query('DELETE FROM boards WHERE id = $1', [boardId]);
   await db.query('DELETE FROM users WHERE id = $1', [userId]);
-  await db.end();
 });
 
 test('explicit future apply is atomic, versioned, isolated and preserves occurrence history', async () => {

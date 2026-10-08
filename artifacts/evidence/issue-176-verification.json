@@ -1,0 +1,502 @@
+{
+  "generated_at": "2026-10-07T09:56:26.852864+00:00",
+  "base_commit": "58924f41b3b5f22ee5a4e3bab6a603d0262c5cde",
+  "branch": "MilevskyYakov/issue-176",
+  "status": "local implementation; full visual gate retains reproduced baseline keyboard failures; no release authorization",
+  "unit_and_isolation_total": 77,
+  "source_digest_sha256": "50c969fdeacac7324e4f8b0767bf8363cf08b63cecfb048b263539dce94872db",
+  "sources": [
+    {
+      "path": ".gitignore",
+      "bytes": 485,
+      "sha256": "f397d45eb7a74c867a0bc7352d47d672fe0ba0aac31e7c9e57555e25f9bc84bc"
+    },
+    {
+      "path": "README.md",
+      "bytes": 8258,
+      "sha256": "1e608d98c8f5f4a1c757a01539ba271136474289a9b1ef7dfa2075354d362bba"
+    },
+    {
+      "path": "apps/api/migrations/017_chat_directions.sql",
+      "bytes": 4148,
+      "sha256": "bc77a023d8d4c2482da3721218a9dfc4cce2e5b85d1f529e0ab0a3a5b936d746"
+    },
+    {
+      "path": "apps/api/src/app.ts",
+      "bytes": 45183,
+      "sha256": "614f1e321bce542e5b6abbd63f669231a096ecfa020c5c6cfbfc59058721b2ba"
+    },
+    {
+      "path": "apps/api/src/bot-entry.ts",
+      "bytes": 10501,
+      "sha256": "3eced972681428b7d880d9a9afe8ac3240ede9b802e73bcb8a5e02df15ac761c"
+    },
+    {
+      "path": "apps/api/src/chat-boards.ts",
+      "bytes": 19073,
+      "sha256": "fee9de520be98a2f19a932db9dcc2d81ba89adc923ebdec77d01c45e9bd8a0ca"
+    },
+    {
+      "path": "apps/api/src/db.ts",
+      "bytes": 50915,
+      "sha256": "866775cc797cb6a0bafe6283eb42d43d572a95676dd026408aef382c72ed16b6"
+    },
+    {
+      "path": "apps/api/src/mcp.ts",
+      "bytes": 56034,
+      "sha256": "cf7ad5eaa0bb38ee0faa5f7f73ee9e1557478b7057d3bc799aec00641369b399"
+    },
+    {
+      "path": "apps/api/src/migrate.ts",
+      "bytes": 1285,
+      "sha256": "32d21d4236531e995c7790403b1981e57f10ac1a77c3aa08a0c13ae7e43b8aa1"
+    },
+    {
+      "path": "apps/api/src/publications.ts",
+      "bytes": 19313,
+      "sha256": "d0e71d2157871825fe77e61c88766827cfc2b0b455ef20f4604856093e02e09c"
+    },
+    {
+      "path": "apps/api/test/chat-board.test.ts",
+      "bytes": 21882,
+      "sha256": "93abc5747cbfa624d413a3c83def76b7a0df89b4ca85ab1926463253f2a97f8a"
+    },
+    {
+      "path": "apps/api/test/chat-directions.test.ts",
+      "bytes": 21513,
+      "sha256": "d4211be680ec984ca85b531ceae17b6caed146dacb19d26aaacf722256394eed"
+    },
+    {
+      "path": "apps/api/test/chat-migration.test.ts",
+      "bytes": 6046,
+      "sha256": "80a8721f9744e91b7505d4c8aa49cd349ee73e027f5c84c4bb6c26dfbcc34ccc"
+    },
+    {
+      "path": "apps/api/test/cutover.test.ts",
+      "bytes": 18052,
+      "sha256": "f942d29a0624104cc662952080d88c28246f8c1a88d30908e8f69bf3e636053d"
+    },
+    {
+      "path": "apps/api/test/publication-scheduler.test.ts",
+      "bytes": 1799,
+      "sha256": "862a61c1aa9c17cac3a952572705904b0fd1e1bbeaab99c132d891f3ac2690d7"
+    },
+    {
+      "path": "apps/api/test/publications.test.ts",
+      "bytes": 13484,
+      "sha256": "3540e2ad3df3088195759c024b34ae23bc0a91ad05ebe90f654d0603b5cc638b"
+    },
+    {
+      "path": "apps/web/playwright.config.ts",
+      "bytes": 743,
+      "sha256": "4d47979565626ebd4bffc4c3a5a797cbb682963c680027f9f752fdd4891f0e19"
+    },
+    {
+      "path": "apps/web/src/chat-boards.tsx",
+      "bytes": 14790,
+      "sha256": "5fc3bdad92bec822d527c9a22792379859253c60de3805a5654f3c4591b9bb58"
+    },
+    {
+      "path": "apps/web/src/domain.ts",
+      "bytes": 1704,
+      "sha256": "46d2325629eb6302eec3b6bfd71f856c0f4dd7d6fd24fac26927f1c43c174477"
+    },
+    {
+      "path": "apps/web/src/main.tsx",
+      "bytes": 105533,
+      "sha256": "30b4ebdc97a13e3f0be597cef08e55e56e4c00f749afa38fa1d5c797f6107db4"
+    },
+    {
+      "path": "apps/web/src/settings-editor.tsx",
+      "bytes": 20250,
+      "sha256": "06a7e909f344e99b9764d2f498b63038514791ec8631af77bb7634c9a79f1057"
+    },
+    {
+      "path": "apps/web/src/style.css",
+      "bytes": 81178,
+      "sha256": "63a1622d9b0c2f36eef65bc24b099ff7b2a0cee902770d433e6b188d5c98d981"
+    },
+    {
+      "path": "apps/web/visual/README.md",
+      "bytes": 3554,
+      "sha256": "49e2bfc8f8caeddeb4a2550e75fc4d41ecb3fed054dee554301b79c5683857de"
+    },
+    {
+      "path": "apps/web/visual/chat-directions.spec.ts",
+      "bytes": 11236,
+      "sha256": "a9617910f02832d7679523d6e8b3697eaa985733698ccd147030bd2a201917be"
+    },
+    {
+      "path": "apps/web/visual/entry.spec.ts",
+      "bytes": 18858,
+      "sha256": "e09f7dbb01f3cb31295d0f0da1c5d94f02f6717c36a3303ef9bc829cfcec7056"
+    },
+    {
+      "path": "apps/web/visual/settings-autosave.spec.ts",
+      "bytes": 26040,
+      "sha256": "a6a08b1ccc658f61772342b5cf5e5da048afd9b2c595afde5c7c97a65203ce4b"
+    },
+    {
+      "path": "docs/issue-176-decisions.md",
+      "bytes": 6832,
+      "sha256": "d7329ede9f77a9902a2ece433065016a33cea59eb22172a069cebc1edbab21e7"
+    },
+    {
+      "path": "docs/issue-176-verification.md",
+      "bytes": 14698,
+      "sha256": "8dc4e5d8f15460087fb6c20fb24c99527b1b008d7923bc35310f91b2fb65ac5d"
+    },
+    {
+      "path": "docs/tasca-cutover-runbook.md",
+      "bytes": 44047,
+      "sha256": "6f58bc3db98eb08ca9f1f06b131349cba31dca9acb6023e2d19ac86b0179f647"
+    },
+    {
+      "path": "docs/telegram-polling-runbook.md",
+      "bytes": 13301,
+      "sha256": "0bad5121a87f86003ab1a12d6de0061d60ee574ea8ecfc0cd7265f5f59911949"
+    },
+    {
+      "path": "package.json",
+      "bytes": 1497,
+      "sha256": "db63bb4dc0a59c90f30d7d020c332de526cde968270ff33e69c482a16e11ae93"
+    }
+  ],
+  "evidence": [
+    {
+      "path": "artifacts/evidence/issue-176-runtime/test-completion.log",
+      "bytes": 471774,
+      "sha256": "433b03edd2722159671cd7bc2a3fb4852f09e25abf6414372062057f124f128d"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/lint-completion.log",
+      "bytes": 151,
+      "sha256": "f27c57d111ab615aefb7b53e78a6b4d58087630d3a0142331957e136bcfb25ff"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/typecheck-completion.log",
+      "bytes": 122,
+      "sha256": "335bd39015b554dbf591809dad6e83edbc369c6c4fc63dd0169349145cc5543b"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/build-completion.log",
+      "bytes": 485,
+      "sha256": "cc54e382f130579dd9fa3afb4e6c5836d5fc7502d07a7844c9cd1633af5b1ef4"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/public-entry-completion.log",
+      "bytes": 5884,
+      "sha256": "73d89e9c6e4a05c3c48e414af50cd733a845f5d806362b0081079b1118faecce"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/cutover-completion.log",
+      "bytes": 27277,
+      "sha256": "f6b4dfab4a032145a47674e8572c7ba8b9f7602527d9aa364d438677adab80ec"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/visual-final.log",
+      "bytes": 1744306,
+      "sha256": "7308650ba8ce65a8fd1251334a2dce208aa427e6715294f847877f24e3e1e35e"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/visual-no-baseline-failure.log",
+      "bytes": 1762887,
+      "sha256": "034e02f1b4da396c5fe139d9354b54cde24fefd60a096f0f53a21997b49e4d94"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/visual-final-focused.log",
+      "bytes": 288107,
+      "sha256": "995272d41956dceae9e66eafa39b0986adfa8f842967091119832fe2d2cbcf13"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/visual-viewport-repeat.log",
+      "bytes": 258282,
+      "sha256": "04feecb4766840ffee4117fee77564b90a069182174052594a4853ebee726430"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/visual-regression-retry.log",
+      "bytes": 148387,
+      "sha256": "beaff75b13304cb66beb4856a37e2e315a01938e1830bcb16635718c881659d0"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/visual-baseline-keyboard-executed.log",
+      "bytes": 9812,
+      "sha256": "9ea26eddaf2ba588491ac1f7b1b4e1e2dc249a9ff015c8aa9a49c8b2519488f9"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/input-perf.jsonl",
+      "bytes": 4050,
+      "sha256": "6c814196b5ebcb65c895d792cd45729a5bdbc10d82e5e0c04cb86939d6c8b6e0"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-access-revoked-320.png",
+      "bytes": 18224,
+      "sha256": "1df523ca9fbe9d6b8b8b14dbe6c92fc8260337bc29caf4da4030d9c68dbba9de"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-access-revoked-390.png",
+      "bytes": 18261,
+      "sha256": "d4b8bdf412711e78b355f04f0711afdc7b8332709de3a53aa4d37dda6560eec6"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-chooser-320.png",
+      "bytes": 74718,
+      "sha256": "fd837d6b32a46fb395a2da88ee02d86d69779e26ac050b50d0cb6e6f306a8a72"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-chooser-390.png",
+      "bytes": 75210,
+      "sha256": "0c169f1b9a663e46f57fbc7b106d35160edf295b9daa6c8f6d0408e07051c46a"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-confirmation-320.png",
+      "bytes": 55695,
+      "sha256": "1dab3a429044406a9355482d725e9e12ed8a32eb8109a63c4013e3792f8abae5"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-confirmation-390.png",
+      "bytes": 61801,
+      "sha256": "ecdef37a72cbbb682529191a63e1589ba50cbfb8fb6fddcc6c256ffca0716d26"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-empty-direction-320.png",
+      "bytes": 70158,
+      "sha256": "f9d7704dd890ee2fb4181396ebde3f815d5dd846f49ec2b2797642c59ad7e6c7"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-empty-direction-390.png",
+      "bytes": 72409,
+      "sha256": "047351d83a4a14859c2369255adccf14dc544f675e6ecfb00cac8fc51bdb78b9"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-empty-summary-320.png",
+      "bytes": 58642,
+      "sha256": "967a1fdbe78286b7fd8c1881e418ba45da58ed4d268165006515e90e9d271acf"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-empty-summary-390.png",
+      "bytes": 62160,
+      "sha256": "613a4c4ffb41e39db4f207ffc80a1e2180b61fce263ad1f34d7a2f07e4034253"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-keyboard-viewport-320.png",
+      "bytes": 28042,
+      "sha256": "9dd986a79e06d8b2e6278fc284b683f6c5999d2f3e6e45b84803a44c8d20a2cf"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-keyboard-viewport-390.png",
+      "bytes": 28388,
+      "sha256": "3b74d59f95fb61c22dadb3b9e55eda89f3fc35716b1790910db56fa24f9cdd89"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-lost-response-320.png",
+      "bytes": 52282,
+      "sha256": "95fe93bee9b1ca7748179746cd9d9d0d008b750ed806c80cad3d6ca54bf0a0ff"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-lost-response-390.png",
+      "bytes": 61245,
+      "sha256": "6549e8ab0a02d8eaa7700bbe77c39cfe07c8228f3b07a680c450c337650b574e"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-selected-summary-320.png",
+      "bytes": 58491,
+      "sha256": "93b100597d400872d9d7af9d3a668e42dc890884a513a05df2f099f056de094c"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-selected-summary-390.png",
+      "bytes": 58963,
+      "sha256": "f95ed399832d101c43cc35819874022ce872481661598bd764c22a61aa7f5348"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-text200-320.png",
+      "bytes": 45655,
+      "sha256": "1aee7edf00a02703f11d21a42f983cd6a8cd2a8d225c4330141f48a801b8f916"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-text200-390.png",
+      "bytes": 53504,
+      "sha256": "97f51ecfd637a553a03e5cc4801f0af235109eaa340162a8c8be8ae744367303"
+    }
+  ],
+  "results": {
+    "test-completion.log": {
+      "node": {
+        "tests": [
+          45,
+          32
+        ],
+        "pass": [
+          45,
+          32
+        ],
+        "fail": [
+          0,
+          0
+        ],
+        "skipped": [
+          0,
+          0
+        ]
+      },
+      "browser": []
+    },
+    "public-entry-completion.log": {
+      "node": {
+        "tests": [
+          1
+        ],
+        "pass": [
+          1
+        ],
+        "fail": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "browser": []
+    },
+    "cutover-completion.log": {
+      "node": {
+        "tests": [
+          2
+        ],
+        "pass": [
+          2
+        ],
+        "fail": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "browser": []
+    },
+    "visual-final.log": {
+      "node": {
+        "tests": [],
+        "pass": [],
+        "fail": [],
+        "skipped": []
+      },
+      "browser": [
+        {
+          "count": 2,
+          "status": "failed"
+        },
+        {
+          "count": 286,
+          "status": "passed"
+        }
+      ]
+    },
+    "visual-no-baseline-failure.log": {
+      "node": {
+        "tests": [],
+        "pass": [],
+        "fail": [],
+        "skipped": []
+      },
+      "browser": [
+        {
+          "count": 286,
+          "status": "passed"
+        }
+      ]
+    },
+    "visual-final-focused.log": {
+      "node": {
+        "tests": [],
+        "pass": [],
+        "fail": [],
+        "skipped": []
+      },
+      "browser": [
+        {
+          "count": 17,
+          "status": "passed"
+        }
+      ]
+    },
+    "visual-viewport-repeat.log": {
+      "node": {
+        "tests": [],
+        "pass": [],
+        "fail": [],
+        "skipped": []
+      },
+      "browser": [
+        {
+          "count": 8,
+          "status": "passed"
+        }
+      ]
+    },
+    "visual-regression-retry.log": {
+      "node": {
+        "tests": [],
+        "pass": [],
+        "fail": [],
+        "skipped": []
+      },
+      "browser": [
+        {
+          "count": 4,
+          "status": "failed"
+        },
+        {
+          "count": 11,
+          "status": "passed"
+        }
+      ]
+    },
+    "visual-baseline-keyboard-executed.log": {
+      "node": {
+        "tests": [],
+        "pass": [],
+        "fail": [],
+        "skipped": []
+      },
+      "browser": [
+        {
+          "count": 5,
+          "status": "failed"
+        },
+        {
+          "count": 1,
+          "status": "passed"
+        }
+      ]
+    }
+  },
+  "baseline_control_files": [
+    {
+      "path": "artifacts/evidence/issue-176-runtime/baseline/apps/web/src/main.tsx",
+      "bytes": 102194,
+      "sha256": "f1ac2a5f2c5c05569132ce9c2cb6f9485660391417410d4b6da763e268b9ea4f"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/baseline/apps/web/src/environment.ts",
+      "bytes": 6183,
+      "sha256": "f7a4a31d023c6f78d6fd6bf54cad913c3b99dca9d52ca1aa3742fced17d5d0d2"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/baseline/apps/web/src/style.css",
+      "bytes": 80555,
+      "sha256": "0fe4b41ed3fe81a597e66c87cd44bb1fc1fda9cd7751ddde4a97c8d72301c273"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/baseline/apps/web/visual/create.spec.ts",
+      "bytes": 55396,
+      "sha256": "cd4f37b1f918e35cfa23412ac51b6afc1b783ae098ba9b19dfe8c191f084bba5"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/baseline/apps/web/visual/keyboard-fixture.ts",
+      "bytes": 1191,
+      "sha256": "bec97fa746de822871a67abbcb9d8721845d1282cb364cc44d1fd5396f057cb9"
+    }
+  ]
+}

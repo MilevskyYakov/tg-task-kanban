@@ -7,6 +7,8 @@ type TelegramWebApp = {
   ready(): void;
   expand(): void;
   close?(): void;
+  enableClosingConfirmation?(): void;
+  disableClosingConfirmation?(): void;
   isVersionAtLeast?(version: string): boolean;
   HapticFeedback?: { impactOccurred(style: 'soft'): unknown };
   BackButton?: { isVisible: boolean; show(): void; hide(): void; onClick(listener: () => void): void; offClick(listener: () => void): void };
@@ -59,6 +61,7 @@ export function useTaskKeyboardViewport(): void {
     let width = window.innerWidth;
     let keyboardOpen = false;
     let frame = 0;
+    let revealAfterScroll = false;
     const update = () => {
       if (viewport && Math.abs(viewport.scale - 1) > 0.05) return;
       const active = document.activeElement;
@@ -74,6 +77,7 @@ export function useTaskKeyboardViewport(): void {
       keyboardOpen = fullHeight - height > 120 && Boolean(editable || keyboardOpen);
       root.toggleAttribute('data-task-keyboard', keyboardOpen);
       if (!keyboardOpen) {
+        revealAfterScroll = false;
         root.style.removeProperty('--task-input-height');
         root.style.removeProperty('--task-keyboard-inset');
         return;
@@ -100,6 +104,7 @@ export function useTaskKeyboardViewport(): void {
       if (Math.abs(delta) > 1) window.scrollBy({ top: delta, behavior: 'instant' });
     };
     const schedule = () => {
+      revealAfterScroll = true;
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         update();
@@ -108,10 +113,20 @@ export function useTaskKeyboardViewport(): void {
         if (keyboardOpen) frame = requestAnimationFrame(update);
       });
     };
+    // Native wheel/caret scrolling can finish after both animation frames.
+    // Recheck on completion only if input/focus followed the last manual gesture.
+    const manualScroll = () => { revealAfterScroll = false; };
+    const scrollEnd = () => {
+      if (!revealAfterScroll) return;
+      update();
+    };
     document.addEventListener('focusin', schedule);
     document.addEventListener('focusout', schedule);
     document.addEventListener('input', schedule);
     window.addEventListener('resize', schedule);
+    window.addEventListener('wheel', manualScroll, { passive: true });
+    window.addEventListener('touchmove', manualScroll, { passive: true });
+    document.addEventListener('scrollend', scrollEnd);
     viewport?.addEventListener('resize', schedule);
     schedule();
     return () => {
@@ -120,6 +135,9 @@ export function useTaskKeyboardViewport(): void {
       document.removeEventListener('focusout', schedule);
       document.removeEventListener('input', schedule);
       window.removeEventListener('resize', schedule);
+      window.removeEventListener('wheel', manualScroll);
+      window.removeEventListener('touchmove', manualScroll);
+      document.removeEventListener('scrollend', scrollEnd);
       viewport?.removeEventListener('resize', schedule);
       root.removeAttribute('data-task-keyboard');
       root.style.removeProperty('--task-input-height');

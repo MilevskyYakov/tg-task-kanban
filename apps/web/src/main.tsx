@@ -3,9 +3,9 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import './style.css';
 import './task-priority.css';
-import { api, ApiError, json } from './api';
+import { api, ApiError, imageUpload, json } from './api';
 import { ActionRow, AppShell, Avatar, Badge, ChoiceAction, ChoiceRow, CreateScreen, Disclosure, EnvironmentStatus, FieldRow, Icon, SectionHeader, SettingsScreen, Sheet, Skeleton, TaskGlyph, TasksScreen, type IconName } from './app-shell';
-import type { Board, Collaboration, Member, Project, Recurrence, Schedule } from './domain';
+import type { Board, Collaboration, Member, Project, PublicationDelivery, Recurrence, Schedule } from './domain';
 import { countLabel, initialNavigation, settingsSections, type NavigationState } from './navigation';
 import { TaskDetails } from './task-details';
 import { DeadlineField } from './deadline-field';
@@ -18,15 +18,18 @@ import { TaskKanban } from './task-kanban';
 import { FoundationFixture } from './visual-fixture';
 import { creationHaptic, readStorage, removeStorage, useTaskKeyboardViewport, writeStorage } from './environment';
 import { CreateButton } from './create-feedback';
+import { CreateImages, draftImages, saveDraftImages, type DraftImage } from './create-images';
 import { isBacklogTask } from './tasks';
 import { BulkCreate, type BulkDraft } from './bulk-create';
 import { ClaimTask, runClaim } from './claim-task';
 import { PairBoard, PairInvite } from './pair-board';
 import { boardTypeName } from './domain';
-import { EntryGuide, GroupSetup, type EntryPath } from './bot-entry';
+import { BoardEntryAction, EntryGuide, GroupSetup, type EntryPath } from './bot-entry';
 import { McpConnections } from './mcp-connections';
+import './settings.css';
 import { NameSetting, PublicationSetting, useSettingsEdits } from './settings-editor';
 import { Landing } from './landing';
+import { ChatBoards, ChatInvite } from './chat-boards';
 
 type TaskView = 'list' | 'kanban' | 'matrix';
 type FilterChoice = 'project';
@@ -41,6 +44,10 @@ function App() {
   const [boards, setBoards] = useState<Board[]>([]);
   const [pairFlow, setPairFlow] = useState<{board?: Board}>();
   const [pairInvite, setPairInvite] = useState('');
+  const [chatFlow, setChatFlow] = useState('');
+  const [chatInvite, setChatInvite] = useState('');
+  const [canManageChat, setCanManageChat] = useState(false);
+  const [deliveries, setDeliveries] = useState<PublicationDelivery[]>([]);
   const [entryPath, setEntryPath] = useState<EntryPath>();
   const [boardLinkError, setBoardLinkError] = useState<'invalid' | 'network'>();
   const [startupRetry, setStartupRetry] = useState(0);
@@ -116,6 +123,8 @@ function App() {
   const [createBoardId, setCreateBoardId] = useState('');
   const [createOrigin, setCreateOrigin] = useState<NavigationState>(initialNavigation);
   const [createPending, setCreatePending] = useState(false);
+  const [createImages, setCreateImages] = useState<DraftImage[]>([]);
+  const [createSaved, setCreateSaved] = useState<{ task: Task & {notificationWarning?: string}; another: boolean }>();
   const [createAnother, setCreateAnother] = useState(false);
   const [createSuccess, setCreateSuccess] = useState<{ id: string; another: boolean }>();
   const [createdResult, setCreatedResult] = useState<{ task: Task; warning?: string }>();
@@ -146,11 +155,14 @@ function App() {
   const listScrollY = useRef(storedTaskView.scrollY);
   // Track open generations so a late response cannot overwrite a newer open or a closed card (issue #122).
   const taskScrollSequence = useRef(0);
+  const detailContext = useRef('');
+  detailContext.current = JSON.stringify([userId, openTask?.board_id, openTask?.id, openTask?.archived_at,
+    boards.find((item) => item.id === openTask?.board_id)?.status, navigation.screen, claimingTask?.id, accessLost]);
   const taskScroll = useRef(storedTaskView.scrollY);
   // True while the DOM shows the details card instead of the task list; card scrolling and the
   // scroll clamp after the DOM swap must not overwrite the list snapshot (issue #122).
   const listSnapshotActive = useRef(true);
-  listSnapshotActive.current = navigation.screen !== 'tasks' || openTask !== undefined;
+  listSnapshotActive.current = navigation.screen !== 'tasks' || openTask !== undefined || taskLoadState !== 'ready';
 
   const selectedTaskBoardId = resolveTaskBoard(globalBoardId, boardOverrideId, boards.map((item) => item.id));
   const board = navigation.screen === 'board'
@@ -161,25 +173,33 @@ function App() {
   const activeBoardId = useRef<string | undefined>(undefined);
   activeBoardId.current = board?.id;
   const navigate = (next: NavigationState) => {
-    if (createLock.current || createUncertain) return;
+    if (createLock.current || createUncertain) return false;
+    if (navigation.screen === 'create' && next.screen !== 'create' && createImages.length && !window.confirm(createSaved
+      ? 'Задача создана, но не все изображения сохранены. Выйти? Дозагрузить можно, вернувшись в форму, пока приложение открыто.'
+      : 'Изображения ещё не сохранены. Выйти? Черновик останется только до закрытия приложения.')) return false;
     setCreateAnnouncement('');
     ++createGeneration.current;
     setCreateSuccess(undefined);
     if (next.screen === 'create' && navigation.screen !== 'create') {
       setCreateOrigin(navigation.screen === 'board' ? navigation : { screen: 'tasks' });
-      setCreateBoardId(board?.status === 'active' ? board.id : '');
-      setProject(board ? filters.project : '');
+      if (!createImages.length && !createSaved) {
+        setCreateBoardId(board?.status === 'active' ? board.id : '');
+        setProject(board ? filters.project : '');
+      }
     }
-    setOpenTask(undefined); setCollaboration(undefined); setDetailProjects([]); setDetailMembers([]); setDetailTasks([]); setMessage(''); setNavigation(next);
+    setOpenTask(undefined); setCollaboration(undefined); setDetailProjects([]); setDetailMembers([]); setDetailTasks([]);
+    setMessage(next.screen === 'create' && createSaved ? 'Задача создана. Дозагрузите изображения в эту же задачу.' : ''); setNavigation(next);
+    return true;
   };
   const loadBoards = async () => { const data = await api<{boards: Board[]}>('/api/boards'); setBoards(data.boards); return data.boards; };
   const loadBoard = async (id: string, archive = showArchive) => {
     const version = ++boardLoadVersion.current;
     const [taskData, projectData, memberData, publicationData, recurrenceData] = await Promise.all([
-      api<{tasks: Task[]}>(`/api/boards/${id}/tasks${archive ? '?archived=true' : ''}`), api<{projects: Project[]}>(`/api/boards/${id}/projects${archive ? '?archived=true' : ''}`), api<{members: Member[]}>(`/api/boards/${id}/members`), boards.find((item) => item.id === id)?.type === 'chat' ? api<{schedules: Schedule[]}>(`/api/boards/${id}/publications`).catch(() => ({ schedules: [] })) : Promise.resolve({ schedules: [] }), api<{recurrences: Recurrence[]}>(`/api/boards/${id}/recurrences`)
+      api<{tasks: Task[]}>(`/api/boards/${id}/tasks${archive ? '?archived=true' : ''}`), api<{projects: Project[]}>(`/api/boards/${id}/projects${archive ? '?archived=true' : ''}`), api<{members: Member[]}>(`/api/boards/${id}/members`), boards.find((item) => item.id === id)?.type === 'chat' ? api<{schedules: Schedule[]; deliveries?: PublicationDelivery[]}>(`/api/boards/${id}/publications`) : Promise.resolve({ schedules: [], deliveries: [] }), api<{recurrences: Recurrence[]}>(`/api/boards/${id}/recurrences`)
     ]);
     if (version !== boardLoadVersion.current || activeBoardId.current !== id) return false;
     setTasks(taskData.tasks); setProjects(projectData.projects); setMembers(memberData.members); setSchedules(publicationData.schedules); setRecurrences(recurrenceData.recurrences);
+    setDeliveries(publicationData.deliveries ?? []);
     setSettingsLoadedFor(id);
     return true;
   };
@@ -236,15 +256,18 @@ function App() {
           setProfileUsername(telegramUser.username ? `@${telegramUser.username}` : '');
         }
         const startup = resolveStartupContext(webApp.initDataUnsafe?.start_param);
+        let chatEntry: string | undefined;
         if (startup.surface === 'entry') setEntryPath(startup.path);
         if (startup.surface === 'board-link') {
           if (startup.token.startsWith('pair_')) setPairInvite(startup.token);
+          else if (startup.token.startsWith('invite_')) setChatInvite(startup.token);
           else {
-            try { const board = await api<Board>('/api/board-links/redeem', json('POST', {token: startup.token})); setBoardOverrideId(board.id); }
+            try { const board = await api<Board>('/api/board-links/redeem', json('POST', {token: startup.token})); setBoardOverrideId(board.id); if (board.chatEntry) chatEntry = board.chat_root_id; }
             catch (error) { setBoardLinkError(error instanceof ApiError && [400, 403, 404].includes(error.status) ? 'invalid' : 'network'); }
           }
         }
-        await loadBoards();
+        const available = await loadBoards();
+        if (chatEntry && available.filter(board => board.chat_root_id === chatEntry).length > 1) setChatFlow(chatEntry);
         if (startup.surface === 'invalid-task') setTaskLinkError(404);
         if (startup.surface === 'task') {
           setBoardOverrideId(startup.boardId);
@@ -263,7 +286,7 @@ function App() {
   useEffect(() => {
     if (state !== 'ready' || pairFlow) return;
     const currentId = openTask?.board_id ?? (navigation.screen === 'create' ? createBoardId : board?.id);
-    if (!currentId || boards.find((item) => item.id === currentId)?.type !== 'pair') return;
+    if (!currentId || !['pair', 'chat'].includes(boards.find((item) => item.id === currentId)?.type ?? '')) return;
     let cancelled = false;
     const refresh = async () => {
       try {
@@ -279,7 +302,9 @@ function App() {
           createLock.current = false;
           setCreatePending(false); setCreateUncertain(false); setCreateSuccess(undefined); setCreatedResult(undefined); setCreateAnnouncement('');
           ++boardLoadVersion.current;
-          setBoards((items) => items.filter((item) => item.id !== currentId)); setTasks([]); setProjects([]); setMembers([]);
+          const root = boards.find(item => item.id === currentId)?.chat_root_id;
+          setBoards((items) => items.filter((item) => item.id !== currentId && (!root || item.chat_root_id !== root))); setTasks([]); setProjects([]); setMembers([]);
+          setSchedules([]); setDeliveries([]); setChatFlow('');
           setOpenTask(undefined); setCollaboration(undefined); setDetailProjects([]); setDetailMembers([]); setDetailTasks([]);
           setBulkOpen(false); setBulkDraft(undefined); setClaimingTask(undefined); setCreateTasks([]); setAccessLost(true);
         }
@@ -290,6 +315,14 @@ function App() {
     window.addEventListener('focus', visible); document.addEventListener('visibilitychange', visible);
     return () => { cancelled = true; clearInterval(timer); window.removeEventListener('focus', visible); document.removeEventListener('visibilitychange', visible); };
   }, [state, board?.id, openTask?.board_id, navigation.screen, createBoardId, pairFlow]);
+  useEffect(() => {
+    setCanManageChat(false);
+    if (state !== 'ready' || !board?.chat_root_id || !['settings-automation', 'settings-workspace'].includes(navigation.screen)) return;
+    let cancelled = false;
+    void api<{canManage: boolean}>(`/api/boards/${board.id}/chat`).then(value => { if (!cancelled) setCanManageChat(value.canManage); })
+      .catch(() => { if (!cancelled) setMessage('Не удалось проверить права управления чатом. Обновите доску.'); });
+    return () => { cancelled = true; };
+  }, [state, board?.id, board?.chat_root_id, navigation.screen, taskReload]);
   useEffect(() => {
     if (state !== 'ready') return;
     let cancelled = false;
@@ -336,9 +369,11 @@ function App() {
   }, [navigation.screen, boards]);
 
   useEffect(() => {
-    if (navigation.screen !== 'tasks') return;
-    requestAnimationFrame(() => window.scrollTo({ top: taskScroll.current }));
-  }, [navigation.screen]);
+    // A loading placeholder is shorter than the list and would clamp the saved scroll.
+    if (navigation.screen !== 'tasks' || taskLoadState !== 'ready' || openTask) return;
+    const frame = requestAnimationFrame(() => window.scrollTo({ top: taskScroll.current }));
+    return () => cancelAnimationFrame(frame);
+  }, [navigation.screen, taskLoadState, openTask]);
   useEffect(() => {
     if (navigation.screen !== 'tasks') return;
     // Synchronous ref: flips before any scroll event from the DOM swap can fire (issue #122).
@@ -394,11 +429,53 @@ function App() {
   };
 
   const activate = () => { if (board) navigate({ screen: 'settings-workspace', boardId: board.id }); };
+  const addCreateImages = (files: File[]) => {
+    if (createLock.current || createUncertain || createSaved || (createSuccess && !createSuccess.another)) return;
+    try { const added = draftImages(files); setCreateImages((current) => [...current, ...added]); setMessage(''); }
+    catch (error) { setMessage(error instanceof Error ? error.message : 'Не удалось добавить изображение'); }
+  };
+  useEffect(() => {
+    if (navigation.screen !== 'create') return;
+    const paste = (event: ClipboardEvent) => {
+      if (event.defaultPrevented || !event.clipboardData || (event.target instanceof Element && event.target.closest('[role="dialog"]'))) return;
+      const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
+      if (!images.length) return;
+      if (!event.clipboardData.types.some((type) => type.startsWith('text/'))) event.preventDefault();
+      addCreateImages(images);
+    };
+    document.addEventListener('paste', paste);
+    return () => document.removeEventListener('paste', paste);
+  });
+  useEffect(() => {
+    if (!createImages.length) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', beforeUnload);
+    try { window.Telegram?.WebApp?.enableClosingConfirmation?.(); } catch { /* Older clients keep the inline warning. */ }
+    return () => {
+      window.removeEventListener('beforeunload', beforeUnload);
+      try { window.Telegram?.WebApp?.disableClosingConfirmation?.(); } catch { /* Optional Telegram support. */ }
+    };
+  }, [Boolean(createImages.length)]);
+  const resetCreateDraft = (another: boolean) => {
+    setTitle(''); setDescription(''); if (!another) setProject(''); setAssignee(''); setDue(deadlineDraft()); setPriority('normal'); setAssessmentDraft(emptyAssessment); setNotifyAssignee(false);
+    setCreateStatus('todo'); setCreateWaitReason(''); setCreateBlockerId(''); setCreateWaitCheck(''); createRequest.current = undefined;
+    setBlockerKind('external'); setBlockerSearch(''); setCreateBlockerOpen(false); setStatusChoice('todo'); setCreateReset((value) => value + 1); setCreateUncertain(false);
+    setCreateImages([]); setCreateSaved(undefined);
+  };
+  const finishWithoutImages = () => {
+    if (createLock.current || !createSaved || !window.confirm('Задача и уже загруженные изображения останутся. Незагруженные изображения будут удалены из черновика. Продолжить?')) return;
+    ++createGeneration.current;
+    setBoardOverrideId(createSaved.task.board_id); setTaskLoadState('loading');
+    resetCreateDraft(false); setCreatedResult(undefined); setNavigation({ screen: 'tasks' });
+    setMessage('Задача сохранена. Дозагрузка изображений отменена.');
+  };
   const create = async (another = false) => {
     if (createLock.current || (createSuccess && !createSuccess.another)) return;
     const validationError = validateTaskCreate(title, createBoardId);
     if (validationError) { setMessage(validationError); return; }
     if (createStatus === 'waiting' && !createBlockerId && !createWaitReason.trim()) { setMessage('Укажите задачу-блокер или внешнюю причину'); return; }
+    let saved = createSaved;
+    if (saved) another = saved.another;
     createLock.current = true;
     const generation = ++createGeneration.current;
     const current = () => generation === createGeneration.current && createContext.current.screen === 'create' && createContext.current.boardId === createBoardId && !createContext.current.accessLost;
@@ -415,17 +492,22 @@ function App() {
       };
       const serialized = JSON.stringify([createBoardId, payload]);
       if (createRequest.current?.payload !== serialized) createRequest.current = { payload: serialized, id: crypto.randomUUID() };
-      const task = await api<Task & {notificationWarning?: string}>(`/api/boards/${createBoardId}/tasks`, json('POST', { ...payload, requestId: createRequest.current.id }));
+      const task = saved?.task ?? await api<Task & {notificationWarning?: string}>(`/api/boards/${createBoardId}/tasks`, json('POST', { ...payload, requestId: createRequest.current.id }));
       if (!current()) return;
+      if (createImages.length) {
+        saved = { task, another }; setCreateSaved(saved); setCreateUncertain(false);
+        setMessage('Задача создана. Сохраняем изображения…');
+        await saveDraftImages(task.board_id, task.id, createImages, current);
+        if (!current()) return;
+        setMessage('');
+      }
       const receipt = `${task.board_id}:${task.id}`;
       const firstConfirmation = !confirmedCreates.current.has(receipt);
       confirmedCreates.current.add(receipt);
       const presentedTask = presentCreatedTask(task, boards.find((item) => item.id === createBoardId)?.name, projects.find((item) => item.id === project)?.name, members.find((item) => item.id === assignee)?.first_name);
       presentedTask.blocker_title = createTasks.find((item) => item.id === task.blocked_by_task_id)?.title;
       setTasks((current: Task[]) => current.some((item: Task) => item.id === task.id) ? current : [presentedTask, ...current]);
-      setTitle(''); setDescription(''); if (!another) setProject(''); setAssignee(''); setDue(deadlineDraft()); setPriority('normal'); setAssessmentDraft(emptyAssessment); setNotifyAssignee(false);
-      setCreateStatus('todo'); setCreateWaitReason(''); setCreateBlockerId(''); setCreateWaitCheck(''); createRequest.current = undefined;
-      setBlockerKind('external'); setBlockerSearch(''); setCreateBlockerOpen(false); setStatusChoice('todo'); setCreateReset((value) => value + 1); setCreateUncertain(false);
+      resetCreateDraft(another);
       setCreateTasks((current) => [presentedTask, ...current]);
       if (firstConfirmation) {
         setCreatedResult({ task: presentedTask, warning: task.notificationWarning });
@@ -437,6 +519,11 @@ function App() {
       }
     } catch (error) {
       if (!current()) return;
+      if (saved) {
+        setCreateUncertain(false);
+        setMessage(`Задача создана. Не удалось сохранить изображение. ${error instanceof Error ? error.message : 'Ошибка сети.'} Нажмите «Дозагрузить изображения» — новая задача не появится.`);
+        return;
+      }
       const uncertain = Boolean(createRequest.current) && !(error instanceof ApiError && [400, 401, 403, 404].includes(error.status));
       setCreateUncertain(uncertain);
       setMessage(`${error instanceof Error ? error.message : 'Ошибка'}${uncertain ? '. Повторите отправку, чтобы проверить результат. До подтверждения ввод сохранён и заблокирован.' : ''}`);
@@ -526,8 +613,14 @@ function App() {
   };
   const collaborationAction = async (path: string, options: RequestInit) => {
     if (!openTask) return;
+    const generation = taskScrollSequence.current;
+    const context = detailContext.current;
+    const current = () => generation === taskScrollSequence.current && context === detailContext.current;
     await api(path, options);
-    setCollaboration(await api(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/collaboration`));
+    if (!current()) return;
+    const next = await api<Collaboration>(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/collaboration`, { signal: options.signal });
+    if (!current()) return;
+    setCollaboration(next);
     setMessage('Сохранено');
   };
   const addProject = async (event: React.FormEvent<HTMLFormElement> | React.MouseEvent<HTMLButtonElement>) => {
@@ -688,6 +781,7 @@ function App() {
       {matchingBoards.map((item) => <ChoiceRow key={item.id} label={item.name} detail={`${boardTypeName(item)}${item.status === 'archived' ? ' · в архиве' : ''}`} selected={item.id === selectedTaskBoardId} onClick={() => chooseTaskBoard(item.id)}/>)}
     </div>
     <button className="secondary" onClick={() => { setShowBoardSheet(false); setPairFlow({}); }}>Создать доску на двоих</button>
+    {boards.filter(item => item.chat_root_id === item.id).map(item => <button className="secondary" key={item.id} onClick={() => { setShowBoardSheet(false); setChatFlow(item.id); }}>Доски чата · {item.name}</button>)}
     <button className="sheet-close secondary" onClick={() => setShowBoardSheet(false)}>Закрыть</button>
   </Sheet>;
   function filterSheetForBoard() {
@@ -754,7 +848,8 @@ function App() {
     {createdResult.warning && <p className="creation-warning">{createdResult.warning}</p>}
     <div className="created-result-actions"><button className="secondary" disabled={createPending || createUncertain} onClick={() => {
       const task = createdResult.task;
-      navigate({ screen: 'tasks' }); setCreatedResult(undefined);
+      if (!navigate({ screen: 'tasks' })) return;
+      setCreatedResult(undefined);
       void openCollaboration(task);
     }}>Открыть</button><button className="icon-button secondary" aria-label="Закрыть подтверждение" onClick={dismissResult}><Icon name="close"/></button></div>
   </section>;
@@ -768,7 +863,12 @@ function App() {
     pairChanged(updated); setPairFlow(undefined); setPairInvite(''); setBoardOverrideId(updated.id); setNavigation({ screen: 'tasks' }); setFilters({ ...defaultFilters, scope: 'all' });
   };
   if (accessLost) return <main><EnvironmentStatus/><h1>Доступ закрыт</h1><p>Вы больше не участвуете в этой доске. Задачи и история остались у владельца.</p><button onClick={() => { setAccessLost(false); setBoardOverrideId(undefined); setNavigation({ screen: 'tasks' }); }}>К моим задачам</button></main>;
-  if (state === 'ready' && boardLinkError) return <main><EnvironmentStatus/><section role="alert"><h1>{boardLinkError === 'invalid' ? 'Доска недоступна' : 'Не удалось открыть доску'}</h1><p>{boardLinkError === 'invalid' ? 'Ссылка недействительна или доступ закрыт. Попросите администратора проверить вход в группу.' : 'Нет связи. Повторите вход по этой ссылке.'}</p>{boardLinkError === 'network' && <button onClick={() => setStartupRetry((value) => value + 1)}>Повторить</button>}<button className="secondary" onClick={() => { setBoardLinkError(undefined); setBoardOverrideId(undefined); }}>К моим задачам</button></section></main>;
+  const openChatBoard = async (opened: Board) => {
+    await loadBoards(); setChatFlow(''); setChatInvite(''); setShowBoardSheet(false); setBoardOverrideId(opened.id); setTaskReload(value => value + 1); navigate({screen: 'tasks'});
+  };
+  if (state === 'ready' && chatInvite) return <AppShell message={message} navigation={navigation} navigate={navigate}><ChatInvite token={chatInvite} onJoined={openChatBoard} onClose={() => setChatInvite('')}/></AppShell>;
+  if (state === 'ready' && chatFlow) return <AppShell message={message} navigation={navigation} navigate={navigate}><ChatBoards key={chatFlow} boardId={chatFlow} userId={userId} onOpen={openChatBoard} onClose={() => { setChatFlow(''); setTaskReload(value => value + 1); }}/></AppShell>;
+  if (state === 'ready' && boardLinkError) return <main><EnvironmentStatus/><section role="alert"><h1>{boardLinkError === 'invalid' ? 'Доска недоступна' : 'Не удалось открыть доску'}</h1><p>{boardLinkError === 'invalid' ? 'Ссылка недействительна или доступ закрыт. Попросите отправителя прислать отдельное приглашение. Если вы уже вступили, попросите владельца проверить ваш доступ.' : 'Не удалось проверить доступ. Повторите вход по этой ссылке или попросите отдельное приглашение.'}</p>{boardLinkError === 'network' && <button onClick={() => setStartupRetry((value) => value + 1)}>Повторить</button>}<button className="secondary" onClick={() => { setBoardLinkError(undefined); setBoardOverrideId(undefined); }}>К моим задачам</button></section></main>;
   if (state === 'ready' && entryPath) return <EntryGuide path={entryPath} onPath={setEntryPath} onClose={() => { setEntryPath(undefined); navigate({ screen: 'tasks' }); }}
     onPersonal={() => { const personal = boards.find((item) => item.type === 'personal'); if (personal) chooseTaskBoard(personal.id); setEntryPath(undefined); navigate({ screen: 'tasks' }); }}
     onPair={() => { setEntryPath(undefined); setPairFlow({}); }}/ >;
@@ -815,18 +915,25 @@ function App() {
     onChecklistDelete={(itemId) => collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/checklist/${itemId}`, { method: 'DELETE' })}
     onComment={(body) => collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/comments`, json('POST', { body }))}
     onUrlAttachment={(url) => collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/attachments`, json('POST', { kind: 'url', url }))}
-    onFileAttachment={(file) => { const data = new FormData(); data.append('file', file); return collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/attachments/file`, { method: 'POST', body: data }); }}
+    onFileAttachment={async (file) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30_000);
+      try { await collaborationAction(`/api/boards/${openTask.board_id}/tasks/${openTask.id}/attachments/file`, { ...imageUpload(file), signal: controller.signal }); }
+      catch (caught) { if (controller.signal.aborted) throw new Error('Загрузка заняла больше 30 секунд.'); throw caught; }
+      finally { clearTimeout(timer); }
+    }}
   />;
   const previewSchedule = async (schedule: Schedule) => {
     if (!board) return;
     const result = await api<{messages: string[]}>(`/api/boards/${board.id}/publications/${schedule.kind}/preview`, json('POST', schedule));
     setPreview(result.messages.join('\n\n———\n\n'));
   };
-  const publicationSettings = board?.type === 'chat' && board.status === 'active' && settingsLoadedFor === board.id && schedules.length ? <Disclosure label="Публикации в чат"><div className="publications">{schedules.map((schedule) =>
-    <PublicationSetting key={`${userId}:${board.id}:${schedule.kind}`} edits={settingsEdits} userId={userId} board={board} schedule={schedule}
+  const publicationSettings = board?.type === 'chat' && board.status === 'active' && settingsLoadedFor === board.id && schedules.length ? <Disclosure label="Публикации в чат" icon={<Icon name="send"/>}><div className="publications">{schedules.map((schedule) =>
+    <PublicationSetting key={`${userId}:${board.chat_root_id ?? board.id}:${schedule.kind}`} edits={settingsEdits} userId={userId} board={{...board, id: board.chat_root_id ?? board.id}} schedule={schedule}
+      boards={board.chat_root_id ? boards.filter(item => item.chat_root_id === board.chat_root_id) : undefined} readOnly={Boolean(board.chat_root_id) && !canManageChat}
       onConfirmed={(saved) => { if ('kind' in saved && activeBoardId.current === board.id) setSchedules((items) => items.map((item) => item.kind === saved.kind ? saved : item)); }}
       onPreview={(value) => void action(() => previewSchedule(value), 'Предпросмотр готов', false)}/>
-  )}{preview && <pre>{preview}</pre>}</div></Disclosure> : null;
+  )}{deliveries.map(delivery => <p role="alert" key={delivery.id}>Доставка за {delivery.local_date} не подтверждена. Подтверждено частей: {delivery.sent_parts}{delivery.total_parts !== null ? ` из ${delivery.total_parts}` : ''}. Проверьте сообщения в чате. Автоматического повтора не будет.</p>)}{preview && <pre>{preview}</pre>}</div></Disclosure> : null;
 
   const frequencyOptions = [{ value: 'daily', label: 'Ежедневно' }, { value: 'weekdays', label: 'По будням' }, { value: 'weekly', label: 'Еженедельно' }, { value: 'monthly', label: 'Ежемесячно' }];
   const projectOptions = [{ value: '', label: 'Без проекта' }, ...projects.filter((item) => !item.archived_at).map((item) => ({ value: item.id, label: item.name }))];
@@ -844,36 +951,35 @@ function App() {
     </button>)}</div>
     <div className="settings-footer"><img className="brand-wordmark" src="/brand/tasca-ru-green.svg" alt="Таска"/><p>Создано kAIros</p>Версия 0.1 · <button className="link" onClick={() => setEntryPath('help')}>Помощь</button></div>
   </SettingsScreen>;
-  const workspaceSettings = <SettingsScreen title={board?.name ?? 'Рабочее пространство'} subtitle={board ? 'Доска, проекты и участники' : 'Доски, проекты и участники'}>
-    <button className="back settings-back" onClick={() => navigate({ screen: 'settings' })}><Icon name="back"/>Настройки</button>
+  const workspaceSettings = <SettingsScreen title={board?.name ?? 'Рабочее пространство'} subtitle={board ? 'Доска, проекты и участники' : 'Доски, проекты и участники'} icon="workspace" onBack={() => navigate({ screen: 'settings' })}>
     {board?.type === 'pair' && <ActionRow label="Доступ" value={board.status === 'archived' ? 'Доска в архиве' : 'Доска на двоих'} onClick={() => setPairFlow({ board })}/>}
+    {board?.chat_root_id && <ActionRow label="Доски этого чата" value="Общие участники и направления" onClick={() => setChatFlow(board.chat_root_id!)}/>}
     {!board ? settingsBoardList('settings-workspace') : <fieldset className="settings-groups readonly-fields" disabled={board.status === 'archived' || board.status === 'frozen'}>
-      <section className="settings-group"><h2>Доска</h2>{(board.role === 'owner' || board.role === 'admin') ? <NameSetting key={`${userId}:${board.id}`} edits={settingsEdits} userId={userId} board={board}
+      <section className="settings-group" data-tone="board"><h2><Icon name="board"/>Доска</h2>{(board.role === 'owner' || board.role === 'admin') ? <NameSetting key={`${userId}:${board.id}`} edits={settingsEdits} userId={userId} board={board}
         onConfirmed={(saved) => { if ('id' in saved) setBoards((items) => items.map((item) => item.id === saved.id ? { ...item, ...saved } : item)); }}/> : <p>{board.name}</p>}<small>{board.type === 'chat' ? 'Права администратора Telegram проверяются при изменении чат-доски.' : board.type === 'pair' ? 'Приглашениями и архивом управляет владелец.' : 'Личное рабочее пространство.'}</small></section>
-      <section className="settings-group"><h2>Проекты</h2>{settingsLoadedFor === board.id && projects.filter((item) => !item.archived_at).map((item) => <NameSetting key={`${userId}:${board.id}:${item.id}`} edits={settingsEdits} userId={userId} board={board} project={item}
+      <section className="settings-group" data-tone="project"><h2><Icon name="project"/>Проекты</h2>{settingsLoadedFor === board.id && projects.filter((item) => !item.archived_at).map((item) => <NameSetting key={`${userId}:${board.id}:${item.id}`} edits={settingsEdits} userId={userId} board={board} project={item}
         onConfirmed={(saved) => { if ('id' in saved && activeBoardId.current === board.id) setProjects((items) => items.map((value) => value.id === saved.id ? saved : value)); }}><button className="secondary" type="button" onClick={() => void action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: true})), 'Проект архивирован')}>В архив</button></NameSetting>)}<form className="settings-form inline-form" onSubmit={(event) => void addProject(event)}><input aria-label="Название нового проекта" name="name" placeholder="Новый проект" maxLength={120} required/><button disabled={projectCreatePending}>{projectCreatePending ? 'Добавляем…' : 'Добавить'}</button></form></section>
-      <section className="settings-group"><h2>Участники</h2><div className="member-list">{members.map((member) => <div key={member.id}><Avatar initials={initials(member.first_name)} label={member.first_name}/><span><strong>{member.first_name}</strong><small>{member.username ? `@${member.username}` : 'Telegram'}</small></span></div>)}</div></section>
+      <section className="settings-group" data-tone="assignee"><h2><Icon name="assignee"/>Участники</h2><div className="member-list">{members.map((member) => <div key={member.id}><Avatar initials={initials(member.first_name)} label={member.first_name}/><span><strong>{member.first_name}</strong><small>{member.username ? `@${member.username}` : 'Telegram'}</small></span></div>)}</div></section>
     </fieldset>}
   </SettingsScreen>;
-  const automationSettings = <SettingsScreen title={board?.name ?? 'Автоматизация'} subtitle={board ? 'Повторения, публикации и уведомления' : 'Выберите доску для настройки'}>
-    <button className="back settings-back" onClick={() => navigate({ screen: 'settings' })}><Icon name="back"/>Настройки</button>
+  const automationSettings = <SettingsScreen title={board?.name ?? 'Автоматизация'} subtitle={board ? 'Повторения, публикации и уведомления' : 'Выберите доску для настройки'} icon="automation" onBack={() => navigate({ screen: 'settings' })}>
     {!board ? settingsBoardList('settings-automation') : <fieldset className="settings-groups readonly-fields" disabled={board.status !== 'active'}>
-      <section className="settings-group"><h2>Повторения</h2><form className="settings-form" onSubmit={(event) => void addRecurrence(event)}>
-        <label>Название задачи<input name="title" maxLength={200} required/></label><ChoiceAction label="Период" value={recurrenceFrequency} options={frequencyOptions} onChange={(value) => setRecurrenceFrequency(value as Recurrence['frequency'])}/>
-        {(recurrenceFrequency === 'weekdays' || recurrenceFrequency === 'weekly') && <label>Дни недели (0–6)<input name="weekdays" defaultValue={recurrenceFrequency === 'weekdays' ? '1,2,3,4,5' : String(new Date().getDay())} pattern="[0-6](,[0-6])*" required/></label>}{recurrenceFrequency === 'monthly' && <label>День месяца<input name="dayOfMonth" type="number" min="1" max="31" defaultValue={new Date().getDate()} required/></label>}
-        <label>Время<input name="localTime" type="time" defaultValue="09:00" required/></label><label>Часовой пояс<input name="timezone" defaultValue={Intl.DateTimeFormat().resolvedOptions().timeZone} required/></label><label>Дата начала<input name="startDate" type="date" defaultValue={new Date().toISOString().slice(0, 10)} required/></label><label>Дата окончания<input name="endDate" type="date"/></label>
-        <ChoiceAction label="Проект" name="projectId" value={recurrenceProjectId} options={projectOptions} onChange={setRecurrenceProjectId}/><ChoiceAction label="Исполнитель" name="assigneeUserId" value={recurrenceAssigneeId} options={assigneeOptions} onChange={setRecurrenceAssigneeId}/><PriorityField value={recurrenceAssessment} onChange={setRecurrenceAssessment}/><button>Добавить повтор</button>
+      <section className="settings-group"><h2><Icon name="automation"/>Повторения</h2><form className="settings-form" onSubmit={(event) => void addRecurrence(event)}>
+        <label>Название задачи<input name="title" maxLength={200} required/></label><ChoiceAction label="Период" value={recurrenceFrequency} options={frequencyOptions} icon={<Icon name="automation"/>} onChange={(value) => setRecurrenceFrequency(value as Recurrence['frequency'])}/>
+        <div className="settings-field-grid">{(recurrenceFrequency === 'weekdays' || recurrenceFrequency === 'weekly') && <label>Дни недели (0–6)<input name="weekdays" defaultValue={recurrenceFrequency === 'weekdays' ? '1,2,3,4,5' : String(new Date().getDay())} pattern="[0-6](,[0-6])*" required/></label>}{recurrenceFrequency === 'monthly' && <label>День месяца<input name="dayOfMonth" type="number" min="1" max="31" defaultValue={new Date().getDate()} required/></label>}
+        <label>Время<input name="localTime" type="time" defaultValue="09:00" required/></label></div><label>Часовой пояс<input name="timezone" defaultValue={Intl.DateTimeFormat().resolvedOptions().timeZone} required/></label><div className="settings-field-grid"><label>Дата начала<input name="startDate" type="date" defaultValue={new Date().toISOString().slice(0, 10)} required/></label><label>Дата окончания<input name="endDate" type="date"/></label></div>
+        <ChoiceAction label="Проект" name="projectId" value={recurrenceProjectId} options={projectOptions} icon={<Icon name="project"/>} onChange={setRecurrenceProjectId}/><ChoiceAction label="Исполнитель" name="assigneeUserId" value={recurrenceAssigneeId} options={assigneeOptions} icon={<Icon name="assignee"/>} onChange={setRecurrenceAssigneeId}/><PriorityField value={recurrenceAssessment} onChange={setRecurrenceAssessment}/><button>Добавить повтор</button>
       </form>{recurrences.filter((item) => !item.archived_at).map((item) => <div className="automation-row" key={item.id}><span><strong>{item.title}</strong><small>{item.frequency} · {item.local_time}</small></span><button className="secondary" onClick={() => void action(() => api(`/api/boards/${board.id}/recurrences/${item.id}`, json('PATCH', {paused: !item.paused_at})), item.paused_at ? 'Повтор включён' : 'Повтор приостановлен')}>{item.paused_at ? 'Включить' : 'Пауза'}</button></div>)}</section>
-      {publicationSettings}<section className="settings-group"><h2>Уведомления</h2><p>Уведомление исполнителю выбирается при назначении задачи. Новых глобальных типов уведомлений пока нет.</p></section>
+      {publicationSettings}<section className="settings-group"><h2><Icon name="alert"/>Уведомления</h2><p>Уведомление исполнителю выбирается при назначении задачи. Новых глобальных типов уведомлений пока нет.</p></section>
     </fieldset>}
   </SettingsScreen>;
-  const accountSettings = <SettingsScreen title="Аккаунт" subtitle="Профиль и личные параметры"><button className="back settings-back" onClick={() => navigate({ screen: 'settings' })}><Icon name="back"/>Настройки</button><div className="settings-groups"><section className="settings-group account-profile"><Avatar initials={initials(profileName)} label={profileName}/><span><strong>{profileName}</strong>{profileUsername && <small>{profileUsername}</small>}</span></section><section className="settings-group"><h2>Личные параметры</h2><div className="settings-form"><ChoiceAction label="Группировка задач" value={grouping} options={[{ value: 'deadline', label: 'По срокам' }, { value: 'project', label: 'По проектам' }]} onChange={(value) => setGrouping(value as typeof grouping)}/><ChoiceAction label="Обычная доска" value={globalBoardId} options={boardOptions} onChange={chooseTaskBoard}/>
+  const accountSettings = <SettingsScreen title="Аккаунт" subtitle="Профиль и личные параметры" icon="assignee" onBack={() => navigate({ screen: 'settings' })}><div className="settings-groups"><section className="settings-group account-profile"><Avatar initials={initials(profileName)} label={profileName}/><span><strong>{profileName}</strong>{profileUsername && <small>{profileUsername}</small>}</span></section><section className="settings-group"><h2><Icon name="sliders"/>Личные параметры</h2><div className="settings-form"><ChoiceAction label="Группировка задач" value={grouping} options={[{ value: 'deadline', label: 'По срокам' }, { value: 'project', label: 'По проектам' }]} icon={<Icon name="sliders"/>} onChange={(value) => setGrouping(value as typeof grouping)}/><ChoiceAction label="Обычная доска" value={globalBoardId} options={boardOptions} icon={<Icon name="board"/>} onChange={chooseTaskBoard}/>
     <label className="checkbox"><input type="checkbox" checked={hapticEnabled} onChange={(event) => {
       const enabled = event.target.checked;
       setHapticEnabled(enabled);
       setMessage(writeStorage('tasks.creationHaptic', enabled ? 'on' : 'off') ? '' : 'Настройка действует до закрытия приложения: не удалось сохранить на устройстве.');
     }}/>Виброотклик при создании задачи</label><small>Мягкий однократный отклик, если его поддерживает Telegram на устройстве.</small>
-  </div></section><ActionRow label="Подключения" value="Доступ к задачам из AI-клиентов" onClick={()=>navigate({screen:'settings-connections'})}/></div></SettingsScreen>;
+  </div></section><ActionRow label="Подключения" value="Доступ к задачам из AI-клиентов" icon={<Icon name="external"/>} onClick={()=>navigate({screen:'settings-connections'})}/></div></SettingsScreen>;
 
   if (state === 'outside') return <Landing/>;
   if (state === 'error') return <main><EnvironmentStatus/><section role="alert"><h1>Не удалось войти</h1><p>{message || 'Закройте приложение и откройте его снова через бота.'}</p></section></main>;
@@ -887,11 +993,15 @@ function App() {
   if (navigation.screen === 'tasks') return <AppShell message={message} announcement={createAnnouncement} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>
     {createdNotice}
     {board?.type === 'pair' && <><ActionRow label="Доступ" value={board.status === 'archived' ? 'Доска в архиве' : 'Доска на двоих'} onClick={() => setPairFlow({ board })}/>{board.status === 'archived' && <p className="notice">Доска в архиве. Задачи и история доступны только для чтения.</p>}</>}
+    {board && ['pair', 'chat'].includes(board.type) && ['active', 'archived'].includes(board.status) && <BoardEntryAction key={board.id} boardId={board.id}/>}
     {taskToolbar}{backlog && board ? backlogContent() : <>{taskLoadState === 'loading' ? <Skeleton label="Загрузка задач"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : taskView === 'kanban' ? mainKanban : groupedTaskList()}{taskLoadState === 'ready' && taskView === 'list' && !filteredTasks.length && (board?.status === 'active' && !tasks.length ? <section className="task-state"><h2>Начните с первой задачи.</h2><p>Добавьте задачу или вставьте список. Исполнителя можно выбрать позже.</p><button onClick={() => navigate({ screen: 'create' })}>Добавить задачу</button><button className="secondary" onClick={() => { setBulkDraft({ boardId: board.id, boardName: board.name, projects, project: '', text: '', started: false }); setBulkOpen(true); }}>Вставить список</button></section> : <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>)}</>}{boardOverrideId && <p className="context-note">Открыта доска по ссылке; ваш обычный выбор не изменён.</p>}{boardSheet}{filterSheet}{filterChoiceSheet}{kanbanStatusSheet}</TasksScreen></AppShell>;
-  if (navigation.screen === 'create') return <AppShell message={message} announcement={createAnnouncement} navigation={navigation} navigate={navigate} hideNavigation><CreateScreen boardName={boards.find((item) => item.id === createBoardId)?.name ?? 'Все доски'} onClose={() => navigate(createOrigin)} onSelectBoard={() => { if (!createLock.current && !createUncertain && !(createSuccess && !createSuccess.another)) setCreateChoice('board'); }}>
+  if (navigation.screen === 'create') return <AppShell message="" announcement={createAnnouncement} navigation={navigation} navigate={navigate} hideNavigation><CreateScreen boardName={boards.find((item) => item.id === createBoardId)?.name ?? 'Все доски'} onClose={() => navigate(createOrigin)} onSelectBoard={() => { if (!createLock.current && !createUncertain && !createSaved && !(createSuccess && !createSuccess.another)) setCreateChoice('board'); }}>
+    {message && <p className="app-message create-message" role="status">{message}</p>}
     {createdNotice}
-    <form onSubmit={(event) => { event.preventDefault(); void create(); }}><fieldset className="create-screen-form" disabled={createPending || createUncertain || Boolean(createSuccess && !createSuccess.another)}>
-      <div className="create-writing"><label className="create-title"><span>Что нужно сделать?</span><textarea autoFocus value={title} onChange={(event) => { setTitle(event.target.value); if (createSuccess?.another) setCreateSuccess(undefined); }} maxLength={200} rows={2} required placeholder="Название задачи"/></label><label className="create-description">Описание<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={2} placeholder="Детали, ссылки, ожидаемый результат"/></label></div>
+    <form onSubmit={(event) => { event.preventDefault(); void create(); }}><fieldset className="create-screen-form" disabled={createPending || createUncertain || Boolean(createSaved) || Boolean(createSuccess && !createSuccess.another)}>
+      <div className="create-writing"><label className="create-title"><span>Что нужно сделать?</span><textarea autoFocus value={title} onChange={(event) => { setTitle(event.target.value); if (createSuccess?.another) setCreateSuccess(undefined); }} maxLength={200} rows={2} required placeholder="Название задачи"/></label><label className="create-description">Описание<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={2} placeholder="Детали, ссылки, ожидаемый результат"/></label>
+        <CreateImages images={createImages} onAdd={addCreateImages} onRemove={(id) => setCreateImages((images) => images.filter((image) => image.id !== id))} locked={createPending || createUncertain || Boolean(createSaved)}/>
+      </div>
       <div className="create-fields">
         <ActionRow label="Проект" value={projects.find((item) => item.id === project)?.name ?? 'Без проекта'} icon={<Icon name="project"/>} disabled={!createBoardId} onClick={() => setCreateChoice('project')}/>
         <ActionRow label="Исполнитель" value={members.find((item) => item.id === assignee)?.first_name ?? 'Без ответственного'} icon={<Icon name="assignee"/>} disabled={!createBoardId} onClick={() => setCreateChoice('assignee')}/>
@@ -902,7 +1012,10 @@ function App() {
       </div>
       <Disclosure key={createReset} label="Дополнительно" icon={<Icon name="sliders"/>}><div className="create-additional-fields"><ActionRow label="Приоритет" value={assessmentText(assessmentDraft)} onClick={() => setCreateChoice('priority')}/><label className="checkbox"><input type="checkbox" checked={notifyAssignee} disabled={!assignee} onChange={(event) => setNotifyAssignee(event.target.checked)}/> Уведомить исполнителя</label></div></Disclosure>
       <p className="create-additional-hint">Приоритет и уведомление исполнителя</p>
-    </fieldset><div className="create-action"><CreateButton label="Создать задачу" pending={createPending && !createAnother} success={Boolean(createSuccess && !createSuccess.another)} disabled={createPending || !title.trim() || !createBoardId || Boolean(createSuccess && !createSuccess.another)}/><CreateButton label="Создать и добавить ещё" pending={createPending && createAnother} success={Boolean(createSuccess?.another)} type="button" className="secondary" disabled={createPending || !title.trim() || !createBoardId || Boolean(createSuccess && !createSuccess.another)} onClick={() => void create(true)}/></div></form>
+    </fieldset><div className={`create-action${createSaved ? ' create-recovery-action' : ''}`}>{createSaved ? <>
+      <button type="submit" disabled={createPending}>{createPending ? 'Сохраняем изображения…' : 'Дозагрузить изображения'}</button>
+      <button type="button" className="secondary" disabled={createPending} onClick={finishWithoutImages}>Оставить задачу без дозагрузки</button>
+    </> : <><CreateButton label="Создать задачу" pending={createPending && !createAnother} success={Boolean(createSuccess && !createSuccess.another)} disabled={createPending || !title.trim() || !createBoardId || Boolean(createSuccess && !createSuccess.another)}/><CreateButton label="Создать и добавить ещё" pending={createPending && createAnother} success={Boolean(createSuccess?.another)} type="button" className="secondary" disabled={createPending || !title.trim() || !createBoardId || Boolean(createSuccess && !createSuccess.another)} onClick={() => void create(true)}/></>}</div></form>
     {createChoiceSheet}
     {createBlockerOpen && <Sheet className="task-sheet create-blocker-sheet" title="Причина блокера" onClose={() => setCreateBlockerOpen(false)}>
       <p>{title}</p><div className="choice-list" role="radiogroup" aria-label="Тип блокера">

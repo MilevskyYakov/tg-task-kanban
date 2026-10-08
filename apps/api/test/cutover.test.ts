@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { createServer, request as httpRequest, type Server } from 'node:http';
 import { pathToFileURL } from 'node:url';
+import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -122,8 +123,15 @@ test('old version -> candidate on two origins -> old version retains new tasks, 
   }
 });
 
-test('new bot identity -> captured old runtime restores group entry without restoring the database', async (t) => {
-  const db = createDatabase(databaseUrl!);
+test('legacy group -> candidate migration preserves entry and data; old runtime is not an operational rollback', async (t) => {
+  const admin = createDatabase(databaseUrl!);
+  const target = new URL(databaseUrl!);
+  const name = `${target.pathname.slice(1)}_chat_${randomBytes(4).toString('hex')}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  target.pathname = `/${name}`;
+  const db = createDatabase(target.href);
+  const migrations = new URL('../migrations/', import.meta.url);
+  for (const file of (await readdir(migrations)).filter(file => file.endsWith('.sql') && file < '017_').sort()) await db.query(await readFile(new URL(file, migrations), 'utf8'));
   const stamp = randomBytes(6).readUIntBE(0, 6);
   const chatId = -stamp;
   const config: Config = { botToken: '100000000:synthetic-old-token', databaseUrl: databaseUrl!, sessionSecret: 'synthetic-identity-session', initDataMaxAgeSeconds: 60, sessionMaxAgeSeconds: 3600,
@@ -165,10 +173,13 @@ test('new bot identity -> captured old runtime restores group entry without rest
     assert.equal(opened.statusCode, 200);
     const boardId = opened.json().id;
     assert.equal((await old.inject({ method: 'POST', url: `/api/boards/${boardId}/activate`, cookies: oldCookie, payload: { name: 'Existing active group' } })).statusCode, 200);
-    const before = await createTask(db, userId, boardId, { title: 'Group task before switch' });
+    const beforeResponse = await old.inject({ method: 'POST', url: `/api/boards/${boardId}/tasks`, cookies: oldCookie, payload: { title: 'Group task before switch' } });
+    assert.equal(beforeResponse.statusCode, 200);
+    const before = beforeResponse.json();
     const memberships = (await db.query('SELECT * FROM memberships WHERE board_id=$1 ORDER BY user_id', [boardId])).rows;
     await old.close();
 
+    await db.query(await readFile(new URL('017_chat_directions.sql', migrations), 'utf8'));
     assert.equal((await authenticate(next, config.botToken)).statusCode, 401);
     const nextAuth = await authenticate(next, candidate.botToken);
     assert.equal(nextAuth.statusCode, 200); assert.equal(nextAuth.json().userId, userId);
@@ -184,11 +195,15 @@ test('new bot identity -> captured old runtime restores group entry without rest
     const launch = photoLink(1).searchParams.get('startapp');
     const newEntry = await next.inject({ method: 'POST', url: '/api/board-links/redeem', cookies: nextCookie, payload: { token: launch } });
     assert.equal(newEntry.statusCode, 200); assert.equal(newEntry.json().id, boardId); assert.equal(newEntry.json().status, 'active');
-    assert.equal((await next.inject({ method: 'POST', url: '/api/board-links/redeem', cookies: nextCookie, payload: { token: oldLaunch } })).statusCode, 404);
+    assert.equal((await next.inject({ method: 'POST', url: '/api/board-links/redeem', cookies: nextCookie, payload: { token: oldLaunch } })).statusCode, 200, 'legacy direct entry remains valid for members');
     const created = await next.inject({ method: 'POST', url: `/api/boards/${boardId}/tasks`, cookies: nextCookie, payload: { title: 'Group task after switch' } });
     assert.equal(created.statusCode, 200);
     const afterId = created.json().id;
     assert.ok(afterId);
+    const context = (await next.inject({ method: 'GET', url: `/api/boards/${boardId}/chat`, cookies: nextCookie })).json();
+    const direction = await next.inject({ method: 'POST', url: `/api/boards/${boardId}/chat/boards`, cookies: nextCookie,
+      payload: { name: 'New direction after cutover', requestId: randomUUID(), memberVersion: context.memberVersion, memberIds: [userId] } });
+    assert.equal(direction.statusCode, 200, direction.body);
     await next.close();
 
     assert.equal((await authenticate(rollback, candidate.botToken)).statusCode, 401);
@@ -197,24 +212,21 @@ test('new bot identity -> captured old runtime restores group entry without rest
     const restoredCookie = { session: restoredAuth.cookies[0].value };
     assert.equal((await webhook(rollback, candidate.webhookSecret, removed)).statusCode, 401);
     assert.equal((await webhook(rollback, config.webhookSecret, { update_id: 103 })).statusCode, 200);
-    // Recover through the existing admin invite API, not a re-send or SQL link reset.
-    const invite = await rollback.inject({ method: 'POST', url: `/api/boards/${boardId}/invites`, cookies: restoredCookie });
-    assert.equal(invite.statusCode, 200);
-    const recovery = new URL(invite.json().url);
-    assert.equal(recovery.pathname, '/old_test_bot');
-    const restoredEntry = await rollback.inject({ method: 'POST', url: '/api/board-links/redeem', cookies: restoredCookie, payload: { token: recovery.searchParams.get('startapp') } });
-    assert.equal(restoredEntry.statusCode, 200); assert.equal(restoredEntry.json().id, boardId); assert.equal(restoredEntry.json().status, 'active');
+    // Read compatibility is insufficient: old chat lifecycle SQL cannot operate with multiple directions.
+    const incompatible = await webhook(rollback, config.webhookSecret, joined(100000000, 104));
+    assert.equal(incompatible.statusCode, 500);
     for (const taskId of [before.id, afterId]) {
       assert.equal((await rollback.inject({ method: 'GET', url: `/api/boards/${boardId}/tasks/${taskId}`, cookies: restoredCookie })).statusCode, 200);
     }
     assert.equal((await db.query('SELECT count(*)::int AS count FROM tasks WHERE board_id=$1', [boardId])).rows[0].count, 2);
     assert.deepEqual((await db.query('SELECT * FROM memberships WHERE board_id=$1 ORDER BY user_id', [boardId])).rows, memberships);
-    assert.equal(photos.length, 2, 'rollback must not re-send the historical welcome');
+    assert.equal((await db.query('SELECT count(*) FROM boards WHERE chat_root_id=$1', [boardId])).rows[0].count, '2');
+    assert.equal(photos.length, 2, 'creating directions and an incompatible rollback do not resend welcomes');
     const outsider = await login(db, { id: stamp + 1, first_name: 'Synthetic outsider' }, 3600, config.sessionSecret);
     assert.equal((await rollback.inject({ method: 'GET', url: `/api/boards/${boardId}`, cookies: { session: outsider.token } })).statusCode, 404);
     assert.equal((await rollback.inject({ method: 'POST', url: `/api/boards/${boardId}/invites`, cookies: { session: outsider.token } })).statusCode, 404);
   } finally {
     await old.close(); await next.close(); await rollback.close();
-    await db.end();
+    await db.end(); await admin.end();
   }
 });

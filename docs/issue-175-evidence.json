@@ -1,0 +1,704 @@
+{
+  "issue": 175,
+  "generated_utc": "2026-10-08T07:09:39.935114+00:00",
+  "branch": "MilevskyYakov/production-2",
+  "base": "3a358f45603db6519e834cbd55d0e7cc89722ed8",
+  "tested_tree": "c86b2ed02ddce31edc20d5853ee12db964b244f1",
+  "tested_inputs_sha256": "6380abfeeb07ab0386693a7ba0c7295b36d3c88f0cbe5c67d69929aff0051602",
+  "runtime_and_tests_sha256": "3bd7cf2884d7a3c352ecc275c5b8e2b46ef92b2d9e5b26327edd61a6e2bedaa9",
+  "source_files": {
+    "Dockerfile": "1893579c446da4cad5dc7945445bf80b4e12f93be4b3b043b1b9428ef2d18805",
+    "apps/api/migrations/001_initial.sql": "c439ba8e50eabf600df7f21cead28aaed9d42d44f7c694bf95d2b9cc0245357c",
+    "apps/api/migrations/002_chat_boards.sql": "44df97ea2d1573f325245f62d0a76c4f42eac8e53755d5ae460b2eb7e94fcb10",
+    "apps/api/migrations/003_projects_tasks.sql": "5fdbe3e2eccea44abdf30321b5f96e96da694064db9a8df1cc30d37fbff0bd7f",
+    "apps/api/migrations/004_task_collaboration.sql": "95ebd3e67a8a69cf091a5425ad73d69aa8681490f7a62044f532a1bcd5f4f4be",
+    "apps/api/migrations/004_task_filter_states.sql": "62b2f88723d5cfedc44cc4cb82e0b64c2bb45db0732d855f4fbadc187f292ab6",
+    "apps/api/migrations/005_publications.sql": "e98b8cb60fc94616bea92865c673d5dc586532a3ed9d86c2d678f4545702b01f",
+    "apps/api/migrations/005_recurrence.sql": "836e797a0160da89f178ef1bbc34102130bb50ea60981e1543f7cc4495290b2d",
+    "apps/api/migrations/006_publication_delivery.sql": "90409b8d55f49a20da8e16ac3b7356b9de542e679d5b25d657cf359eaba0b856",
+    "apps/api/migrations/007_task_blockers.sql": "49ac677bd5eb3f461f72f5dd93310cbcec91f753993407ba3ae117c1340147c1",
+    "apps/api/migrations/008_project_name_uniqueness.sql": "fc88663a0fb0cf41a17969e7b7aae747301ce38e9db7964a7bd852a098f077a7",
+    "apps/api/migrations/009_task_deadlines.sql": "5901cf4553fafe51d85794a9195ca1d5040da9307b092636cd9cf5d724fe4494",
+    "apps/api/migrations/010_pair_boards.sql": "bfb6f07316d4d7c86d84b3d6bf110c9a641f598f4c4601b80c760f27d4c51f50",
+    "apps/api/migrations/011_bot_entry.sql": "472d3acaf43f8802709a59a811cc2b55ae40b85c3edc2b8c86f6590ee6fe5b58",
+    "apps/api/migrations/012_mcp.sql": "048177151fbeedc19e603117d02106fb5b794b756c3a8ff1ea7bc40f49ab456f",
+    "apps/api/migrations/013_mcp_receipt_subject.sql": "4587593bc128f2801221f861ecf7833bda7a86b6bea5fc17d9f32d7ba6c2682f",
+    "apps/api/migrations/014_task_image_attachments.sql": "7496d53acbea4a71abbbd1b29074021bb2088caf5b06295735337944288db3c9",
+    "apps/api/migrations/015_task_issue_link.sql": "481b27c5eb3a2bf5e93a5785c9cf80b28a787d905528409e2c70f499165553c9",
+    "apps/api/migrations/016_mcp_lifecycle.sql": "898107b392f77b1485e1dc1311a370f2bceda889a7477143613f26c909317b12",
+    "apps/api/migrations/016_task_assessment.sql": "34d6aee295070db06ec2fc7bd38c6ba56b528100c05672618962af481fe2a74b",
+    "apps/api/migrations/017_chat_directions.sql": "bc77a023d8d4c2482da3721218a9dfc4cce2e5b85d1f529e0ab0a3a5b936d746",
+    "apps/api/package.json": "445bd4c16a53b679e33a7904234a39614bbf4edf50eb16aab697426284b01884",
+    "apps/api/src/app.ts": "222c2e8dead9e4ace133e80ef21555cee4b6a7c7cf95bdbd0153fc6f28ef51e5",
+    "apps/api/src/assessment.ts": "f92989636af16a620f16b616a4c09b2b9c0d8eb6cd489213b028404bde2643bb",
+    "apps/api/src/auth.ts": "d06db77d47b6218eca66ae7a82fda6cd4644316e7845badfd0d749cc79e82c71",
+    "apps/api/src/bot-entry.ts": "34eadabb7b2e9e0dd94a580872528bab8a18411a0cf12f5ff8600a741ce6e57e",
+    "apps/api/src/bot-tutorial.ts": "c8b15d1d5b8a35267661243e4b41af1623ee1114ae6b4349184ef002cb744c75",
+    "apps/api/src/chat-boards.ts": "086023c7a9a3278546ae324917e3de75b455823e9f3bfee444a581886ae338b9",
+    "apps/api/src/config.ts": "90023411ccd3f5754d781058c83d3e667036dc7ba4739c03e47bd6ebdf445faa",
+    "apps/api/src/db.ts": "a632968860cff76da15be1c4f471bb9506343ad4b93da0a4f679ac0e74c9bb21",
+    "apps/api/src/mcp.ts": "e7344d508fbfa46f1dfb14fabf3fdd4af46cacdf9fc2ae2e6470d9a75ab11933",
+    "apps/api/src/migrate.ts": "32d21d4236531e995c7790403b1981e57f10ac1a77c3aa08a0c13ae7e43b8aa1",
+    "apps/api/src/pair-boards.ts": "179780b6527a2b5e375c734342f835eaee67cf8f21add1e0998b235f60fba8d5",
+    "apps/api/src/publications.ts": "1fae5b898c10a97709392e342a1c1d2c25f1e94858e7be8d247629854be95fe8",
+    "apps/api/src/recurrence-input.ts": "7568b7f187c7d09d8ed9828e11bfbe13b4e04e9a225218656eb0536565389f3a",
+    "apps/api/src/recurrence.ts": "c4962e1eaa28e628e24ecc6c307855893e1f6b4d4963db146dad6ca559086459",
+    "apps/api/src/server.ts": "5ceb40fc8a0942cab6ed2727e994a252d9637c5afaa4ec47ba556b3a5bdeba8e",
+    "apps/api/src/task-input.ts": "acb4399fcda18c1e0855d719f889cde1f9aabc33d7f526604bebb48345174c13",
+    "apps/api/src/telegram.ts": "3aaff2e3e7ad5e23ee8bb7fc5d5ecc5ce8e678ba76ff109c95bb3cf855a3a46c",
+    "apps/api/test/assessment.test.ts": "3470d3f09283988d13c83b08cf9e6c5505373d918acd76282f87d254cc11092e",
+    "apps/api/test/auth.test.ts": "97006e0f04ff8d5c43239ca1a2f564ee922ce4d03551a68883eb63065ebe6cb3",
+    "apps/api/test/board-entry.test.ts": "c2d4ca0ea0f272ab36cd1a3a794d9dd2292caa7a6f3be7d09cc9c0ff3379d884",
+    "apps/api/test/bot-tutorial.test.ts": "bdfc2477205de7267dc5c376ccf00174e7a0e4bddb902faefee7e356c845842e",
+    "apps/api/test/chat-board.test.ts": "93abc5747cbfa624d413a3c83def76b7a0df89b4ca85ab1926463253f2a97f8a",
+    "apps/api/test/chat-directions.test.ts": "1336e4bb80b8a93e756be61deb6cdc163366723739ce2fa3d7a521a54b8432cb",
+    "apps/api/test/chat-migration.test.ts": "80a8721f9744e91b7505d4c8aa49cd349ee73e027f5c84c4bb6c26dfbcc34ccc",
+    "apps/api/test/config.test.ts": "854eb96dffc25ddd46418c43c03630158b1a255feab6b963c18cdccc844ec498",
+    "apps/api/test/cutover.test.ts": "f942d29a0624104cc662952080d88c28246f8c1a88d30908e8f69bf3e636053d",
+    "apps/api/test/isolation.test.ts": "967aef8db600a2d91f0d5b36e0781978e0a21be1ecf97c59b56cef80a747f2af",
+    "apps/api/test/issue-url.test.ts": "ba7c1b61ab64da2a243bfce242b1cbe2b3dc13bcbb9b6dc0d6fe1b3e7e9173cf",
+    "apps/api/test/mcp-lifecycle.test.ts": "60c8f8a8fe60dad287b3292ca660a32cb5042582813d8899c48ab782ed738d0f",
+    "apps/api/test/mcp-migration.ts": "93d00127182c468c70d97dee855b0d59c0853b8c99bc3e4ee724e3546f96a476",
+    "apps/api/test/mcp.test.ts": "6c1dc8616e5a6948483e2f9bdf9e62fdd32173562b6cf27224c5ece3cd6b8b72",
+    "apps/api/test/pair-board.test.ts": "bd0bd7322a734362367d01ce6231b38843e7f1ee8834ae17310414305d5e572f",
+    "apps/api/test/project-archive.test.ts": "e6f8cea1b1dedfd72f141ab2467221667b5f830602856816f641b78a33f34fff",
+    "apps/api/test/public-entry.test.ts": "b3232fbe7ecbd6d4b11d4fbecdb0b929cf73628f134bcb632b9043ae4f84583e",
+    "apps/api/test/publication-scheduler.test.ts": "862a61c1aa9c17cac3a952572705904b0fd1e1bbeaab99c132d891f3ac2690d7",
+    "apps/api/test/publications.test.ts": "3540e2ad3df3088195759c024b34ae23bc0a91ad05ebe90f654d0603b5cc638b",
+    "apps/api/test/recurrence-db.test.ts": "af8c5c943ca26ff6e1c2a2ed716c45ed25a11f353a4d2af5c62361a93ed866e7",
+    "apps/api/test/recurrence.test.ts": "92ae61e3aca52ad195c02f703a4d237bb3e8364179d1292e9dae5bac0d6e3069",
+    "apps/api/test/settings.test.ts": "af041d9d0747983d1f81bf022e591905769260ac11ae0f9526493063f202fcf1",
+    "apps/api/test/task-backlog.test.ts": "e7b5b7640066839dc65caf43c353cad58cda487c46916c614cfd6d984cbd8724",
+    "apps/api/test/task-blockers.test.ts": "42944f9070cb8fe6933cd41823c3f66fe7672f14251d667c0c4270f70ea5905d",
+    "apps/api/test/task-collaboration.test.ts": "9dad589d8efe3619b2c34a14e8b3fb49c8518d9de111a0461788ed1c0456325d",
+    "apps/api/test/task-deadlines.test.ts": "c20a4f7dd12cd344953af2a981da7b3010492b627f5ae0823a1e3236c786eba6",
+    "apps/api/test/task-lifecycle.test.ts": "f6d3501b9a1c2f102e3eb88b94758247de7ac2e58cbef53e2e96b8763e25f18d",
+    "apps/api/tsconfig.json": "08942351b24e046bf70d4075c4599242c10b0139de595bbb66031d4c25dbfc18",
+    "apps/web/index.html": "ac397ca5ea17132991c62290c6fb64e5610954df79ab98b2c954cf33a10c575a",
+    "apps/web/package.json": "929f261126bd05c5f8bff5b6f410a2ca75750bf1ddb74ebf55e885ffc6cb8f70",
+    "apps/web/playwright.config.ts": "a847f8f8456cef01291d136bdafaa39fc0ee96851895b0c0926530498aff1b03",
+    "apps/web/playwright.perf.config.ts": "e1a769ce919996e7ca335c9727b910f63243f740f50342d631f176da110e5b0b",
+    "apps/web/public/brand/app-preview.webp": "7cbfb201be3c8c715ab96200dc8ca9bb751ddd2dddbcfeea4b9cd2d444f43dc6",
+    "apps/web/public/brand/favicon.png": "7684e2267b4c0cbfa1b473f7d354385c5b88868fdee7564f1bf6da6a92a335ea",
+    "apps/web/public/brand/landing-card-personal.png": "a2a1d3ec710ab40543636815003637c8d7e25db2462ac63f681b88caf0d82d73",
+    "apps/web/public/brand/landing-card-project.png": "4514bfa1453b359ffd6e9d9a847c06789ccc5cb30735e261aec51550fdce8f71",
+    "apps/web/public/brand/landing-card-shared.png": "190f26a00b884e503908f28980effb21856f797e44b30f3897686e40d7b455e1",
+    "apps/web/public/brand/landing-screen.png": "4df84824a1329cd39fe21052153bfb102676646ed681ad50d3412a24ad1ba026",
+    "apps/web/public/brand/social-preview.png": "cc9c063ba9ec9a14bdd525edfaa6b19c0b35dfedce60722e9e83c316d7ff1b2f",
+    "apps/web/public/brand/tasca-ru-green.svg": "e9251116d18e8062a77b88e69f9174aab4d157cca3193f5e1c2bc000e50e7db3",
+    "apps/web/public/fonts/OFL-IBMPlexMono.txt": "7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da",
+    "apps/web/public/fonts/OFL-Inter.txt": "5b9321a4298cfeb6b34354164a1c3afc3db114569984c502b9b35d988fd58c57",
+    "apps/web/public/fonts/OFL-Manrope.txt": "d6a309fcfb963d329a93baf9df66fa5f3c23a4be2b5f67edf24d6cafecde12ac",
+    "apps/web/public/fonts/OFL-Newsreader.txt": "fdfad38143ec470553cae82a1e45320bdd1b9ec70415d37bd0171051d8a4ded8",
+    "apps/web/public/fonts/README.md": "708dcaa94a09f94393ac56e8618d6f1eda812a71a34c3bc586d032d90717ad99",
+    "apps/web/public/fonts/ibm-plex-mono-cyrillic-500.woff2": "1d89462e86cb8e87e7e9d6f6635605bd7c3081baca6caaecee84916bf7b60edc",
+    "apps/web/public/fonts/ibm-plex-mono-cyrillic-700.woff2": "104701bedfa06b56abba3e273f3ed74d7235d02c00ddc6ca942d65e2940fe6fe",
+    "apps/web/public/fonts/ibm-plex-mono-latin-500.woff2": "01d285447409c8a588692162439a038b8cbd7871309ee20267b0d2d91c6e8e22",
+    "apps/web/public/fonts/ibm-plex-mono-latin-700.woff2": "4f84d86cfd060f4ded334358ff8a4c81d4db2ed5addd568359d693f44a87765a",
+    "apps/web/public/fonts/inter-cyrillic.woff2": "71d5ee93cc1e9f1d520a3a8b66456de18c7879d8df09d57fcd2eaff75fef0075",
+    "apps/web/public/fonts/inter-latin.woff2": "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62",
+    "apps/web/public/fonts/manrope-variable.ttf": "3ae11c49db0455a3cc33e37d380f20fdb8c7f8b41dc07625c177e3d87a9d6ae6",
+    "apps/web/public/fonts/newsreader-latin.woff2": "62981321d9a3cc7a61a73792729043703fd6112da86e8ec848bb57f088578757",
+    "apps/web/src/api.ts": "b515b4a5e2c12a1871d3f297536fa90c5a4a5561256007bf4adcfbae97f47c00",
+    "apps/web/src/app-shell.tsx": "64d562e2d63c75d19a95ab5dec5d464638755cc34df49d083ba1b171eed9f621",
+    "apps/web/src/autosave.ts": "429e09b9e643c5dafef29a77e7d683793529f348eba64d435ecdc6114e99ea4b",
+    "apps/web/src/bot-entry.tsx": "99f0fd6b1e1282d05a1313f24eb3c28f24549dd8793459fb3ecdef8030267885",
+    "apps/web/src/bulk-create.tsx": "2fb3956f1d6c84119ffad02d2b53339b66153c9c5dc7d3167ccf628bc35aacaa",
+    "apps/web/src/chat-boards.tsx": "9923ce6aedfd2d690b3f172630e15f95590aedcbddd0508249e45136f9dff8d8",
+    "apps/web/src/claim-task.tsx": "7adb3572ba34f710de7eb47c71119894d5af10892644ca7299f2e8e9f33906d2",
+    "apps/web/src/create-feedback.tsx": "b1310e7aa62df7148e537a18918d6b898a27674e090154477e8d60db7b5bf300",
+    "apps/web/src/create-images.tsx": "34d570b6a0947a85ed60ee81eeff45451768c20301e9f586aa903ed9a6423873",
+    "apps/web/src/deadline-field.tsx": "2dd8066cb9ee3d007e6ce56ba3e665097c4f6406972b3329ec052654bc64593e",
+    "apps/web/src/domain.ts": "46d2325629eb6302eec3b6bfd71f856c0f4dd7d6fd24fac26927f1c43c174477",
+    "apps/web/src/environment.ts": "6f9aee8b305b10a4c3a0034f23f8943fab3a89f83802149485a4b83535589171",
+    "apps/web/src/landing.css": "20e1c6352047fe7b5289bd18d89ca86f094bd3b5526f724cb282baa89de47810",
+    "apps/web/src/landing.tsx": "dbce89c2b92f195bea1f69e4a2c188b73a982c2fee4ed977d30cab6247a459fa",
+    "apps/web/src/main.tsx": "467d97806e6a3ee72c13a04225d2b18ce159b3c283be6cdc54acd24efb22398f",
+    "apps/web/src/mcp-connections.css": "287679b04ab880bb1ae836a06b3ad891d62bc981ca52ec42911c418cf14f2b21",
+    "apps/web/src/mcp-connections.tsx": "e892867ef95ec4083e027bc78a69f59d47e6cf4f2b614f020568280c7e33be65",
+    "apps/web/src/navigation.ts": "bf550c7cc6bb75981e31607fd19831dac33a7bb44a24bc88fb5c25617cb06502",
+    "apps/web/src/pair-board.tsx": "9edd0d32256ffd28f9b381cdffff3683a916bd0e08621c3ff9278fd2709ec056",
+    "apps/web/src/settings-editor.tsx": "eb335201f8ebd0370548a5d02e089c5d486edaf0c2b4a895e389b3ca16717dfa",
+    "apps/web/src/settings.css": "9320869ab720f0563a0924af43b849d693ea3d1079ff5eddb2f1b91f97007529",
+    "apps/web/src/style.css": "08f503c70018ba8eed744e97f3ce3aeb1ad3e044c124ac549a7b7f7c9492d0a5",
+    "apps/web/src/task-details.tsx": "b62d9f44130fc7831ce0c120af806bfd528150eedb6a0092e692fe528887c51a",
+    "apps/web/src/task-filters.css": "eb9b50e811bfd990dac180e5a6446154cbecc8129aaa7592abc0a3f475cb613b",
+    "apps/web/src/task-filters.tsx": "01dd75629487dbaae9d3d9c8ce282fd8bb82f1fc3f2e737cb373904717268a71",
+    "apps/web/src/task-kanban.tsx": "3af4d1ae72d5f75c93f17643bc217157bdd5bf8e86dd6f19b1550859a03b3c13",
+    "apps/web/src/task-priority.css": "9adb25f93b667ba1ab8879a5d6e51398cfec379de4356ff6e413c60c3418f7ec",
+    "apps/web/src/task-priority.tsx": "181bd643c8e450a5b0bdb0ebc9ccf1d0f47076efe8ff52b7b05cf153860f50c4",
+    "apps/web/src/tasks.ts": "46e591a3f732e061f7d374130b416d780783bc3f23f35867e61ec2e7e5207311",
+    "apps/web/src/visual-fixture.tsx": "b500b287974a8851cc2a6af90de1dd9d25ace5447f58e3302531d85f7e3ff94b",
+    "apps/web/test/tasks.test.ts": "2bff1d62d2b8a739cb9c47042a051329bc0c0be683503f1c323a71cadd939834",
+    "apps/web/tsconfig.json": "922d586e2b0ad7e0ce15894865c859c13bcfe17583c2447febe8f908d04bcee9",
+    "apps/web/visual/README.md": "31b07d7dd50e491a0af27b932d600ceac896e125591e0da76e1580b733652551",
+    "apps/web/visual/backlog.spec.ts": "4798019d4921a27a25d1a959489b2f51010eed7cf411f63c31a245a64b546fd4",
+    "apps/web/visual/board-entry.spec.ts": "8bd2a1ceda21f1542e125c84d1252f772613fe5fc099214a169b325f88d1ad28",
+    "apps/web/visual/branding.spec.ts": "a5c2e190badb968f37274e566ec810d1f183f3cc1829590251c96d210b031314",
+    "apps/web/visual/chat-directions.spec.ts": "0bb5145ff9347de9ea1cdafe481f4e4a6b17388597afe0a3b4ef3b0c875009aa",
+    "apps/web/visual/completion.spec.ts": "943753c7fe0bebd35b4c8ca30c002bf63a3443e40f7977e81ad59bc5d9d7cc19",
+    "apps/web/visual/conflicts.spec.ts": "dacdfebefbb9b087d0c428126502a70d649cdd9e2ae31a996fd11e21516cc4d7",
+    "apps/web/visual/create-images.spec.ts": "4a9616a79ac2939e4fddaf2706574211e0fd24713f70ddab04334e8be630f02c",
+    "apps/web/visual/create.spec.ts": "8b696a5051970d03a3a7a156b45d6fc6a1f5a65c819c8a128ae58f295e9b1f45",
+    "apps/web/visual/details.spec.ts": "1f608a5c0d8bdb2c52996058dcb58aea86f34c70cc9284c95195ee4ff5fdcae4",
+    "apps/web/visual/entry.spec.ts": "3eec3435a82618e4dfab4bdbc7b14b267781766e6796f1ee7558bd0e7f9aa133",
+    "apps/web/visual/filters.spec.ts": "c53f7f2dac78be21b3c09aa7b23e882cb80744108376f5afaf06f75d60ad55a5",
+    "apps/web/visual/foundation.spec.ts": "ad554bd3e5dfad932fec19e6ee018e1210c9ad5af9a20121b78baef341f10e11",
+    "apps/web/visual/future.spec.ts": "0dd9def3b6d551754356ce46d3c3dad458eaa2877e4f610ae7dd345fca277e95",
+    "apps/web/visual/input-perf.spec.ts": "de64641697641dbe474deaec5b0f2486a330d58c5802f0ec1c81232c4b209e18",
+    "apps/web/visual/input-regression.spec.ts": "dd3a0cac53023f804394712257204f3c333e6f11b00ea61108799a41452d18c0",
+    "apps/web/visual/kanban.spec.ts": "8764e13a876e330f9a83709980ee1c5da77dc6289ddfcedc588a191695219e68",
+    "apps/web/visual/keyboard-fixture.ts": "bec97fa746de822871a67abbcb9d8721845d1282cb364cc44d1fd5396f057cb9",
+    "apps/web/visual/landing.spec.ts": "0920aefd6a3971e337dbfdcf7bda898c83a5ec916168f6de6dac13d1ae67dde8",
+    "apps/web/visual/mcp.spec.ts": "f64726c1ff2bc09c0680947c2b85fb0f6863c0f4fb2c2f407b2b0e2f5b9fa6b8",
+    "apps/web/visual/pair.spec.ts": "2a7fe0c35cad34cf0f66b8550c0abbfbe6288727d0c3348bdc6b09a78c07bffc",
+    "apps/web/visual/priority.spec.ts": "8797e73e43878a46d64e7a05dbc41546df6c382335092c50a74fbc4ecbb99529",
+    "apps/web/visual/project-archive.spec.ts": "65dbd0be054f10696241feca2d9b7478195cf7f90fc19d42a6fb4d1eea7fefe2",
+    "apps/web/visual/publications.spec.ts": "215dfe9d4dbfeba6f9d719a559d20556b8613768ee74544142ec96492484c0b7",
+    "apps/web/visual/scroll-restore.spec.ts": "61b28bd49ae530156a83733e14877b548d668fd0e09cfd331214b0241a8353d8",
+    "apps/web/visual/settings-autosave.spec.ts": "83ecc0162e055611db13ddae4a3a38db4653dabf97f9328285300cd8d7edada6",
+    "apps/web/visual/settings-layout.ts": "a579e294a9d34b5ba9d5cef1664fa35f9b75668dcebcc4a04d2f3c9abd2df958",
+    "apps/web/visual/settings.spec.ts": "48525cf1ba204e48fe950fffe73c66c1c7a35fce6890050573ed8eddeb302b42",
+    "apps/web/visual/tasks.spec.ts": "f135c8141aa94895607b5297b5c554c8dc394a53c025527e8c8accca9fe5ec79",
+    "package-lock.json": "6d2bf5684eff03335e35dbe77f5b43523ceec49b9fa9c96db6627dcbff6c9d55",
+    "package.json": "47f0c0eef2c56e988dec6e0deac5bc3ed7bc6d371409a004895288a408f84eb8"
+  },
+  "state": "local integrated candidate; not committed, published, main-merged, device-tested or deployed",
+  "checks": [
+    {
+      "name": "mcp-empty-database",
+      "command": [
+        "createdb",
+        "--host=127.0.0.1",
+        "--port=5432",
+        "--no-password",
+        "--template=template0",
+        "--encoding=UTF8",
+        "--locale=en_US.UTF-8",
+        "tasca_issue175_mcp_gate_2"
+      ],
+      "environment_override": {},
+      "exit_code": 0,
+      "log": "artifacts/visual-evidence/issue-175/gate-2/mcp-empty-database.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "mcp-legacy-migration",
+      "command": [
+        "node_modules/.bin/tsx",
+        "apps/api/test/mcp-migration.ts"
+      ],
+      "environment_override": {
+        "MCP_MIGRATION_DATABASE_URL": "postgresql://127.0.0.1:5432/tasca_issue175_mcp_gate_2"
+      },
+      "exit_code": 0,
+      "log": "artifacts/visual-evidence/issue-175/gate-2/mcp-legacy-migration.log",
+      "sha256": "0e18e0eef80b7cf12f8db0d53229ed21f9ef3c7ac7185e068701cf89ebfcc6fa"
+    },
+    {
+      "name": "cross-api",
+      "command": [
+        "node_modules/.bin/tsx",
+        "--test",
+        "--test-name-pattern=release integration",
+        "apps/api/test/chat-directions.test.ts"
+      ],
+      "environment_override": {},
+      "exit_code": 0,
+      "log": "artifacts/visual-evidence/issue-175/gate-2/cross-api.log",
+      "sha256": "0b7c586efe240f790d8979e2b2afe17375b596206b8830adf2b8d7bc56b2a2ff"
+    },
+    {
+      "name": "test",
+      "command": [
+        "npm",
+        "run",
+        "test"
+      ],
+      "environment_override": {},
+      "exit_code": 0,
+      "log": "artifacts/visual-evidence/issue-175/gate-2/test.log",
+      "sha256": "033361cb0faab8dfafbe01aa27c998749a961665e65e22284ccfabee84ff6c33"
+    },
+    {
+      "name": "lint",
+      "command": [
+        "npm",
+        "run",
+        "lint"
+      ],
+      "environment_override": {},
+      "exit_code": 0,
+      "log": "artifacts/visual-evidence/issue-175/gate-2/lint.log",
+      "sha256": "f27c57d111ab615aefb7b53e78a6b4d58087630d3a0142331957e136bcfb25ff"
+    },
+    {
+      "name": "typecheck",
+      "command": [
+        "npm",
+        "run",
+        "typecheck"
+      ],
+      "environment_override": {},
+      "exit_code": 0,
+      "log": "artifacts/visual-evidence/issue-175/gate-2/typecheck.log",
+      "sha256": "335bd39015b554dbf591809dad6e83edbc369c6c4fc63dd0169349145cc5543b"
+    },
+    {
+      "name": "build",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "environment_override": {},
+      "exit_code": 0,
+      "log": "artifacts/visual-evidence/issue-175/gate-2/build.log",
+      "sha256": "51925f70f8abb9021ec6c8b61100eb2da70fac637e639d8d55c5c6c4a9f6e516"
+    },
+    {
+      "name": "public-entry",
+      "command": [
+        "npm",
+        "run",
+        "test:public-entry"
+      ],
+      "environment_override": {},
+      "exit_code": 0,
+      "log": "artifacts/visual-evidence/issue-175/gate-2/public-entry.log",
+      "sha256": "5cb770965521d12370ea8aab55dac677c6370bfc13690fe32c3f3eccb36561c3"
+    },
+    {
+      "name": "migrate-rehearsal",
+      "command": [
+        "npm",
+        "run",
+        "migrate"
+      ],
+      "environment_override": {
+        "DATABASE_URL": "postgresql://127.0.0.1:5432/tasca_rehearsal_issue175"
+      },
+      "exit_code": 0,
+      "log": "artifacts/visual-evidence/issue-175/gate-2/migrate-rehearsal.log",
+      "sha256": "2f8693cd8a0c020fc6e3d0ef59a7e63a93261424b051c94133ce9fd9f5497ef8"
+    },
+    {
+      "name": "cutover",
+      "command": [
+        "npm",
+        "run",
+        "test:cutover"
+      ],
+      "environment_override": {
+        "TEST_DATABASE_URL": "postgresql://127.0.0.1:5432/tasca_rehearsal_issue175",
+        "ROLLBACK_APP_MODULE": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/production-2/artifacts/visual-evidence/issue-175/main-baseline/apps/api/dist/app.js"
+      },
+      "exit_code": 0,
+      "log": "artifacts/visual-evidence/issue-175/gate-2/cutover.log",
+      "sha256": "d08382f6879687a87885e222e9e497fac19da537808124e981ef231f85d20b5c"
+    },
+    {
+      "name": "visual",
+      "command": [
+        "npm",
+        "run",
+        "test:visual",
+        "--",
+        "--",
+        "--output",
+        "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/production-2/artifacts/visual-evidence/issue-175/gate-2/test-results"
+      ],
+      "environment_override": {},
+      "exit_code": 0,
+      "log": "artifacts/visual-evidence/issue-175/gate-2/visual.log",
+      "sha256": "a1def3bac051c2016acaae65822b78950f391d51a07796aae585764c5f6c1072"
+    },
+    {
+      "name": "diff-check",
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "environment_override": {},
+      "exit_code": 0,
+      "log": "artifacts/visual-evidence/issue-175/gate-2/diff-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "index-check",
+      "command": [
+        "git",
+        "diff",
+        "--cached",
+        "--check"
+      ],
+      "environment_override": {},
+      "exit_code": 0,
+      "log": "artifacts/visual-evidence/issue-175/gate-2/index-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "unit_api": {
+    "suites": [
+      47,
+      45
+    ],
+    "passed": 92,
+    "failed": 0,
+    "skipped": 0
+  },
+  "browser": {
+    "passed": 351,
+    "failed": 0,
+    "engine": "Chrome isolated Playwright profile",
+    "environment": {
+      "NODE_ENV": "development",
+      "TEST_DATABASE_URL": "postgresql://127.0.0.1:5432/tasca_issue175_integration",
+      "PLAYWRIGHT_PORT": "55175",
+      "PLAYWRIGHT_CHANNEL": "chrome"
+    }
+  },
+  "native_compiled_smoke": {
+    "node": "v22.22.3",
+    "productionConfig": true,
+    "transport": "native loopback HTTP; not Docker or TLS",
+    "noScheduler": true,
+    "noTelegramCalls": true,
+    "checks": [
+      {
+        "path": "/health",
+        "status": 200
+      },
+      {
+        "path": "/api/boards",
+        "status": 401
+      },
+      {
+        "path": "/mcp",
+        "status": 401
+      },
+      {
+        "path": "/api/missing",
+        "status": 404
+      },
+      {
+        "path": "/assets/index-ellwQRZx.js",
+        "status": 200,
+        "bytes": 894231,
+        "sha256": "b322fcd76cee314c3c615587f74ae358db7a759ab8120025d8ceed2aa91f9a74"
+      },
+      {
+        "path": "/assets/index-YFXzscql.css",
+        "status": 200,
+        "bytes": 116811,
+        "sha256": "46226987ed1bfd550c4e264d92c90c0d043d8cf8d5e83531dcdbf730ddad08c5"
+      },
+      {
+        "path": "artifacts/ux/assets/board-entry.png",
+        "bytes": 1767997,
+        "sha256": "9573701a89ee844e02f6167d06254b662bdede5de06926b0cba3193213fc8d16"
+      }
+    ]
+  },
+  "backup_restore": [
+    {
+      "source": "tasca_rehearsal_issue175",
+      "restored": "tasca_issue175_restored_final_0",
+      "tables": 24,
+      "rows": 56,
+      "bytes": 81957,
+      "sha256": "81c0d299b36cdbabdc88d66e7393fe7cc1596aae1897f9758f1ccc69cfb9a64d"
+    },
+    {
+      "source": "tasca_rehearsal_issue175_chat_486920d4",
+      "restored": "tasca_issue175_restored_final_1",
+      "tables": 23,
+      "rows": 25,
+      "bytes": 79852,
+      "sha256": "7465f3dc4cb9f43b40216a92ee4b7e6fad5491744a229e07628b2512cbee6518"
+    },
+    {
+      "source": "tasca_rehearsal_issue175_chat_7e11d6c5",
+      "restored": "tasca_issue175_restored_final_2",
+      "tables": 23,
+      "rows": 25,
+      "bytes": 79850,
+      "sha256": "19e064e13adace6c82515dd244cfc399dc452e6d887aa54bb41c6dfb5438fd68"
+    }
+  ],
+  "archives": [
+    {
+      "source": "/Users/milevsky.yakov/orca/tg-task-kanban",
+      "head": "3a358f45603db6519e834cbd55d0e7cc89722ed8",
+      "archive": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/_archives/issue-175-preparation/tg-task-kanban.tar.gz",
+      "bytes": 76640453,
+      "sha256": "2eebc22cb5af45a7e8f1aa4ff5d152f29a494ec79f42f6f74e7b2d43c0284738",
+      "verified_files": 842,
+      "omissions": {
+        "protected configuration; retained at source, never opened": 1,
+        "rebuildable dependency/build/cache": 6157
+      },
+      "changed_during_capture": []
+    },
+    {
+      "source": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/issue-176",
+      "head": "58924f41b3b5f22ee5a4e3bab6a603d0262c5cde",
+      "archive": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/_archives/issue-175-preparation/issue-176.tar.gz",
+      "bytes": 147948002,
+      "sha256": "79bc2ff3ea27a4efee085e268dcf81d2d037e210344d284de6e5200cc91c9af9",
+      "verified_files": 6507,
+      "omissions": {
+        "protected configuration; retained at source, never opened": 1,
+        "rebuildable dependency/build/cache": 9162
+      },
+      "changed_during_capture": []
+    },
+    {
+      "source": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/issue-177",
+      "head": "448aeca7388a8f07492c9eccd4d007d77fa0913d",
+      "archive": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/_archives/issue-175-preparation/issue-177.tar.gz",
+      "bytes": 144604153,
+      "sha256": "9d0589df8556e1e5ededf22c2678a320f7c962ee80b8cbb83678bf5f50c4f5a9",
+      "verified_files": 3163,
+      "omissions": {
+        "protected configuration; retained at source, never opened": 1,
+        "rebuildable dependency/build/cache": 9158
+      },
+      "changed_during_capture": []
+    },
+    {
+      "source": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/issue-179",
+      "head": "58924f41b3b5f22ee5a4e3bab6a603d0262c5cde",
+      "archive": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/_archives/issue-175-preparation/issue-179.tar.gz",
+      "bytes": 273388165,
+      "sha256": "de1cf6959bc8c9b0e7d5d8a10d330b94d177c9b0a1ae4cf13007810501db6de9",
+      "verified_files": 2112,
+      "omissions": {
+        "protected configuration; retained at source, never opened": 2,
+        "rebuildable dependency/build/cache": 9159,
+        "missing or non-file": 2
+      },
+      "changed_during_capture": []
+    },
+    {
+      "source": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/issue-180",
+      "head": "5d159977f465827c305442fa3ca8ef1dc1313a24",
+      "archive": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/_archives/issue-175-preparation/issue-180.tar.gz",
+      "bytes": 127094820,
+      "sha256": "675759260ece50d0f18c5ddb80c7af8b557d1ce8b99ea5d0bac2d0ff764b8d92",
+      "verified_files": 1293,
+      "omissions": {
+        "protected configuration; retained at source, never opened": 1,
+        "rebuildable dependency/build/cache": 9159
+      },
+      "changed_during_capture": []
+    },
+    {
+      "source": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/issue-181",
+      "head": "08e37ff098c06a567b6df57fce3626ddffe36edf",
+      "archive": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/_archives/issue-175-preparation/issue-181.tar.gz",
+      "bytes": 143187765,
+      "sha256": "5a31734298d038a13557f9b5296a6f7b3e0123e9d2dbd858a5bedb8702d75cf9",
+      "verified_files": 3038,
+      "omissions": {
+        "protected configuration; retained at source, never opened": 1,
+        "rebuildable dependency/build/cache": 9146
+      },
+      "changed_during_capture": []
+    },
+    {
+      "source": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/issue-182",
+      "head": "f9fa0b2b100c3a9a86acccfb9fe95e41a66f8d7e",
+      "archive": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/_archives/issue-175-preparation/issue-182.tar.gz",
+      "bytes": 220795237,
+      "sha256": "57ba3bc78979feabbb0de767ee11c69dfc66c4cab070af2f5d102ae66e10abcd",
+      "verified_files": 4514,
+      "omissions": {
+        "protected configuration; retained at source, never opened": 1,
+        "rebuildable dependency/build/cache": 9147
+      },
+      "changed_during_capture": []
+    },
+    {
+      "source": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/mcp-5",
+      "head": "4d4318b3783b7f340a4b3c69789156de8b91d52b",
+      "archive": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/_archives/issue-175-preparation/mcp-5.tar.gz",
+      "bytes": 209934599,
+      "sha256": "5ac1ada37d6119049590ff0f7df96637bc749e5086fc112c41a4b81e680f08ce",
+      "verified_files": 2115,
+      "omissions": {
+        "protected configuration; retained at source, never opened": 2,
+        "rebuildable dependency/build/cache": 9528
+      },
+      "changed_during_capture": []
+    },
+    {
+      "source": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/tasca-preparation",
+      "head": "5203dd4093b9ad8134a2fb9cc560ea515eaff37f",
+      "archive": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/_archives/issue-175-preparation/tasca-preparation.tar.gz",
+      "bytes": 205833923,
+      "sha256": "82e49cd1c400343fb256cc7d47660189a154adf595a94ddeb4a6024b41271923",
+      "verified_files": 7105,
+      "omissions": {
+        "protected configuration; retained at source, never opened": 2,
+        "rebuildable dependency/build/cache": 9153
+      },
+      "changed_during_capture": []
+    }
+  ],
+  "nested_archives": [
+    {
+      "source": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/issue-179/artifacts/visual-evidence/issue-179/integration-180-5d159977/combined",
+      "head": "5d159977f465827c305442fa3ca8ef1dc1313a24",
+      "archive": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/_archives/issue-175-nested/combined.tar.gz",
+      "bytes": 121285953,
+      "sha256": "855d2194f87c95ac37776627de549278d756f7b28518d7c0c78de8d1ffa498b5",
+      "verified_files": 1113,
+      "omissions": {
+        "protected configuration; retained at source, never opened": 1,
+        "rebuildable dependency/build/cache": 9143
+      },
+      "changed_during_capture": []
+    },
+    {
+      "source": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/issue-179/artifacts/visual-evidence/issue-179/integration-180-5d159977/before-180",
+      "head": "58924f41b3b5f22ee5a4e3bab6a603d0262c5cde",
+      "archive": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/_archives/issue-175-nested/before-180.tar.gz",
+      "bytes": 73096427,
+      "sha256": "0293e20d89ffddd8277b67f386e7f1d711d95b2d9ccafb66717df4abf7dcebd8",
+      "verified_files": 776,
+      "omissions": {
+        "protected configuration; retained at source, never opened": 1,
+        "rebuildable dependency/build/cache": 9143
+      },
+      "changed_during_capture": []
+    }
+  ],
+  "archive_totals": {
+    "source_worktrees": 9,
+    "nested_repositories": 2,
+    "bytes": 1743809497,
+    "verified_files": 32578
+  },
+  "history_bundle": {
+    "path": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/_archives/issue-175-preparation/history.bundle",
+    "bytes": 69003311,
+    "sha256": "0c86d16e5f333b174d4c5de2b15f9f5787459e2d07ef49cb0fcc3b24472fb4cc",
+    "git_bundle_verify": true
+  },
+  "source_readback": [
+    {
+      "source": "/Users/milevsky.yakov/orca/tg-task-kanban",
+      "preserved_files_checked": 842,
+      "changed_files": [],
+      "same_git_status": true,
+      "nonarchived_other": []
+    },
+    {
+      "source": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/issue-176",
+      "preserved_files_checked": 6507,
+      "changed_files": [],
+      "same_git_status": true,
+      "nonarchived_other": []
+    },
+    {
+      "source": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/issue-177",
+      "preserved_files_checked": 3163,
+      "changed_files": [],
+      "same_git_status": true,
+      "nonarchived_other": []
+    },
+    {
+      "source": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/issue-179",
+      "preserved_files_checked": 2112,
+      "changed_files": [],
+      "same_git_status": true,
+      "nonarchived_other": [
+        {
+          "path": "artifacts/visual-evidence/issue-179/integration-180-5d159977/combined/",
+          "type": "directory"
+        },
+        {
+          "path": "artifacts/visual-evidence/issue-179/integration-180-5d159977/before-180/",
+          "type": "directory"
+        }
+      ]
+    },
+    {
+      "source": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/issue-180",
+      "preserved_files_checked": 1293,
+      "changed_files": [],
+      "same_git_status": true,
+      "nonarchived_other": []
+    },
+    {
+      "source": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/issue-181",
+      "preserved_files_checked": 3038,
+      "changed_files": [],
+      "same_git_status": true,
+      "nonarchived_other": []
+    },
+    {
+      "source": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/issue-182",
+      "preserved_files_checked": 4514,
+      "changed_files": [],
+      "same_git_status": true,
+      "nonarchived_other": []
+    },
+    {
+      "source": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/mcp-5",
+      "preserved_files_checked": 2115,
+      "changed_files": [],
+      "same_git_status": true,
+      "nonarchived_other": []
+    },
+    {
+      "source": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/tasca-preparation",
+      "preserved_files_checked": 7105,
+      "changed_files": [],
+      "same_git_status": true,
+      "nonarchived_other": []
+    }
+  ],
+  "main": {
+    "head": "3a358f45603db6519e834cbd55d0e7cc89722ed8",
+    "origin_main": "3a358f45603db6519e834cbd55d0e7cc89722ed8",
+    "status": "?? artifacts/ux/task-details-approved-comparison.png\n",
+    "fully_clean": false,
+    "not_modified_by_preparation": true
+  },
+  "outside_local_scope": [
+
+    "Telegram Desktop/iOS/Android and real MCP client acceptance",
+    "explicit publication/main merge permission and external auto-deploy readback",
+    "production PostgreSQL backup/restore, single-runtime rollout and approved emergency recovery",
+    "worktree process shutdown and protected configuration disposition before deletion"
+  ],
+  "earlier_failures": {
+    "gate-1": "349/351 browser; scroll placeholder regression and legacy-fixture refresh race corrected before gate-2",
+    "mcp-migration": "legacy fixture now uses old-schema SQL and checks one expected assessment revision bump"
+  },
+  "code_changed_during_final_gates": false,
+  "docker": {
+    "passed": true,
+    "tested_tree": "ecc164e1ee3d6a78132f250b8e6a26885f51ffd8",
+    "platform": "linux/amd64",
+    "platform_manifest": "sha256:0a331116ac89b0e525a01a189ef5e2bfeddcc2c0e04b2c5aeee77d9b3fc600f3",
+    "results": "artifacts/visual-evidence/issue-175/docker/results.json",
+    "results_sha256": "16fc15f50548b8eb389c0931789c2122b6940f4e3a185fb2d36157dd745daca2",
+    "registry_verification": "artifacts/visual-evidence/issue-175/docker/registry-verification.json",
+    "database": "postgres:17-alpine, disposable synthetic data",
+    "transport": "HTTP inside isolated container; external ingress/TLS and Telegram/device acceptance remain unverified",
+    "image_archive": {
+      "path": "/Users/milevsky.yakov/orca/workspaces/tg-task-kanban/_archives/issue-175-docker/tasca-linux-amd64.tar.gz",
+      "bytes": 81528813,
+      "sha256": "16188a410278d018b983983caf1d140493ec8fbfebd1d6a95e70bb14038b56af",
+      "gzip_check": true,
+      "docker_load": true,
+      "imported_image_full_smoke": true
+    },
+    "disposable_runtime_removed": true,
+    "production_access": false
+  }
+}

@@ -1,0 +1,530 @@
+{
+  "schema_version": 1,
+  "issue": "https://github.com/MilevskyYakov/tg-task-kanban/issues/176",
+  "generated_at": "2026-10-07T10:53:51.870919+00:00",
+  "branch": "MilevskyYakov/issue-176",
+  "base_commit": "58924f41b3b5f22ee5a4e3bab6a603d0262c5cde",
+  "scope": "Local fixes for the three review findings; no commit, push, PR, merge, production or real Telegram sends.",
+  "status": "REVIEW_FIXES_VERIFIED_FULL_UI_GATE_NOT_GREEN",
+  "report": "docs/issue-176-verification.md",
+  "supersedes": "artifacts/evidence/issue-176-verification.json",
+  "results": {
+    "test": {
+      "command": "npm run test",
+      "exit_code": 0,
+      "tests": 78,
+      "pass": 78,
+      "fail": 0,
+      "skipped": 0,
+      "log": "artifacts/evidence/issue-176-runtime/review-test-final.log"
+    },
+    "lint": {
+      "command": "npm run lint",
+      "exit_code": 0,
+      "note": "Project alias for typecheck",
+      "log": "artifacts/evidence/issue-176-runtime/review-lint-final.log"
+    },
+    "typecheck": {
+      "command": "npm run typecheck",
+      "exit_code": 0,
+      "log": "artifacts/evidence/issue-176-runtime/review-typecheck-final.log"
+    },
+    "build": {
+      "command": "npm run build",
+      "exit_code": 0,
+      "log": "artifacts/evidence/issue-176-runtime/review-build-final.log"
+    },
+    "public_entry": {
+      "exit_code": 0,
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "skipped": 0
+    },
+    "cutover": {
+      "exit_code": 0,
+      "tests": 2,
+      "pass": 2,
+      "fail": 0,
+      "skipped": 0,
+      "note": "Baseline API from 58924f4; old runtime remains incompatible after migration 017."
+    },
+    "regression_api": {
+      "exit_code": 0,
+      "tests": 4,
+      "pass": 4,
+      "fail": 0,
+      "skipped": 0
+    },
+    "regression_red": {
+      "api": {
+        "tests": 4,
+        "pass": 2,
+        "fail": 2,
+        "skipped": 0
+      },
+      "legacy_drafts": {
+        "passed": 0,
+        "failed": 3,
+        "total": 3,
+        "log": "artifacts/evidence/issue-176-runtime/review-drafts-red.log"
+      }
+    },
+    "focused_ui": {
+      "exit_code": 0,
+      "passed": 20,
+      "runs": [
+        {
+          "passed": 17,
+          "failed": 0,
+          "total": 17,
+          "log": "artifacts/evidence/issue-176-runtime/review-ui-entry-publications-final.log"
+        },
+        {
+          "passed": 3,
+          "failed": 0,
+          "total": 3,
+          "log": "artifacts/evidence/issue-176-runtime/review-ui-drafts-final.log"
+        }
+      ]
+    },
+    "full_ui": {
+      "exit_code": 1,
+      "passed": 288,
+      "failed": 3,
+      "total": 291,
+      "log": "artifacts/evidence/issue-176-runtime/review-visual-full.log",
+      "failures": [
+        "1) visual/branding.spec.ts:8:3 › Tasca entry, loading, auth failure and task access denial 320 ───",
+        "2) visual/create.spec.ts:491:1 › series success never blocks or clears the next input; pending belongs to its button",
+        "3) visual/create.spec.ts:636:1 › leaving during success cancels old navigation, even after opening a new form"
+      ]
+    },
+    "current_failed_scenario_repeats": {
+      "exit_code": 1,
+      "passed": 7,
+      "failed": 2,
+      "total": 9,
+      "log": "artifacts/evidence/issue-176-runtime/review-unrelated-retry.log"
+    },
+    "baseline_failed_scenario_repeats": {
+      "exit_code": 1,
+      "passed": 6,
+      "failed": 3,
+      "total": 9,
+      "log": "artifacts/evidence/issue-176-runtime/review-unrelated-baseline.log"
+    },
+    "additional_extended_ui": {
+      "status": "INCOMPLETE",
+      "exit_code": 124,
+      "timeout_seconds": 180,
+      "progress": "80/96",
+      "log": "artifacts/evidence/issue-176-runtime/review-ui-focused-final.log"
+    }
+  },
+  "limitations": [
+    "Branding overflow at 320px reproduced on both current source and unmodified baseline.",
+    "Two Playwright clock.pauseAt errors in full run did not recur in three isolated repeats of each test on current source or baseline; root cause not fully isolated.",
+    "Earlier keyboard failure passed this full run; no keyboard fix is claimed.",
+    "Real Telegram transport, physical iOS/Android keyboard and production PostgreSQL acceptance remain outside this local task."
+  ],
+  "cleanup": {
+    "postgres_stopped": true,
+    "ports_confirmed_closed": [
+      4177,
+      4178,
+      55476
+    ],
+    "historical_input_perf_unchanged": true
+  },
+  "sources": [
+    {
+      "path": ".gitignore",
+      "bytes": 485,
+      "sha256": "f397d45eb7a74c867a0bc7352d47d672fe0ba0aac31e7c9e57555e25f9bc84bc"
+    },
+    {
+      "path": "README.md",
+      "bytes": 8684,
+      "sha256": "f2191ad1fa2e15d1c3ede22888487daea7cf0dbd06c0fc899b7997e260cbd5c3"
+    },
+    {
+      "path": "apps/api/migrations/017_chat_directions.sql",
+      "bytes": 4148,
+      "sha256": "bc77a023d8d4c2482da3721218a9dfc4cce2e5b85d1f529e0ab0a3a5b936d746"
+    },
+    {
+      "path": "apps/api/src/app.ts",
+      "bytes": 45563,
+      "sha256": "2ec7012bfa0eb5a2b31418e4218e4eb2c62d2f61922d57eae072d81ab3f65a2d"
+    },
+    {
+      "path": "apps/api/src/bot-entry.ts",
+      "bytes": 10501,
+      "sha256": "3eced972681428b7d880d9a9afe8ac3240ede9b802e73bcb8a5e02df15ac761c"
+    },
+    {
+      "path": "apps/api/src/chat-boards.ts",
+      "bytes": 19532,
+      "sha256": "08e5694030dd3f70a5475b99c67652fb89a27b69796e8ae54483da931b3fe827"
+    },
+    {
+      "path": "apps/api/src/db.ts",
+      "bytes": 50915,
+      "sha256": "866775cc797cb6a0bafe6283eb42d43d572a95676dd026408aef382c72ed16b6"
+    },
+    {
+      "path": "apps/api/src/mcp.ts",
+      "bytes": 56034,
+      "sha256": "cf7ad5eaa0bb38ee0faa5f7f73ee9e1557478b7057d3bc799aec00641369b399"
+    },
+    {
+      "path": "apps/api/src/migrate.ts",
+      "bytes": 1285,
+      "sha256": "32d21d4236531e995c7790403b1981e57f10ac1a77c3aa08a0c13ae7e43b8aa1"
+    },
+    {
+      "path": "apps/api/src/publications.ts",
+      "bytes": 19442,
+      "sha256": "2aba47bc06fd66e43a7282121f6eb15d1d7a236e15c22509247863112fc0e2c0"
+    },
+    {
+      "path": "apps/api/test/chat-board.test.ts",
+      "bytes": 21882,
+      "sha256": "93abc5747cbfa624d413a3c83def76b7a0df89b4ca85ab1926463253f2a97f8a"
+    },
+    {
+      "path": "apps/api/test/chat-directions.test.ts",
+      "bytes": 25985,
+      "sha256": "8b6192cff42410bda3bf32d2ada343956310e23cbbd0a00a99ff6590084f11fc"
+    },
+    {
+      "path": "apps/api/test/chat-migration.test.ts",
+      "bytes": 6046,
+      "sha256": "80a8721f9744e91b7505d4c8aa49cd349ee73e027f5c84c4bb6c26dfbcc34ccc"
+    },
+    {
+      "path": "apps/api/test/cutover.test.ts",
+      "bytes": 18052,
+      "sha256": "f942d29a0624104cc662952080d88c28246f8c1a88d30908e8f69bf3e636053d"
+    },
+    {
+      "path": "apps/api/test/publication-scheduler.test.ts",
+      "bytes": 1799,
+      "sha256": "862a61c1aa9c17cac3a952572705904b0fd1e1bbeaab99c132d891f3ac2690d7"
+    },
+    {
+      "path": "apps/api/test/publications.test.ts",
+      "bytes": 13484,
+      "sha256": "3540e2ad3df3088195759c024b34ae23bc0a91ad05ebe90f654d0603b5cc638b"
+    },
+    {
+      "path": "apps/web/playwright.config.ts",
+      "bytes": 743,
+      "sha256": "4d47979565626ebd4bffc4c3a5a797cbb682963c680027f9f752fdd4891f0e19"
+    },
+    {
+      "path": "apps/web/src/chat-boards.tsx",
+      "bytes": 15658,
+      "sha256": "9923ce6aedfd2d690b3f172630e15f95590aedcbddd0508249e45136f9dff8d8"
+    },
+    {
+      "path": "apps/web/src/domain.ts",
+      "bytes": 1704,
+      "sha256": "46d2325629eb6302eec3b6bfd71f856c0f4dd7d6fd24fac26927f1c43c174477"
+    },
+    {
+      "path": "apps/web/src/main.tsx",
+      "bytes": 105533,
+      "sha256": "30b4ebdc97a13e3f0be597cef08e55e56e4c00f749afa38fa1d5c797f6107db4"
+    },
+    {
+      "path": "apps/web/src/settings-editor.tsx",
+      "bytes": 20824,
+      "sha256": "8cc2ed19846ee87bfe06a04ac7c14076af438fd9818c7848fbf020f3a40de601"
+    },
+    {
+      "path": "apps/web/src/style.css",
+      "bytes": 81178,
+      "sha256": "63a1622d9b0c2f36eef65bc24b099ff7b2a0cee902770d433e6b188d5c98d981"
+    },
+    {
+      "path": "apps/web/visual/README.md",
+      "bytes": 3974,
+      "sha256": "bea27ba45a7d3839ab0943a64b189a1a9955fea59577fc23de3f3208e40a43ac"
+    },
+    {
+      "path": "apps/web/visual/chat-directions.spec.ts",
+      "bytes": 12784,
+      "sha256": "e0cb58a11f1ac84259c3ca7adb99df0d523588597b0d3c95c182b17288423ea1"
+    },
+    {
+      "path": "apps/web/visual/entry.spec.ts",
+      "bytes": 18858,
+      "sha256": "e09f7dbb01f3cb31295d0f0da1c5d94f02f6717c36a3303ef9bc829cfcec7056"
+    },
+    {
+      "path": "apps/web/visual/settings-autosave.spec.ts",
+      "bytes": 28174,
+      "sha256": "7d51711c049c99cc9050be9dd5377d5a4cad8e355147e2bb025358e8e9ffc59d"
+    },
+    {
+      "path": "docs/issue-176-decisions.md",
+      "bytes": 6832,
+      "sha256": "d7329ede9f77a9902a2ece433065016a33cea59eb22172a069cebc1edbab21e7"
+    },
+    {
+      "path": "docs/issue-176-verification.md",
+      "bytes": 22008,
+      "sha256": "24920e2f850283a8f3fe7215c23cf25ba9fce1f7c11895e9c2e09459de985a64"
+    },
+    {
+      "path": "docs/tasca-cutover-runbook.md",
+      "bytes": 44047,
+      "sha256": "6f58bc3db98eb08ca9f1f06b131349cba31dca9acb6023e2d19ac86b0179f647"
+    },
+    {
+      "path": "docs/telegram-polling-runbook.md",
+      "bytes": 13301,
+      "sha256": "0bad5121a87f86003ab1a12d6de0061d60ee574ea8ecfc0cd7265f5f59911949"
+    },
+    {
+      "path": "package.json",
+      "bytes": 1497,
+      "sha256": "db63bb4dc0a59c90f30d7d020c332de526cde968270ff33e69c482a16e11ae93"
+    }
+  ],
+  "sources_digest_sha256": "163e36a88197620578dc7144b2c931bc5aa9f8b7afd549c97683492441f5ef17",
+  "artifacts": [
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-api-green-2.log",
+      "bytes": 28556,
+      "sha256": "3cd96c40fb332c1990872b36c6f247a1c34e41e8670ac793d0d93b28bd1433a5"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-api-green.log",
+      "bytes": 1170,
+      "sha256": "a9aa87d752f7ac2b3d41853fc8c5c3489a99363b234fbc2698a9928c2f0958fd"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-api-red.log",
+      "bytes": 24868,
+      "sha256": "fa1e7852be8808cbb5a2fdb9c4abc59de7edb44264a8d691704644e89cc2cbd3"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-build-final.log",
+      "bytes": 485,
+      "sha256": "1a1d0ca33e6e2005579b991c2fd0da2ad8af40af183fb7587895083c50450d45"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-cutover-final.log",
+      "bytes": 27278,
+      "sha256": "9c6d89c4fe8db6fd56db5eb278fc104275f97d0b2e55d39872a6be1109ee65ca"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-drafts-red.log",
+      "bytes": 49545,
+      "sha256": "c9340b11ff766207a7142feb0e3b50cdec75d927b21b8e8eb793808aba9b1112"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-full-failures.tar.gz",
+      "bytes": 4235,
+      "sha256": "91701c81521a054c226a5e6c629b0fbd2f325b178b18ef8c236682335d40e682"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-input-perf.jsonl",
+      "bytes": 1364,
+      "sha256": "886e0b2c6af8fd890df6a388f46313cc87abbb2084dd7d3d3b832f5825e7658e"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-link-ui-final.log",
+      "bytes": 73173,
+      "sha256": "95cefda886c407f94e946b0ae94d7c1508bec6feca0b1be9f2289441000a4732"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-lint-final.log",
+      "bytes": 151,
+      "sha256": "f27c57d111ab615aefb7b53e78a6b4d58087630d3a0142331957e136bcfb25ff"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-public-entry-final.log",
+      "bytes": 5886,
+      "sha256": "3dea3727f5bf1f77e5562908ada5fcc0513d6f9e4c5dc807be99a7c2d5b6439e"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-shutdown.log",
+      "bytes": 56,
+      "sha256": "ca19178a35ab4153b75b494963b66ce8243e1b94c173107c87b44d09db23652d"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-test-final.log",
+      "bytes": 477351,
+      "sha256": "702117878f4248675c4da462b06945344cd1dcff0633a1d6b289e5e90a83b60b"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-typecheck-final.log",
+      "bytes": 122,
+      "sha256": "335bd39015b554dbf591809dad6e83edbc369c6c4fc63dd0169349145cc5543b"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-typecheck-initial.log",
+      "bytes": 122,
+      "sha256": "335bd39015b554dbf591809dad6e83edbc369c6c4fc63dd0169349145cc5543b"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-ui-drafts-final.log",
+      "bytes": 66142,
+      "sha256": "5e4d50d186f11ca27354af5b61a4fca3bd5a0717701e142307f6c8166b0ef792"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-ui-entry-publications-final.log",
+      "bytes": 296609,
+      "sha256": "a05aada4b613796439b2d0e248faaf74a80560766a039c668ee3f766dfb1cb70"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-ui-focused-final.log",
+      "bytes": 1171988,
+      "sha256": "c74b6f01149aa1f5c55d316d582e101678599c84a058c0ba85a55c18710528ca"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-ui-green-2.log",
+      "bytes": 139231,
+      "sha256": "00a77a1be0e225c197f673029de2fcbbec58e16d3ed67be8c4120186e3db6ea3"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-ui-green.log",
+      "bytes": 1410,
+      "sha256": "8e3154e64742610debeb849918ee77a4ad18e341affe483a60bf214d948fafad"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-unrelated-baseline.log",
+      "bytes": 5916,
+      "sha256": "c46b7bb48742b9cba28ffa91104c2f58a5c6918748a7e21e2ed58a8ed484967d"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-unrelated-retry.log",
+      "bytes": 4354,
+      "sha256": "5181155f29360f1b934385b66f8195d90a9ffff5ae1fa2e279252c23fa678046"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-runtime/review-visual-full.log",
+      "bytes": 1841704,
+      "sha256": "c80ca7ed4880ae1ee624da6d9ad404f6984bb9cc3ff6171d955b08a27f3ef14d"
+    },
+    {
+      "path": "artifacts/evidence/issue-176-verification.json",
+      "bytes": 15137,
+      "sha256": "1f864963e2e7efcb9850472558c1a79cf4d89df74aaa9d95e9f2795aaecbcfad"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-access-revoked-320.png",
+      "bytes": 18224,
+      "sha256": "1df523ca9fbe9d6b8b8b14dbe6c92fc8260337bc29caf4da4030d9c68dbba9de"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-access-revoked-390.png",
+      "bytes": 18261,
+      "sha256": "d4b8bdf412711e78b355f04f0711afdc7b8332709de3a53aa4d37dda6560eec6"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-chooser-320.png",
+      "bytes": 79261,
+      "sha256": "718eeaafe28b4bd42ad18cd01d22f9f9e7385b5320ec7a171053b5516b7837fd"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-chooser-390.png",
+      "bytes": 88138,
+      "sha256": "932a81bc10f3f91eb8ded41e8bdfa65d2f26243c60c4f63da682ef2f01db5226"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-confirmation-320.png",
+      "bytes": 55695,
+      "sha256": "1dab3a429044406a9355482d725e9e12ed8a32eb8109a63c4013e3792f8abae5"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-confirmation-390.png",
+      "bytes": 61801,
+      "sha256": "ecdef37a72cbbb682529191a63e1589ba50cbfb8fb6fddcc6c256ffca0716d26"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-empty-direction-320.png",
+      "bytes": 70158,
+      "sha256": "f9d7704dd890ee2fb4181396ebde3f815d5dd846f49ec2b2797642c59ad7e6c7"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-empty-direction-390.png",
+      "bytes": 72409,
+      "sha256": "047351d83a4a14859c2369255adccf14dc544f675e6ecfb00cac8fc51bdb78b9"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-empty-summary-320.png",
+      "bytes": 58642,
+      "sha256": "967a1fdbe78286b7fd8c1881e418ba45da58ed4d268165006515e90e9d271acf"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-empty-summary-390.png",
+      "bytes": 62160,
+      "sha256": "613a4c4ffb41e39db4f207ffc80a1e2180b61fce263ad1f34d7a2f07e4034253"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-general-link-320.png",
+      "bytes": 69529,
+      "sha256": "b2b4a80b717c0334b9ae5b7ed2b45d6ec40f139dc5f2d0ac768ee9385b4ef9fa"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-general-link-390.png",
+      "bytes": 77389,
+      "sha256": "8482f5c4f99850f138315cb7a1b259f2fa1a8742661e24bd71ed074ad63840d0"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-general-link-text200-320.png",
+      "bytes": 60866,
+      "sha256": "bf85027702f3671a4c00a0d980822384c68e2c8d28fbd9086e2415a326a34bb2"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-general-link-text200-390.png",
+      "bytes": 61630,
+      "sha256": "3203e13b6437650025be77b78dedfda86131fcb29f1c76f1d6b56033d2daf16d"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-keyboard-viewport-320.png",
+      "bytes": 25383,
+      "sha256": "1f9ac9e4f6f3d214e5da054b145efaf9d26adff8886b68a60d7d59f9353f721e"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-keyboard-viewport-390.png",
+      "bytes": 28388,
+      "sha256": "3b74d59f95fb61c22dadb3b9e55eda89f3fc35716b1790910db56fa24f9cdd89"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-lost-response-320.png",
+      "bytes": 52283,
+      "sha256": "5841ce130dfb1bf41083e0247c11b5efadcaf8d0c9c956a0351f11fea54d5023"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-lost-response-390.png",
+      "bytes": 61875,
+      "sha256": "51cbdaa72ab134b517fe84abc7241df84ecf9a52c909d2ed6c6b7d219f022917"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-selected-summary-320.png",
+      "bytes": 58491,
+      "sha256": "93b100597d400872d9d7af9d3a668e42dc890884a513a05df2f099f056de094c"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-selected-summary-390.png",
+      "bytes": 58963,
+      "sha256": "f95ed399832d101c43cc35819874022ce872481661598bd764c22a61aa7f5348"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-text200-320.png",
+      "bytes": 45655,
+      "sha256": "1aee7edf00a02703f11d21a42f983cd6a8cd2a8d225c4330141f48a801b8f916"
+    },
+    {
+      "path": "artifacts/visual-evidence/issue176-text200-390.png",
+      "bytes": 51038,
+      "sha256": "d45583a5079175538b47e8b3e62c114d1b79d34b1122541750c3d39194060943"
+    }
+  ]
+}

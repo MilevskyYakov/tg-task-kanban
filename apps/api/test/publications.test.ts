@@ -146,8 +146,8 @@ test('delivery resumes after last sent part and keeps an active lease', async ()
   globalThis.fetch = (async (_url, init) => {
     const body = JSON.parse(String(init?.body)) as {text?: string; rich_message?: {html?: string}};
     sent.push(body.text ?? body.rich_message?.html ?? '');
-    if (failFirst && sent.length === 1) return new Response(JSON.stringify({ ok: false, description: 'temporary' }), { status: 500 });
-    return new Response(JSON.stringify({ ok: true, result: true }));
+    if (failFirst && sent.length === 1) return new Response(JSON.stringify({ ok: false, error_code: 429, description: 'temporary' }), { status: 429 });
+    return new Response(JSON.stringify({ ok: true, result: { message_id: sent.length } }));
   }) as typeof fetch;
   try {
     await deliverPendingPublications(db, 'token', 'test_bot', now);

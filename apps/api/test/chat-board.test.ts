@@ -57,7 +57,7 @@ test('new bot welcomes the existing board independently of legacy delivery and p
     assert.deepEqual((await db.query('SELECT * FROM tasks WHERE board_id = $1 ORDER BY id', [board.id])).rows, tasksBefore);
     assert.deepEqual((await db.query('SELECT * FROM memberships WHERE board_id = $1 ORDER BY user_id', [board.id])).rows, membershipsBefore);
     assert.deepEqual((await db.query('SELECT * FROM telegram_entry_deliveries WHERE key = $1', [legacyKey])).rows, legacyBefore);
-    assert.equal((await db.query('SELECT revoked_at IS NOT NULL AS revoked FROM board_links WHERE token_hash = $1', [createHash('sha256').update(legacyToken).digest('hex')])).rows[0].revoked, true);
+    assert.equal((await db.query('SELECT revoked_at IS NOT NULL AS revoked FROM board_links WHERE token_hash = $1', [createHash('sha256').update(legacyToken).digest('hex')])).rows[0].revoked, false, 'legacy direct entry stays valid for existing members');
     const linksBefore = (await db.query('SELECT * FROM board_links WHERE board_id = $1 ORDER BY token_hash', [board.id])).rows;
     await sendGroupWelcome(db, { ...config, botToken: '200000000:rotated-synthetic-token', botUsername: 'renamed_test_bot' }, chatId);
     assert.equal(photos.length, 1, 'token rotation or username change must not create another welcome for the same bot');
@@ -166,7 +166,9 @@ test('bot entry: one photo, stable launch, admin-only setup and safe delivery ou
     const path = `/api/boards/${first.id}`;
     assert.equal(first.status, 'draft');
     assert.equal((await call(outsider, 'GET', `${path}/setup`)).statusCode, 404);
-    assert.equal((await call(member, 'POST', '/api/board-links/redeem', { token })).statusCode, 200);
+    assert.equal((await call(member, 'POST', '/api/board-links/redeem', { token })).statusCode, 404, 'general entry is not an invitation');
+    const invite = await createInvite(db, admin.userId, first.id);
+    assert.equal((await call(member, 'POST', '/api/board-links/redeem', { token: invite })).statusCode, 200);
     assert.equal((await call(member, 'GET', `${path}/setup`)).json().canActivate, false);
     assert.equal((await call(admin, 'GET', `${path}/setup`)).json().canActivate, true);
     assert.equal((await call(member, 'POST', `${path}/activate`, { name: 'Forbidden' })).statusCode, 403);

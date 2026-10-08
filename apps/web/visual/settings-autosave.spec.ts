@@ -8,8 +8,9 @@ import type { Config } from '../../api/src/config';
 
 const evidence = fileURLToPath(new URL('../../../artifacts/visual-evidence/', import.meta.url));
 const surfaces = ['board', 'project', 'publication'] as const;
-const scenarios = ['success', 'reload before debounce', 'reload in flight', 'offline reopen', 'reconnect during failure', 'reconnect during denial', 'offline conflict', 'local conflict', 'server conflict', 'choice race conflict', 'independent fields', 'raw input', 'lost response', 'lost response newer', 'uncertain revert', 'invalid', 'duplicate', 'storage failure', 'corrupt storage', 'late response', 'access loss', '401', '404', 'frozen', 'archived', 'membership revoked', 'user isolation'] as const;
+const scenarios = ['success', 'reload before debounce', 'reload in flight', 'offline reopen', 'reconnect during failure', 'reconnect during denial', 'offline conflict', 'local conflict', 'server conflict', 'choice race conflict', 'independent fields', 'raw input', 'lost response', 'lost response newer', 'uncertain revert', 'invalid', 'duplicate', 'storage failure', 'corrupt storage', 'late response', 'access loss', '401', '404', 'frozen', 'archived', 'membership revoked', 'user isolation', 'legacy draft upgrade', 'legacy attempt upgrade', 'legacy conflict upgrade'] as const;
 for (const surface of surfaces) for (const scenario of scenarios) {
+  if (scenario.startsWith('legacy ') && surface !== 'publication') continue;
   if ((scenario === 'independent fields' && surface !== 'publication') || (scenario === 'raw input' && surface === 'publication')) continue;
   if (scenario === 'duplicate' && surface !== 'project') continue;
   test(`settings API/DB ${surface}: ${scenario}`, async ({ page }) => {
@@ -108,12 +109,42 @@ for (const surface of surfaces) for (const scenario of scenarios) {
         await route.fulfill({ status: response.statusCode, contentType: 'application/json', body: response.body });
       });
       await page.goto('/'); await open(); await expect(input).toHaveValue(initial);
-      if (scenario === 'success') {
+      if (scenario.startsWith('legacy ')) {
+        // Do not let the initial refresh remove the synthetic legacy draft while seeding it.
+        await expect(status).toHaveText('Сохранено');
+        const saved = await readback();
+        const base = {enabled: saved.enabled, weekdays: saved.weekdays.join(','), local_time: saved.local_time, timezone: saved.timezone, included_statuses: saved.included_statuses};
+        const draft = {...base, timezone: latest};
+        const stored = {version: 1, base, draft, ...(scenario === 'legacy attempt upgrade' ? {attempt: {draft, fields: ['timezone']}} : {})};
+        await page.evaluate(({key, value}) => localStorage.setItem(key, JSON.stringify(value)), {key: storageKey, value: stored});
+        if (scenario === 'legacy attempt upgrade') await remoteWrite(latest);
+        if (scenario === 'legacy conflict upgrade') await remoteWrite(remote);
+        expect((await call('PUT', target, {included_board_ids: [], expected: {included_board_ids: [boardId]}})).statusCode).toBe(200);
+        await page.reload(); await open();
+        await expect(input).toHaveValue(latest);
+        await expect(editor.getByText(/Локальная копия недоступна/)).toHaveCount(0);
+        if (scenario === 'legacy conflict upgrade') {
+          await expect(editor.getByRole('region', {name: 'Конфликт настроек'})).toBeVisible();
+          await expect(editor).toContainText(`На сервере: ${remote}`);
+          expect(writes).toHaveLength(0);
+          await editor.getByRole('button', {name: 'Оставить моё'}).click();
+        }
+        await expect(status.filter({hasText: 'Сохранено'})).toBeVisible();
+        expect(await readback()).toMatchObject({timezone: latest, included_board_ids: []});
+        expect(writes).toHaveLength(scenario === 'legacy attempt upgrade' ? 0 : 1);
+        if (writes.length) expect(writes[0].input).toEqual({timezone: latest, expected: {timezone: scenario === 'legacy conflict upgrade' ? remote : initial}});
+        await page.reload(); await open(); await expect(input).toHaveValue(latest);
+      } else if (scenario === 'success') {
+        // StrictMode starts a server refresh on mount. Measure typing only after
+        // it settles; otherwise that in-flight refresh can save the first letter.
+        await expect(status).toHaveText('Сохранено');
         await input.fill('');
         await input.evaluate((element) => {
           (window as unknown as { settingsFrames: number[] }).settingsFrames = [];
+          (window as unknown as { settingsInputs: number[] }).settingsInputs = [];
           element.addEventListener('input', () => {
             const start = performance.now();
+            (window as unknown as { settingsInputs: number[] }).settingsInputs.push(start);
             requestAnimationFrame(() => (window as unknown as { settingsFrames: number[] }).settingsFrames.push(performance.now() - start));
           }, { capture: true });
         });
@@ -122,9 +153,10 @@ for (const surface of surfaces) for (const scenario of scenarios) {
         await expect(status).toHaveText('Сохранено');
         await expect(input).toBeFocused();
         const samples = await page.evaluate(() => (window as unknown as { settingsFrames: number[] }).settingsFrames.sort((a, b) => a - b));
+        const inputTimes = await page.evaluate(() => (window as unknown as { settingsInputs: number[] }).settingsInputs);
         expect(samples.length).toBe(latest.length);
         await mkdir(evidence, { recursive: true });
-        await appendFile(`${evidence}/issue147-settings-perf.jsonl`, `${JSON.stringify({ surface, metric: 'input-to-next-frame', samples: samples.length, p50: samples[Math.floor(samples.length / 2)], max: samples.at(-1) })}\n`);
+        await appendFile(`${evidence}/issue147-settings-perf.jsonl`, `${JSON.stringify({ surface, metric: 'input-to-next-frame', inputSource: 'playwright-pressSequentially', inputTimes, samples: samples.length, p50: samples[Math.floor(samples.length / 2)], max: samples.at(-1) })}\n`);
         expect(writes).toHaveLength(1);
         expect(Object.keys(writes[0].input).sort()).toEqual(['expected', field].sort());
         expect((await readback())[field]).toBe(latest);
@@ -341,13 +373,28 @@ for (const surface of surfaces) for (const scenario of scenarios) {
         await expect(input).not.toHaveValue(latest);
         expect(maxConcurrent).toBe(1);
         await page.locator('.settings-back').click(); await open(); await expect(input).toHaveValue(latest);
-      } else if (['access loss', '401', '404', 'frozen', 'archived', 'membership revoked'].includes(scenario)) {
+      } else if (scenario === 'membership revoked') {
+        delay = new Promise<void>((resolve) => { release = resolve; });
+        await input.fill(latest);
+        await expect.poll(() => writes.length).toBe(1);
+        await db.query('DELETE FROM memberships WHERE board_id=$1 AND user_id=$2', [boardId, users[0].userId]);
+        release!(); delay = undefined;
+        await expect.poll(() => writes[0].status).toBe(404);
+        await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+        await expect(page.getByRole('heading', {name: 'Доступ закрыт'})).toBeVisible();
+        await expect(input).toHaveCount(0);
+        await page.evaluate(() => window.dispatchEvent(new Event('online')));
+        expect(writes).toHaveLength(1);
+        await db.query("INSERT INTO memberships (board_id,user_id,role) VALUES ($1,$2,'admin')", [boardId, users[0].userId]);
+        await page.reload(); await open();
+        await expect(input).toHaveValue(latest);
+        await expect(status).toHaveText('Сохранено');
+      } else if (['access loss', '401', '404', 'frozen', 'archived'].includes(scenario)) {
         if (scenario === 'frozen' || scenario === 'archived') await db.query('UPDATE boards SET status=$2 WHERE id=$1', [boardId, scenario]);
-        else if (scenario === 'membership revoked') await db.query('DELETE FROM memberships WHERE board_id=$1 AND user_id=$2', [boardId, users[0].userId]);
         else denied = scenario === '401' ? 401 : scenario === '404' ? 404 : 403;
         await input.fill(latest);
         await expect(status).toHaveText('Не сохранено');
-        if (scenario !== 'membership revoked') expect((await readback())[field]).toBe(initial);
+        expect((await readback())[field]).toBe(initial);
         const count = writes.length;
         await page.evaluate(() => { for (let i = 0; i < 5; i++) window.dispatchEvent(new Event('online')); });
         await page.waitForTimeout(850);
@@ -355,7 +402,7 @@ for (const surface of surfaces) for (const scenario of scenarios) {
         await expect(input).toHaveValue(latest);
         denied = 0;
         if (scenario === 'frozen' || scenario === 'archived') await db.query("UPDATE boards SET status='active' WHERE id=$1", [boardId]);
-        if (scenario === 'membership revoked') await db.query("INSERT INTO memberships (board_id,user_id,role) VALUES ($1,$2,'admin')", [boardId, users[0].userId]);
+
         await editor.getByRole('button', { name: 'Повторить' }).click();
         await expect(status).toHaveText('Сохранено');
       }
