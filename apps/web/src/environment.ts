@@ -9,6 +9,7 @@ type TelegramWebApp = {
   close?(): void;
   isVersionAtLeast?(version: string): boolean;
   HapticFeedback?: { impactOccurred(style: 'soft'): unknown };
+  BackButton?: { isVisible: boolean; show(): void; hide(): void; onClick(listener: () => void): void; offClick(listener: () => void): void };
   openTelegramLink?(url: string): void;
   onEvent?(event: 'themeChanged', listener: () => void): void;
   offEvent?(event: 'themeChanged', listener: () => void): void;
@@ -48,7 +49,7 @@ export function creationHaptic(enabled: boolean): void {
   } catch { /* Unsupported device feedback must not affect creation. */ }
 }
 
-// Keyboard-aware layout is shared by task creation and task details. Focus alone
+// Keyboard-aware layout is shared by creation, details and filters. Focus alone
 // is not a keyboard signal (desktop, hardware keyboards, and pinch zoom).
 export function useTaskKeyboardViewport(): void {
   useEffect(() => {
@@ -62,7 +63,7 @@ export function useTaskKeyboardViewport(): void {
       if (viewport && Math.abs(viewport.scale - 1) > 0.05) return;
       const active = document.activeElement;
       const editable = (active instanceof HTMLTextAreaElement || (active instanceof HTMLInputElement && /^(text|search|email|url|tel|number|password)$/.test(active.type)))
-        && !active.readOnly && !active.disabled && active.closest('.create-screen, .task-details');
+        && !active.readOnly && !active.disabled && active.closest('.create-screen, .task-details, .unified-filter-sheet');
       const height = Math.min(window.innerHeight, viewport?.height ?? window.innerHeight);
       const top = viewport?.offsetTop ?? 0;
       if (width !== window.innerWidth) { width = window.innerWidth; fullHeight = window.innerHeight; }
@@ -79,6 +80,13 @@ export function useTaskKeyboardViewport(): void {
       }
       root.style.setProperty('--task-input-height', `${Math.max(44, height - 48)}px`);
       root.style.setProperty('--task-keyboard-inset', `${Math.max(0, window.innerHeight - height - top)}px`);
+      const filterBody = editable ? active.closest<HTMLElement>('.filter-body') : null;
+      if (filterBody && active) {
+        const field = active.getBoundingClientRect(), container = filterBody.getBoundingClientRect();
+        filterBody.scrollTop += field.top < container.top + 12 ? field.top - container.top - 12
+          : field.bottom > container.bottom - 12 ? field.bottom - container.bottom + 12 : 0;
+        return;
+      }
       if (!editable || active.closest('[role="dialog"]')) return;
       // WebKit may leave an autosized textarea scrolled to its beginning after
       // it is capped. Reveal an end-caret without changing selection or drafts.

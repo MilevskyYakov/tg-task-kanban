@@ -175,7 +175,14 @@ export function normalizeTaskFilters(value: Partial<TaskFilters>): TaskFilters {
   if (result.priority === 'urgent' && (!result.urgency || result.urgency === 'any')) { result.urgency = 'true'; result.priority = ''; }
   if (result.urgency && result.urgency !== 'any') result.priority = '';
   if (result.unassessed !== undefined) result.unassessed = result.unassessed === true;
+  // Explicit assignment conditions supersede the default personal slice.
+  if (result.unassigned) { result.scope = 'all'; result.assignee = ''; }
+  else if (result.assignee) result.scope = 'all';
   return result;
+}
+
+export function taskFiltersForBoard(filters: TaskFilters, boardId?: string): TaskFilters {
+  return boardId ? normalizeTaskFilters(filters) : { ...normalizeTaskFilters(filters), scope: 'mine', project: '', assignee: '', unassigned: false };
 }
 
 // Intl.DateTimeFormat construction dominates input latency on large boards:

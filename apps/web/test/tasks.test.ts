@@ -8,7 +8,15 @@ import { runClaim } from '../src/claim-task.js';
 import { resolveThemeScheme } from '../src/environment.js';
 import { countLabel, initialNavigation, isSettingsNavigation, settingsSections } from '../src/navigation.js';
 import { mergeTaskDraft, taskDraft, taskDraftStorageKey, taskPatch } from '../src/task-details.js';
-import { assessmentText, normalizeTaskFilters, priorityRank, groupTasksByPriority } from '../src/tasks.js';
+import { assessmentText, normalizeTaskFilters, priorityRank, groupTasksByPriority, taskFiltersForBoard } from '../src/tasks.js';
+
+test('filter assignment is exclusive and all boards cannot retain board-only restrictions', () => {
+  const mine = { ...defaultFilters, project: 'p', assignee: 'another', unassigned: true, search: 'важное', importance: 'true' as const };
+  assert.deepEqual(normalizeTaskFilters(mine), { ...mine, scope: 'all', assignee: '' });
+  assert.equal(normalizeTaskFilters({ ...mine, unassigned: false }).scope, 'all');
+  assert.deepEqual(taskFiltersForBoard(mine), { ...mine, scope: 'mine', project: '', assignee: '', unassigned: false });
+  assert.deepEqual(taskFiltersForBoard(mine, 'board'), normalizeTaskFilters(mine));
+});
 
 test('assessment drafts merge independently, reset atomically and saved filters retain legacy meaning', () => {
   const base = taskDraft({ ...tasks[0], importance: null, urgency: null });

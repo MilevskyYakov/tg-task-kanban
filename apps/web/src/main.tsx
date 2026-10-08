@@ -9,8 +9,9 @@ import type { Board, Collaboration, Member, Project, Recurrence, Schedule } from
 import { countLabel, initialNavigation, settingsSections, type NavigationState } from './navigation';
 import { TaskDetails } from './task-details';
 import { DeadlineField } from './deadline-field';
-import { PriorityField, PrioritySheet, PriorityTasks, AssessmentFilters } from './task-priority';
-import { assessmentText, emptyAssessment, compareTaskPriority, normalizeTaskFilters, type Assessment } from './tasks';
+import { PriorityField, PrioritySheet, PriorityTasks } from './task-priority';
+import { assessmentText, emptyAssessment, compareTaskPriority, normalizeTaskFilters, taskFiltersForBoard, type Assessment } from './tasks';
+import { TaskFilterSheet } from './task-filters';
 import { deadlineDraft, deadlinePatch, formatTaskDeadline, isTaskOverdue } from './tasks';
 import { activeFilterCount, dateInputToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveStartupContext, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, taskStatusRestriction, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
 import { TaskKanban } from './task-kanban';
@@ -28,7 +29,7 @@ import { NameSetting, PublicationSetting, useSettingsEdits } from './settings-ed
 import { Landing } from './landing';
 
 type TaskView = 'list' | 'kanban' | 'matrix';
-type FilterChoice = 'project' | 'assignee' | 'status' | 'priority' | 'deadline';
+type FilterChoice = 'project';
 type CreateChoice = 'board' | 'project' | 'assignee' | 'priority' | 'status';
 const statuses = Object.keys(statusDisplayName) as TaskStatus[];
 window.Telegram?.WebApp?.ready();
@@ -84,9 +85,12 @@ function App() {
   const [taskLoadState, setTaskLoadState] = useState<'loading' | 'error' | 'ready'>('loading');
   const [taskReload, setTaskReload] = useState(0);
   const [filters, setFilters] = useState<TaskFilters>(storedTaskView.filters);
+  const filterEditVersion = useRef(0);
+  const filterLoadVersion = useRef({ boardId: '', version: 0 });
   const [searchExpanded, setSearchExpanded] = useState(false);
   const searchTrigger = useRef<HTMLButtonElement>(null);
   const [filtersLoadedFor, setFiltersLoadedFor] = useState('');
+  const [filterLoadError, setFilterLoadError] = useState(false);
   const [globalBoardId, setGlobalBoardId] = useState(() => readStorage('tasks.globalBoardId') ?? '');
   const [boardOverrideId, setBoardOverrideId] = useState<string>();
   const [recentBoardIds, setRecentBoardIds] = useState<string[]>(() => {
@@ -96,7 +100,6 @@ function App() {
   const [boardSearch, setBoardSearch] = useState('');
   const [showBoardSheet, setShowBoardSheet] = useState(false);
   const [showFilterSheet, setShowFilterSheet] = useState(false);
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [filterChoice, setFilterChoice] = useState<FilterChoice>();
   const [kanbanStatusTask, setKanbanStatusTask] = useState<Task>();
   const [draggedTask, setDraggedTask] = useState<string>();
@@ -289,14 +292,16 @@ function App() {
   }, [state, board?.id, openTask?.board_id, navigation.screen, createBoardId, pairFlow]);
   useEffect(() => {
     if (state !== 'ready') return;
-
+    let cancelled = false;
+    const failed = (error: Error) => { if (!cancelled) { setMessage(error.message); setTaskLoadState('error'); } };
     if (navigation.screen === 'tasks') {
       setTaskLoadState('loading');
-      if (selectedTaskBoardId) void loadBoard(selectedTaskBoardId).then((loaded) => { if (loaded) setTaskLoadState('ready'); }).catch((error: Error) => { setMessage(error.message); setTaskLoadState('error'); });
-      else { ++boardLoadVersion.current; void api<{tasks: Task[]}>('/api/tasks/mine').then((data) => { if (!activeBoardId.current) { setTasks(data.tasks); setProjects([]); setMembers([]); setTaskLoadState('ready'); } }).catch((error: Error) => { setMessage(error.message); setTaskLoadState('error'); }); }
+      if (selectedTaskBoardId) void loadBoard(selectedTaskBoardId).then((loaded) => { if (loaded && !cancelled) setTaskLoadState('ready'); }).catch(failed);
+      else { ++boardLoadVersion.current; void api<{tasks: Task[]}>('/api/tasks/mine').then((data) => { if (!cancelled && !activeBoardId.current) { setTasks(data.tasks); setProjects([]); setMembers([]); setTaskLoadState('ready'); } }).catch(failed); }
     }
-    else if (navigation.screen === 'board') void loadBoard(navigation.boardId).catch((error: Error) => setMessage(error.message));
+    else if (navigation.screen === 'board') { setTaskLoadState('loading'); void loadBoard(navigation.boardId).then(loaded => { if (loaded && !cancelled) setTaskLoadState('ready'); }).catch(failed); }
     else if ((navigation.screen === 'settings-workspace' || navigation.screen === 'settings-automation') && navigation.boardId) void loadBoard(navigation.boardId).catch((error: Error) => setMessage(error.message));
+    return () => { cancelled = true; };
   }, [state, navigation, selectedTaskBoardId, taskReload]);
   useEffect(() => {
     if (navigation.screen !== 'create') return;
@@ -361,16 +366,27 @@ function App() {
     if (!userId || !board || filtersLoadedFor === board.id) return;
     let cancelled = false;
     setFiltersLoadedFor('');
+    setFilterLoadError(false);
+    if (filterLoadVersion.current.boardId !== board.id) filterLoadVersion.current = { boardId: board.id, version: filterEditVersion.current };
+    const editVersion = filterLoadVersion.current.version;
     void api<{filters: Partial<TaskFilters>}>(`/api/boards/${board.id}/task-filters`)
-      .then((data) => { if (!cancelled) { setFilters(normalizeTaskFilters(data.filters)); setFiltersLoadedFor(board.id); } })
-      .catch((error: Error) => { if (!cancelled) setMessage(error.message); });
+      .then((data) => { if (!cancelled) { if (editVersion === filterEditVersion.current) setFilters(normalizeTaskFilters(data.filters)); setFiltersLoadedFor(board.id); } })
+      .catch((error: Error) => { if (!cancelled) { setMessage(error.message); setFilterLoadError(true); } });
     return () => { cancelled = true; };
-  }, [userId, board?.id]);
+  }, [userId, board?.id, taskReload]);
   useEffect(() => {
-    if (!userId || !board || filtersLoadedFor !== board.id) return;
+    if (!board || filtersLoadedFor !== board.id || settingsLoadedFor !== board.id || taskLoadState !== 'ready') return;
+    setFilters(current => {
+      const project = current.project && projects.some(item => item.id === current.project && !item.archived_at) ? current.project : '';
+      const assignee = current.assignee && members.some(item => item.id === current.assignee) ? current.assignee : '';
+      return project === current.project && assignee === current.assignee ? current : { ...current, project, assignee };
+    });
+  }, [board?.id, filtersLoadedFor, settingsLoadedFor, taskLoadState, projects, members]);
+  useEffect(() => {
+    if (!userId || !board || filtersLoadedFor !== board.id || settingsLoadedFor !== board.id || taskLoadState !== 'ready') return;
     const timer = setTimeout(() => { void api(`/api/boards/${board.id}/task-filters`, json('PUT', { filters })).catch((error: Error) => setMessage(error.message)); }, 250);
     return () => clearTimeout(timer);
-  }, [filters, filtersLoadedFor, userId, board?.id]);
+  }, [filters, filtersLoadedFor, settingsLoadedFor, taskLoadState, userId, board?.id]);
 
   const action = async (run: () => Promise<unknown>, success: string, reload = true) => {
     try { await run(); if (reload && board) await loadBoard(board.id); setMessage(success); return true; }
@@ -557,8 +573,7 @@ function App() {
     setBacklog(false);
     setBoardOverrideId(undefined);
     setGlobalBoardId(boardId);
-    setFilters(defaultFilters);
-    setFiltersLoadedFor('');
+    if (boardId !== selectedTaskBoardId) { setFilters(defaultFilters); setFiltersLoadedFor(''); filterLoadVersion.current.boardId = ''; }
     setShowBoardSheet(false);
     setBoardSearch('');
     if (boardId) {
@@ -571,11 +586,12 @@ function App() {
     } else removeStorage('tasks.globalBoardId');
   };
   const backlogTasks = tasks.filter((task) => task.board_id === board?.id && isBacklogTask(task) && (!filters.project || task.project_id === filters.project));
-  const filteredTasks = !showArchive ? filterTasks(tasks, filters, userId) : tasks;
-  const filterCount = activeFilterCount(taskView === 'kanban' ? { ...filters, status: '' } : filters);
+  const effectiveFilters = taskFiltersForBoard(filters, board?.id);
+  const filteredTasks = !showArchive ? filterTasks(tasks, effectiveFilters, userId) : tasks;
+  const filterCount = activeFilterCount(taskView === 'kanban' ? { ...effectiveFilters, status: '' } : effectiveFilters);
   const recentBoards = recentBoardIds.map((id) => boards.find((item) => item.id === id)).filter((item): item is Board => Boolean(item));
   const matchingBoards = boards.filter((item) => item.name.toLocaleLowerCase('ru-RU').includes(boardSearch.trim().toLocaleLowerCase('ru-RU')));
-  const setFilter = <K extends keyof TaskFilters>(key: K, value: TaskFilters[K]) => setFilters((current) => ({ ...current, [key]: value }));
+  const setFilter = <K extends keyof TaskFilters>(key: K, value: TaskFilters[K]) => { ++filterEditVersion.current; setFilters((current) => normalizeTaskFilters({ ...current, ...(key === 'scope' ? { assignee: '', unassigned: false } : {}), [key]: value })); };
   const taskCard = (task: Task) => <article
     className={`task ${task.priority === 'urgent' ? 'urgent' : ''} ${task.overdue ? 'overdue' : ''} ${task.wait_check_due ? 'wait-due' : ''} ${!task.assignee_user_id ? 'unassigned' : ''} ${draggedTask === task.id ? 'dragging' : ''}`}
     key={task.id} draggable={Boolean(board && !task.archived_at && !taskStatusRestriction(task))}
@@ -617,7 +633,7 @@ function App() {
     ? deadlineSections.map((section) => deadlineGroups[section.id].length > 0 && <section className="task-section" key={section.id}><SectionHeader count={deadlineGroups[section.id].length} tone={section.id}><span className="section-title"><span aria-hidden="true"><Icon name={section.icon}/></span>{section.label}</span></SectionHeader>{deadlineGroups[section.id].map(mainTaskRow)}</section>)
     : groupTasksByProject(filteredTasks).map((group) => <section className="task-section project-section" key={group.id ?? 'none'}><SectionHeader count={group.tasks.length} tone="upcoming">{group.name}</SectionHeader>{group.tasks.map(mainTaskRow)}</section>)
   }</div>;
-  const kanbanColumns = Object.fromEntries(statuses.map((status) => [status, filterTasks(tasks, { ...filters, status }, userId).sort(compareTaskPriority)])) as Record<TaskStatus, Task[]>;
+  const kanbanColumns = Object.fromEntries(statuses.map((status) => [status, filterTasks(tasks, { ...effectiveFilters, status }, userId).sort(compareTaskPriority)])) as Record<TaskStatus, Task[]>;
   const kanbanTaskRow = (task: Task) => <article className={`kanban-task-row status-${task.status}`} data-task-id={task.id} data-priority={task.priority} key={task.id}>
     <button className="task-summary" onClick={() => void openCollaboration(task)}><strong>{task.title}</strong><div className="task-meta"><span>{task.project_name ?? task.board_name ?? 'Без проекта'}</span>{(task.deadline || task.deadline_date) && <span className={task.overdue ? 'deadline-overdue' : ''}>{formatTaskDeadline(task)}{task.overdue ? ' · Дедлайн прошёл' : ''}</span>}<span>{assessmentText(task)}</span>{task.status === 'waiting' && <Badge tone="blocker">Блокер</Badge>}</div></button>
     {task.assignee_name && <Avatar initials={initials(task.assignee_name)} label={`Исполнитель: ${task.assignee_name}`}/>}
@@ -633,15 +649,7 @@ function App() {
   const taskControls = board && !showArchive && <><div className="segmented"><button className={filters.scope === 'mine' ? 'active' : ''} onClick={() => setFilter('scope', 'mine')}>Мои</button><button className={filters.scope === 'all' ? 'active' : ''} onClick={() => setFilter('scope', 'all')}>Все</button></div>
     <div className="segmented"><button className={taskView === 'list' ? 'active' : ''} onClick={() => setTaskView('list')}>Список</button><button className={taskView === 'kanban' ? 'active' : ''} onClick={() => setTaskView('kanban')}>Канбан</button></div>
     <input className="search" type="search" value={filters.search} onChange={(event) => setFilter('search', event.target.value)} placeholder="Поиск по названию и описанию"/>
-    <details className="filters"><summary>Фильтры</summary><div className="filter-grid">
-      <select aria-label="Проект" value={filters.project} onChange={(event) => setFilter('project', event.target.value)}><option value="">Все проекты</option>{projects.filter((item) => !item.archived_at).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
-      <select aria-label="Исполнитель" value={filters.assignee} onChange={(event) => setFilter('assignee', event.target.value)}><option value="">Все исполнители</option>{members.map((member) => <option key={member.id} value={member.id}>{member.first_name}</option>)}</select>
-      <select aria-label="Статус" value={filters.status} onChange={(event) => setFilter('status', event.target.value as TaskFilters['status'])}><option value="">Все статусы</option>{statuses.map((status) => <option key={status} value={status}>{statusDisplayName[status]}</option>)}</select>
-      <AssessmentFilters value={filters} onChange={setFilters}/>
-      <select aria-label="Дедлайн" value={filters.deadline} onChange={(event) => setFilter('deadline', event.target.value as TaskFilters['deadline'])}><option value="">Любой дедлайн</option><option value="overdue">Просрочено</option><option value="today">Сегодня</option><option value="week">7 дней</option><option value="none">Без дедлайна</option></select>
-      <label className="checkbox"><input type="checkbox" checked={filters.unassigned} onChange={(event) => setFilter('unassigned', event.target.checked)}/> Без ответственного</label>
-      <button className="secondary" onClick={() => setFilters(defaultFilters)}>Сбросить</button>
-    </div></details></>;
+    <button className="secondary" onClick={() => setShowFilterSheet(true)}>Фильтры</button>{filterSheetForBoard()}</>;
   const viewControls = <div className="list-controls">
       <button className={`secondary${taskView === 'matrix' ? ' active' : ''}`} aria-pressed={taskView === 'matrix'} onClick={() => setTaskView('matrix')}>Матрица</button>
 
@@ -653,12 +661,12 @@ function App() {
   };
   const searchOpen = searchExpanded || Boolean(filters.search);
   const searchControls = <div className={`task-toolbar${searchOpen ? ' search-open' : ''}`}>
-      {searchOpen ? <div className="task-search"><Icon name="search"/><input autoFocus className="search" type="search" value={filters.search} onChange={(event) => setFilter('search', event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); closeSearch(); } }} placeholder="Поиск задач" aria-label="Поиск задач"/><button className="icon-button" aria-label="Закрыть поиск и очистить запрос" onClick={closeSearch}><Icon name="close"/></button></div> : <>{viewControls}<button ref={searchTrigger} className="search-trigger icon-button" aria-label="Поиск задач" aria-expanded={false} onClick={() => setSearchExpanded(true)}><Icon name="search"/></button></>}
-      <button className="filter-trigger" aria-label="Фильтры" onClick={() => { setShowAdvancedFilters(false); setFilterChoice(undefined); setShowFilterSheet(true); }}><Icon name="sliders"/>{filterCount > 0 && <span className="filter-count">{filterCount}</span>}</button>
+      {searchOpen ? <div className="task-search"><Icon name="search"/><input autoFocus={!showFilterSheet} className="search" type="search" value={filters.search} onChange={(event) => setFilter('search', event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); closeSearch(); } }} placeholder="Поиск задач" aria-label="Поиск задач"/><button className="icon-button" aria-label="Закрыть поиск и очистить запрос" onClick={closeSearch}><Icon name="close"/></button></div> : <>{viewControls}<button ref={searchTrigger} className="search-trigger icon-button" aria-label="Поиск задач" aria-expanded={false} onClick={() => setSearchExpanded(true)}><Icon name="search"/></button></>}
+      <button className="filter-trigger" aria-label="Фильтры" onClick={() => { setFilterChoice(undefined); setShowFilterSheet(true); }}><Icon name="sliders"/>{filterCount > 0 && <span className="filter-count">{filterCount}</span>}</button>
     </div>;
   const scopeTabs = board && !showArchive && <div className="scope-tabs" aria-label="Очередь задач">
-    <button aria-pressed={!backlog && filters.scope === 'mine'} onClick={() => { setBacklog(false); setFilters({ ...defaultFilters, scope: 'mine', project: filters.project }); }}>Мои</button>
-    <button aria-pressed={!backlog && filters.scope === 'all'} onClick={() => { setBacklog(false); setFilters({ ...defaultFilters, scope: 'all', project: filters.project }); }}>Все</button>
+    <button aria-pressed={!backlog && filters.scope === 'mine'} onClick={() => { setBacklog(false); setFilter('scope', 'mine'); }}>Мои</button>
+    <button aria-pressed={!backlog && filters.scope === 'all'} onClick={() => { setBacklog(false); setFilter('scope', 'all'); }}>Все</button>
     <button aria-pressed={backlog} onClick={() => { setBacklog(true); setShowArchive(false); }}>Бэклог {taskLoadState === 'ready' ? backlogTasks.length : ''}</button>
   </div>;
   const backlogContent = () => <>
@@ -682,46 +690,14 @@ function App() {
     <button className="secondary" onClick={() => { setShowBoardSheet(false); setPairFlow({}); }}>Создать доску на двоих</button>
     <button className="sheet-close secondary" onClick={() => setShowBoardSheet(false)}>Закрыть</button>
   </Sheet>;
-  const filterSheet = showFilterSheet && !showAdvancedFilters && !filterChoice && <Sheet className="task-sheet filter-choice-sheet" title="Фильтры" onClose={() => setShowFilterSheet(false)}>
-    {taskView === 'list' && <div className="filter-grouping"><h3>Группировка списка</h3><div className="segmented" role="group" aria-label="Группировка списка"><button aria-pressed={grouping === 'priority'} className={grouping === 'priority' ? 'active' : ''} onClick={() => setGrouping('priority')}>По приоритету</button><button aria-pressed={grouping === 'deadline'} className={grouping === 'deadline' ? 'active' : ''} onClick={() => setGrouping('deadline')}>По срокам</button><button aria-pressed={grouping === 'project'} className={grouping === 'project' ? 'active' : ''} onClick={() => setGrouping('project')}>По проектам</button></div></div>}
-    <div className="quick-filters">
-      <ChoiceRow kind="check" label="Только мои" selected={filters.scope === 'mine'} onClick={() => setFilter('scope', filters.scope === 'mine' ? 'all' : 'mine')}/>
-      <ChoiceRow kind="check" label="Срочные" selected={filters.urgency === 'true'} onClick={() => setFilters(current => ({ ...current, priority: '', urgency: current.urgency === 'true' ? 'any' : 'true' }))}/>
-      {taskView !== 'kanban' && <ChoiceRow kind="check" label="С блокером" selected={filters.status === 'waiting'} onClick={() => setFilter('status', filters.status === 'waiting' ? '' : 'waiting')}/>}
-    </div>
-    <div className="filter-links"><button onClick={() => setShowAdvancedFilters(true)}>Другие фильтры</button><button onClick={() => setFilters(defaultFilters)}>Сбросить</button></div>
-    <button className="filter-apply" onClick={() => setShowFilterSheet(false)}>Показать {taskView === 'kanban' ? statuses.reduce((total, status) => total + kanbanColumns[status].length, 0) : filteredTasks.length} задач</button>
-  </Sheet>;
-  const advancedFilterSheet = showFilterSheet && showAdvancedFilters && !filterChoice && <Sheet className="task-sheet advanced-filter-sheet" title="Другие фильтры" onClose={() => setShowAdvancedFilters(false)}>
-    <div>
-      {board && <ActionRow label="Проект" value={projects.find((item) => item.id === filters.project)?.name ?? 'Все проекты'} onClick={() => setFilterChoice('project')}/>}
-      {board && <ActionRow label="Исполнитель" value={members.find((item) => item.id === filters.assignee)?.first_name ?? 'Все исполнители'} onClick={() => setFilterChoice('assignee')}/>}
-      {taskView !== 'kanban' && <ActionRow label="Статус" value={filters.status ? statusDisplayName[filters.status] : 'Без завершённых'} onClick={() => setFilterChoice('status')}/>}
-      <AssessmentFilters value={filters} onChange={setFilters}/>
-      <ActionRow label="Дедлайн" value={{ overdue: 'Просрочено', today: 'Сегодня', week: '7 дней', none: 'Без дедлайна', '': 'Любой' }[filters.deadline]} onClick={() => setFilterChoice('deadline')}/>
-      <ChoiceRow kind="check" label="Без ответственного" selected={filters.unassigned} onClick={() => setFilters((current) => ({ ...current, scope: 'all', assignee: '', unassigned: !current.unassigned }))}/>
-    </div>
-    <button className="filter-apply" onClick={() => { setShowAdvancedFilters(false); setShowFilterSheet(false); }}>Показать {filteredTasks.length} задач</button>
-  </Sheet>;
-  const filterChoiceDefinitions = {
-    project: { title: 'Проект', current: filters.project, options: [{ value: '', label: 'Все проекты' }, ...projects.filter((item) => !item.archived_at).map((item) => ({ value: item.id, label: item.name }))] },
-    assignee: { title: 'Исполнитель', current: filters.assignee, options: [{ value: '', label: 'Все исполнители' }, ...members.map((member) => ({ value: member.id, label: member.first_name }))] },
-    status: { title: 'Статус', current: filters.status, options: [{ value: '', label: 'Без завершённых' }, ...statuses.map((status) => ({ value: status, label: statusDisplayName[status] }))] },
-    priority: { title: 'Приоритет', current: filters.priority, options: [{ value: '', label: 'Любой' }, { value: 'normal', label: 'Обычный' }, { value: 'urgent', label: 'Срочный' }] },
-    deadline: { title: 'Дедлайн', current: filters.deadline, options: [{ value: '', label: 'Любой' }, { value: 'overdue', label: 'Просрочено' }, { value: 'today', label: 'Сегодня' }, { value: 'week', label: '7 дней' }, { value: 'none', label: 'Без дедлайна' }] }
-  } satisfies Record<FilterChoice, { title: string; current: string; options: { value: string; label: string }[] }>;
-  const filterChoiceSheet = filterChoice && (() => {
-    if (filterChoice === 'priority') return <Sheet className="task-sheet" title="Приоритет" onClose={() => setFilterChoice(undefined)}><AssessmentFilters value={filters} onChange={setFilters}/><button onClick={() => setFilterChoice(undefined)}>Применить</button></Sheet>;
-    const choice = filterChoiceDefinitions[filterChoice];
-    const choose = (value: string) => {
-      if (filterChoice === 'project' || filterChoice === 'assignee') setFilter(filterChoice, value);
-      else if (filterChoice === 'status') setFilter('status', value as TaskFilters['status']);
-
-      else setFilter('deadline', value as TaskFilters['deadline']);
-      setFilterChoice(undefined);
-    };
-    return <Sheet className="task-sheet" title={choice.title} onClose={() => setFilterChoice(undefined)}><div className="choice-list" role="radiogroup">{choice.options.map((option) => <ChoiceRow key={option.value} label={option.label} selected={choice.current === option.value} onClick={() => choose(option.value)}/>)}</div><button className="sheet-close secondary" onClick={() => setFilterChoice(undefined)}>Закрыть</button></Sheet>;
-  })();
+  function filterSheetForBoard() {
+    return showFilterSheet && <TaskFilterSheet filters={effectiveFilters} onChange={value => { ++filterEditVersion.current; setFilters(normalizeTaskFilters(value)); if (!value.search) setSearchExpanded(false); }} boards={boards} board={board} projects={projects} members={members} view={taskView} grouping={grouping} onGrouping={setGrouping}
+      onBoard={id => { chooseTaskBoard(id); if (navigation.screen === 'board') navigate({ screen: 'tasks' }); }}
+      count={taskView === 'kanban' ? statuses.reduce((total, status) => total + kanbanColumns[status].length, 0) : filteredTasks.length}
+      loadState={taskLoadState === 'error' || (board && filterLoadError) ? 'error' : taskLoadState === 'loading' || (board && filtersLoadedFor !== board.id) ? 'loading' : 'ready'} onRetry={() => setTaskReload(value => value + 1)} onClose={() => setShowFilterSheet(false)}/>;
+  }
+  const filterSheet = filterSheetForBoard();
+  const filterChoiceSheet = filterChoice && <Sheet className="task-sheet" title="Проект" onClose={() => setFilterChoice(undefined)}><div className="choice-list" role="radiogroup">{[{ value: '', label: 'Все проекты' }, ...projects.filter(item => !item.archived_at).map(item => ({ value: item.id, label: item.name }))].map(option => <ChoiceRow key={option.value} label={option.label} selected={filters.project === option.value} onClick={() => { setFilter('project', option.value); setFilterChoice(undefined); }}/>)}</div><button className="sheet-close secondary" onClick={() => setFilterChoice(undefined)}>Закрыть</button></Sheet>;
   const createChoiceDefinitions = {
     board: { title: 'Доска', current: createBoardId, options: [{ value: '', label: 'Выберите доску' }, ...boards.filter((item) => item.status === 'active').map((item) => ({ value: item.id, label: item.name }))] },
     project: { title: 'Проект', current: project, options: [{ value: '', label: 'Без проекта' }, ...projects.filter((item) => !item.archived_at).map((item) => ({ value: item.id, label: item.name }))] },
@@ -750,7 +726,7 @@ function App() {
     else if (taskLoadState === 'ready' && (!board || filtersLoadedFor === board.id)) {
       const outsideBoard = selectedTaskBoardId ? resultTask.board_id !== selectedTaskBoardId : resultTask.assignee_user_id !== userId;
       if (outsideBoard || showArchive || (backlog && !isBacklogTask(resultTask))) resultReason = 'Задача в другом представлении.';
-      else if (backlog ? Boolean(filters.project && resultTask.project_id !== filters.project) : !filterTasks([resultTask], taskView === 'kanban' ? { ...filters, status: resultTask.status } : filters, userId).length) resultReason = 'Задача создана, но скрыта фильтрами';
+      else if (backlog ? Boolean(filters.project && resultTask.project_id !== filters.project) : !filterTasks([resultTask], taskView === 'kanban' ? { ...effectiveFilters, status: resultTask.status } : effectiveFilters, userId).length) resultReason = 'Задача создана, но скрыта фильтрами';
       else if (!backlog && taskView === 'kanban' && resultTask.status !== kanbanStatus) resultReason = `Задача в другой колонке: «${statusDisplayName[resultTask.status]}».`;
     }
   }
@@ -911,7 +887,7 @@ function App() {
   if (navigation.screen === 'tasks') return <AppShell message={message} announcement={createAnnouncement} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>
     {createdNotice}
     {board?.type === 'pair' && <><ActionRow label="Доступ" value={board.status === 'archived' ? 'Доска в архиве' : 'Доска на двоих'} onClick={() => setPairFlow({ board })}/>{board.status === 'archived' && <p className="notice">Доска в архиве. Задачи и история доступны только для чтения.</p>}</>}
-    {taskToolbar}{backlog && board ? backlogContent() : <>{taskLoadState === 'loading' ? <Skeleton label="Загрузка задач"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : taskView === 'kanban' ? mainKanban : groupedTaskList()}{taskLoadState === 'ready' && taskView === 'list' && !filteredTasks.length && (board?.status === 'active' && !tasks.length ? <section className="task-state"><h2>Начните с первой задачи.</h2><p>Добавьте задачу или вставьте список. Исполнителя можно выбрать позже.</p><button onClick={() => navigate({ screen: 'create' })}>Добавить задачу</button><button className="secondary" onClick={() => { setBulkDraft({ boardId: board.id, boardName: board.name, projects, project: '', text: '', started: false }); setBulkOpen(true); }}>Вставить список</button></section> : <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>)}</>}{boardOverrideId && <p className="context-note">Открыта доска по ссылке; ваш обычный выбор не изменён.</p>}{boardSheet}{filterSheet}{advancedFilterSheet}{filterChoiceSheet}{kanbanStatusSheet}</TasksScreen></AppShell>;
+    {taskToolbar}{backlog && board ? backlogContent() : <>{taskLoadState === 'loading' ? <Skeleton label="Загрузка задач"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : taskView === 'kanban' ? mainKanban : groupedTaskList()}{taskLoadState === 'ready' && taskView === 'list' && !filteredTasks.length && (board?.status === 'active' && !tasks.length ? <section className="task-state"><h2>Начните с первой задачи.</h2><p>Добавьте задачу или вставьте список. Исполнителя можно выбрать позже.</p><button onClick={() => navigate({ screen: 'create' })}>Добавить задачу</button><button className="secondary" onClick={() => { setBulkDraft({ boardId: board.id, boardName: board.name, projects, project: '', text: '', started: false }); setBulkOpen(true); }}>Вставить список</button></section> : <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>)}</>}{boardOverrideId && <p className="context-note">Открыта доска по ссылке; ваш обычный выбор не изменён.</p>}{boardSheet}{filterSheet}{filterChoiceSheet}{kanbanStatusSheet}</TasksScreen></AppShell>;
   if (navigation.screen === 'create') return <AppShell message={message} announcement={createAnnouncement} navigation={navigation} navigate={navigate} hideNavigation><CreateScreen boardName={boards.find((item) => item.id === createBoardId)?.name ?? 'Все доски'} onClose={() => navigate(createOrigin)} onSelectBoard={() => { if (!createLock.current && !createUncertain && !(createSuccess && !createSuccess.another)) setCreateChoice('board'); }}>
     {createdNotice}
     <form onSubmit={(event) => { event.preventDefault(); void create(); }}><fieldset className="create-screen-form" disabled={createPending || createUncertain || Boolean(createSuccess && !createSuccess.another)}>

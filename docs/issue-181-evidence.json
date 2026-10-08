@@ -1,0 +1,74 @@
+{
+  "source": {
+    "base": "57fb73804c3ba0eb95a3a8374bf92bba76bbe1f5",
+    "files": {
+      "apps/web/src/app-shell.tsx": "ffa3626447f67276474e266d0768320b5929885463c2a5e27cf3fd9c62ba335a",
+      "apps/web/src/environment.ts": "7cd22485c59c3552ea90fafa5580ddc659f9cce7644b4783854785f25d2e917c",
+      "apps/web/src/main.tsx": "69e1324ade036d9faae0644bb2ff13648c5365e6e1731f78924419dfb407464f",
+      "apps/web/src/style.css": "95c5183ba61b9cfc5a4d765be77e28161279851b3d84b990e8f8b7c326768887",
+      "apps/web/src/task-filters.css": "eb9b50e811bfd990dac180e5a6446154cbecc8129aaa7592abc0a3f475cb613b",
+      "apps/web/src/task-filters.tsx": "01dd75629487dbaae9d3d9c8ce282fd8bb82f1fc3f2e737cb373904717268a71",
+      "apps/web/src/tasks.ts": "46e591a3f732e061f7d374130b416d780783bc3f23f35867e61ec2e7e5207311",
+      "apps/web/test/tasks.test.ts": "2bff1d62d2b8a739cb9c47042a051329bc0c0be683503f1c323a71cadd939834",
+      "apps/web/visual/backlog.spec.ts": "0fbc85b253fffc31aa84cb04745c983a9dd63ec56bce9a4614daf1f89968e727",
+      "apps/web/visual/filters.spec.ts": "c53f7f2dac78be21b3c09aa7b23e882cb80744108376f5afaf06f75d60ad55a5",
+      "apps/web/visual/priority.spec.ts": "8797e73e43878a46d64e7a05dbc41546df6c382335092c50a74fbc4ecbb99529"
+    },
+    "source_sha256": "815693d7af3c5838c5bc5b2abad12993625163c03a5e2b03cd8573f2a3b3f2fc"
+  },
+  "checks": {
+    "unit": 47,
+    "database": 36,
+    "visual": {
+      "total": 305,
+      "passed": 305,
+      "failed": 0,
+      "skipped": 0,
+      "log": "visual-serial.log"
+    },
+    "mobile": [
+      {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "skipped": 0,
+        "log": "mobile-320.log"
+      },
+      {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "skipped": 0,
+        "log": "mobile-390.log"
+      }
+    ]
+  },
+  "commands": {
+    "test": "npm run test",
+    "lint": "npm run lint",
+    "typecheck": "npm run typecheck",
+    "build": "npm run build",
+    "visual": "PLAYWRIGHT_PORT=45181 npm run test:visual",
+    "diff": "git diff --check"
+  },
+  "other_gates": {
+    "lint": "PASS",
+    "typecheck": "PASS",
+    "build": "PASS",
+    "diff": "PASS"
+  },
+  "scope": {
+    "device_tested": false,
+    "deployed": false,
+    "raw_evidence": "artifacts/visual-evidence/issue-181/ (local, ignored)",
+    "baseline": "main with #177 only; not integrated #175"
+  },
+  "known_noncanonical_run": {
+    "workers": 2,
+    "passed": 304,
+    "failed": 1,
+    "test": "creation, series and reopening keep the editor visible 390",
+    "isolated_recheck": "3/3 PASS",
+    "canonical_final": "305/305 PASS, workers=1"
+  }
+}
