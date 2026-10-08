@@ -160,8 +160,8 @@ export function TasksScreen({ children, boardName, onSelectBoard }: { children: 
   return <><header className="page-header"><div className="title-row"><h1 tabIndex={-1}>Задачи</h1></div><button className="board-selector" onClick={onSelectBoard}>{boardName}<Icon name="chevron"/></button></header>{children}</>;
 }
 
-export function SettingsScreen({ children, title = 'Настройки', subtitle }: { children: ReactNode; title?: string; subtitle?: string }) {
-  return <section className="settings-screen"><header className="settings-header"><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</header>{children}</section>;
+export function SettingsScreen({ children, title = 'Настройки', subtitle, icon = 'settings', onBack, backLabel = 'Настройки' }: { children: ReactNode; title?: string; subtitle?: string; icon?: IconName; onBack?: () => void; backLabel?: string }) {
+  return <section className="settings-screen"><header className={`settings-header${onBack ? ' settings-detail-header' : ''}`}>{onBack && <div className="settings-header-top"><button className="back settings-back" onClick={onBack}><Icon name="back"/>{backLabel}</button><span className="settings-header-mark"><Icon name={icon}/></span></div>}<h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</header>{children}</section>;
 }
 
 export function CreateScreen({ children, boardName, onClose, onSelectBoard }: { children: ReactNode; boardName: string; onClose: () => void; onSelectBoard: () => void }) {

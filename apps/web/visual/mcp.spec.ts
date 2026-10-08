@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { assertSettingsLayout } from './settings-layout';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -56,6 +57,7 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
     await mkdir(evidence,{recursive:true});
     const shot=async(name:string)=>{
       await page.evaluate(()=>document.fonts.ready);
+      await assertSettingsLayout(page, await page.locator('.sheet').count() ? '.sheet' : '.mcp-screen');
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       await page.screenshot({path:`${evidence}/${name}-${width}.png`,fullPage:!await page.getByRole('dialog',{name:'Как подключить клиент'}).isVisible(),style:'.mcp-key { color: transparent !important; -webkit-text-fill-color: transparent !important; background: #d7dde6 !important; }'});
     };
@@ -120,6 +122,9 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
     await expect(help.getByRole('button',{name:'Общая настройка',exact:true})).toHaveAttribute('aria-pressed','true');
     await expect(help).toContainText('Streamable HTTP');
     await expect(help).toContainText('Bearer ВАШ_КЛЮЧ');
+    await expect(help.locator('.mcp-help-steps > li')).toHaveCount(3);
+    await expect(help.getByRole('heading', {name:'Добавьте сервер'})).toBeVisible();
+    await expect(help.getByRole('button', {name:'Hermes',exact:true})).toHaveCSS('box-shadow', 'none');
     await expect(help.locator('.mcp-command')).toHaveCount(0);
     expect((await help.innerText()).includes(secret)).toBe(false);
     await shot('help-general');
@@ -223,6 +228,11 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
     await expect(page.locator('.mcp-key')).toHaveCount(0);
     await help.getByRole('button',{name:'Готово',exact:true}).click();
     await shot('details');
+    await expect(page.locator('.mcp-summary').getByRole('button', {name:'Редактировать',exact:true})).toBeVisible();
+    await expect(page.locator('.mcp-details').getByRole('heading', {name:'Мой Hermes',exact:true})).toHaveCount(1);
+    await expect(page.locator('.mcp-details .mcp-board-scope li')).toHaveCount(1);
+    await expect(page.locator('.mcp-credentials').getByRole('button', {name:'Перевыпустить ключ',exact:true})).toBeVisible();
+    await expect(page.locator('.mcp-revoke').getByRole('button', {name:'Отозвать доступ',exact:true})).toBeVisible();
     const connectionId=(await db.query('SELECT id FROM mcp_connections WHERE user_id=$1',[person.userId])).rows[0].id;
     const originalHash=(await db.query('SELECT key_hash FROM mcp_connections WHERE id=$1',[connectionId])).rows[0].key_hash;
     const secondBoard=await createPairBoard(db,person.userId,'Синтетическая доска с длинным названием для проверки переноса строк',randomUUID());
@@ -276,6 +286,22 @@ for (const width of [390,320]) test(`connections lifecycle, loss recovery and cl
     expect((await db.query('SELECT key_hash FROM mcp_connections WHERE id=$1',[connectionId])).rows[0].key_hash===originalHash).toBe(true);
     await expect(page.locator('.mcp-summary .mcp-auto')).toContainText('Автодоступ');
     await shot('automatic-details');
+    if (width===320) {
+      const scaling=await page.addStyleTag({content:'html {font-size:200% !important;}'});
+      await shot('details-text-200');
+      for (const name of ['Редактировать','Перевыпустить ключ','Отозвать доступ']) {
+        const control=page.getByRole('button',{name,exact:true});
+        // Trial performs normal hit-testing and scrolling without editing or revoking access.
+        await control.click({trial:true});
+        await expect(control).toBeInViewport();
+        expect(await control.evaluate(element=>{
+          const rect=element.getBoundingClientRect();
+          const hit=document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2);
+          return {name:element.textContent,unobstructed:element.contains(hit)};
+        })).toEqual({name,unobstructed:true});
+      }
+      await scaling.evaluate(element=>element.parentNode?.removeChild(element));
+    }
     // Membership loss and immediate rejoin are visible as an exception, never silently restored.
     await db.query('DELETE FROM memberships WHERE board_id=$1 AND user_id=$2',[secondBoard.id,person.userId]);
     await db.query("INSERT INTO memberships (board_id,user_id,role) VALUES ($1,$2,'owner')",[secondBoard.id,person.userId]);

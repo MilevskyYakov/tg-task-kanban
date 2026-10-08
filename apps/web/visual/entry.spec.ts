@@ -118,6 +118,12 @@ for (const width of [390, 320]) {
       await expect(second.getByRole('button', { name: 'Начать работу' })).toHaveCount(0);
       await attach(page, owner);
       await expect(page.getByRole('heading', { name: 'Начните работу вместе с командой.' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Студия', exact: true })).toBeFocused();
+      await expect(page.getByRole('heading', { name: 'Студия', exact: true })).toHaveCSS('outline-style', 'none');
+      await page.keyboard.press('Shift+Tab');
+      await expect(page.getByRole('button', { name: 'Назад', exact: true })).toBeFocused();
+      await expect(page.getByRole('button', { name: 'Назад', exact: true })).toHaveCSS('outline-style', 'solid');
+      await page.getByRole('heading', { name: 'Студия', exact: true }).focus();
       await page.screenshot({ path: `${evidence}/entry-group-setup-${width}.png` });
       await page.getByRole('button', { name: 'Назад', exact: true }).click();
       await expect(page.getByRole('button', { name: 'Личная доска', exact: true })).toBeVisible();
@@ -166,6 +172,8 @@ for (const width of [390, 320]) {
       start = token;
       await second.reload();
       await expect(second.getByRole('heading', { name: 'Доска временно заморожена.' })).toBeVisible();
+      await expect(second.getByRole('heading', { name: 'Студия', exact: true })).toBeFocused();
+      await expect(second.getByRole('heading', { name: 'Студия', exact: true })).toHaveCSS('outline-style', 'none');
       await expect(second.getByRole('button', { name: 'Начать работу' })).toHaveCount(0);
       await second.screenshot({ path: `${evidence}/entry-group-frozen-${width}.png` });
       join.update_id++; join.my_chat_member.date++; join.my_chat_member.old_chat_member.status = 'left'; join.my_chat_member.new_chat_member.status = 'member';

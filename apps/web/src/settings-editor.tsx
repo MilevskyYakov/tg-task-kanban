@@ -318,8 +318,8 @@ export function PublicationSetting(props: EditorProps & {schedule: Schedule; boa
   return <fieldset disabled={props.readOnly}><legend>{props.schedule.kind === 'daily' ? 'План дня' : 'Недельная сводка'}</legend>
     <label><input type="checkbox" checked={Boolean(draft.enabled)} onChange={(event) => edit.set('enabled', event.target.checked, true)}/> Включена</label>
     <Feedback edit={edit}/>
-    <label>Дни (1–7)<input value={String(draft.weekdays)} aria-invalid={Boolean(edit.errors.weekdays)} onChange={(event) => edit.set('weekdays', event.target.value)}/></label>
-    <label>Время<input type="time" value={String(draft.local_time)} aria-invalid={Boolean(edit.errors.local_time)} onChange={(event) => edit.set('local_time', event.target.value, true)}/></label>
+    <div className="settings-field-grid"><label>Дни (1–7)<input value={String(draft.weekdays)} aria-invalid={Boolean(edit.errors.weekdays)} onChange={(event) => edit.set('weekdays', event.target.value)}/></label>
+    <label>Время<input type="time" value={String(draft.local_time)} aria-invalid={Boolean(edit.errors.local_time)} onChange={(event) => edit.set('local_time', event.target.value, true)}/></label></div>
     <label>Часовой пояс<input value={String(draft.timezone)} aria-invalid={Boolean(edit.errors.timezone)} onChange={(event) => edit.set('timezone', event.target.value)}/></label>
     {props.boards && Array.isArray(draft.included_board_ids) && <section aria-label="Доски сводки"><h3>Доски сводки</h3><p>Новые доски включаются вручную. Доступ участников не меняется.</p>
       {props.boards.map(board => <label className="checkbox" key={board.id}><input type="checkbox" checked={(draft.included_board_ids as string[]).includes(board.id)} onChange={event => edit.set('included_board_ids', event.target.checked ? [...draft.included_board_ids as string[], board.id].sort() : (draft.included_board_ids as string[]).filter(id => id !== board.id), true)}/>{board.name}{board.status !== 'active' ? ' · не публикуется' : ''}</label>)}

@@ -376,8 +376,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .settings-group h2 { margin: 0 0 16px; font-family: var(--font-ui); font-size: 1.5rem; font-weight: 550; }
 .settings-group > small { display: block; margin-top: 12px; color: var(--text-muted); }
 .settings-form { display: grid; gap: 12px; }
-.settings-form label { display: grid; gap: 6px; color: var(--text-muted); font-size: .8125rem; }
-.settings-form input, .settings-form select { width: 100%; min-height: 44px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-soft); color: var(--text); padding: 10px 12px; }
+.settings-form label:not(:has(input[type=checkbox])) { display: grid; gap: 6px; color: var(--text-muted); font-size: .8125rem; }
+.settings-form input:not([type=checkbox]):not([type=radio]), .settings-form select { width: 100%; min-height: 44px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-soft); color: var(--text); padding: 10px 12px; }
 .inline-form { grid-template-columns: minmax(0, 1fr) auto; align-items: end; margin-top: 10px; }
 .inline-form label { min-width: 0; }
 .inline-form .secondary { margin: 0; }
@@ -693,7 +693,7 @@ input[type=checkbox] { accent-color: var(--primary); }
 .sheet .icon-button, .sheet .secondary, .settings-screen .secondary, .settings-back, .pair-screen .secondary { border: 1px solid #FFFFFFCC; border-radius: 24px; background: var(--control-fill); color: var(--text); box-shadow: var(--shadow-control); }
 .filter-apply, .mcp-primary, .detail-add button, .detail-save, .settings-form > button:not(.secondary):not(.action-row):not(.danger), .pair-actions button:not(.secondary):not(.danger), .entry-choices button:not(.secondary) { border: 1px solid #176447; border-radius: 26px; background: var(--action-fill); color: #fff; box-shadow: inset 0 1px 0 #FFFFFF4D, 0 6px 12px #17644726; }
 .sheet .filter-links button { border-radius: 22px; }
-.sheet-search, .filter-sheet select, .settings-form input, .settings-form select { border-radius: 20px; background: #F9FBF7; }
+.sheet-search, .filter-sheet select, .settings-form input:not([type=checkbox]):not([type=radio]), .settings-form select { border-radius: 20px; background: #F9FBF7; }
 .filter-apply, .create-action button, .mcp-primary { border-radius: 26px; }
 .create-screen > header { grid-template-columns: 44px minmax(0, 1fr); gap: 12px; border: 0; min-height: 56px; }
 .create-screen > header h1 { font-size: 1.625rem; }

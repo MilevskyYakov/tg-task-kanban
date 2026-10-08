@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { assertSettingsLayout } from './settings-layout';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -49,6 +50,7 @@ for (const width of [390, 320]) test(`chat directions: entry, confirmation, lost
     await mkdir(evidence, {recursive: true});
     const shot = async (name: string) => {
       await page.evaluate(() => document.fonts.ready);
+      if (await page.locator('.sheet, .settings-screen').count()) await assertSettingsLayout(page, await page.locator('.sheet').count() ? '.sheet' : '.settings-screen');
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({path: `${evidence}/issue176-${name}-${width}.png`});
     };

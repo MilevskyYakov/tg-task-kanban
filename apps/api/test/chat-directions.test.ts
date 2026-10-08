@@ -172,7 +172,9 @@ test('one selected multi-board report; durable parts, rejection retry and unknow
     return Response.json({ok: true, result: {message_id: sends.length}});
   });
   try {
-    const child = (await f.call(owner, 'POST', `/api/boards/${f.root.id}/chat/boards`, await f.creation('Второе направление'))).json();
+    // ASCII names have distinct ordering even on macOS libc locales that tie Cyrillic names.
+    const child = (await f.call(owner, 'POST', `/api/boards/${f.root.id}/chat/boards`, await f.creation('Middle direction'))).json();
+    assert.equal((await f.call(owner, 'PATCH', `/api/boards/${f.root.id}`, {name: 'Zulu direction'})).statusCode, 200);
     const now = new Date('2036-08-11T12:00:00Z');
     await updateSchedule(db, f.root.id, 'daily', {enabled: true, weekdays: [1,2,3,4,5,6,7], local_time: '00:00', timezone: 'Asia/Ho_Chi_Minh', included_statuses: ['todo'], included_board_ids: [f.root.id]});
     await createTask(db, owner.userId, f.root.id, {title: 'Старая задача'});
@@ -199,7 +201,7 @@ test('one selected multi-board report; durable parts, rejection retry and unknow
     assert.equal(run.status, 'pending'); assert.equal(run.sent_parts, 1); assert.deepEqual(run.message_ids, ['1']);
     const snapshot = run.messages;
     await db.query("UPDATE tasks SET title = 'Changed after snapshot' WHERE board_id = $1", [child.id]);
-    assert.equal((await f.call(owner, 'PATCH', `/api/boards/${f.root.id}`, {name: 'А: переименованная доска'})).statusCode, 200);
+    assert.equal((await f.call(owner, 'PATCH', `/api/boards/${f.root.id}`, {name: 'Alpha renamed direction'})).statusCode, 200);
     const renamedOrder = (await db.query('SELECT id FROM boards WHERE chat_root_id=$1 ORDER BY name,id', [f.root.id])).rows.map(board => board.id);
     assert.notDeepEqual(renamedOrder, run.board_ids, 'fixture must change name order without changing the selected set');
     mode = 'ok'; await deliverPendingPublications(db, 'test', 'bot', new Date('2036-08-11T12:02:00Z'));
