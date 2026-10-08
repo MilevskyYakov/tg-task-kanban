@@ -23,14 +23,18 @@ export function checkSettingsExpected(current: Record<string, unknown>, expected
   if (expected && Object.keys(expected).some((key) => JSON.stringify(current[key]) !== JSON.stringify(expected[key]))) throw new SettingsConflictError(current);
 }
 const tokenHash = (token: string, secret: string) => createHash('sha256').update(`${secret}:${token}`).digest('hex');
-const linkHash = (token: string) => createHash('sha256').update(token).digest('hex');
+export async function lockBoard(client: pg.PoolClient, boardId: string) {
+  const root = /^[0-9a-f-]{36}$/i.test(boardId)
+    ? (await client.query('SELECT chat_root_id FROM boards WHERE id = $1', [boardId])).rows[0]?.chat_root_id : undefined;
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [root ?? boardId]);
+}
 
 // Membership changes use the same lock as task mutations and recurrence writes.
 export async function withBoardLock<T>(db: Database, boardId: string, run: (client: pg.PoolClient) => Promise<T>): Promise<T> {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
+    await lockBoard(client, boardId);
     const result = await run(client);
     await client.query('COMMIT');
     return result;
@@ -75,19 +79,19 @@ export async function sessionUser(db: Database, token: string | undefined, secre
   return result.rows[0] ?? null;
 }
 
-export async function boardsForUser(db: Database, userId: string) {
-  const result = await db.query(`SELECT b.id, b.type, b.name, b.status, m.role FROM boards b
+export async function boardsForUser(db: Database | pg.PoolClient, userId: string) {
+  const result = await db.query(`SELECT b.id, b.type, b.name, b.status, b.chat_root_id, m.role FROM boards b
     JOIN memberships m ON m.board_id = b.id WHERE m.user_id = $1 ORDER BY b.name`, [userId]);
   return result.rows;
 }
 
 export async function boardForUser(db: Database, userId: string, boardId: string) {
-  const result = await db.query(`SELECT b.id, b.type, b.name, b.status, b.telegram_chat_id, m.role FROM boards b
+  const result = await db.query(`SELECT b.id, b.type, b.name, b.status, b.telegram_chat_id, b.chat_root_id, m.role FROM boards b
     JOIN memberships m ON m.board_id = b.id WHERE b.id = $1 AND m.user_id = $2`, [boardId, userId]);
   return result.rows[0] ?? null;
 }
 
-export async function boardMembers(db: Database, userId: string, boardId: string) {
+export async function boardMembers(db: Database | pg.PoolClient, userId: string, boardId: string) {
   const result = await db.query(`SELECT u.id, u.first_name, u.username, member.role FROM memberships viewer
     JOIN memberships member ON member.board_id = viewer.board_id JOIN users u ON u.id = member.user_id
     WHERE viewer.board_id = $1 AND viewer.user_id = $2 ORDER BY u.first_name`, [boardId, userId]);
@@ -125,88 +129,7 @@ export async function renameBoard(db: Database, userId: string, boardId: string,
   });
 }
 
-export async function connectChatBoard(db: Database, chatId: number, name: string, updateId?: number, eventDate = 0) {
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-    const candidateId = randomUUID();
-    const board = await client.query<{id: string; status: string}>(`INSERT INTO boards (id, type, name, telegram_chat_id, status, telegram_member_update_id, telegram_member_date)
-      VALUES ($1, 'chat', $2, $3, 'draft', $4, $5) ON CONFLICT (telegram_chat_id) WHERE type = 'chat'
-      DO UPDATE SET name = CASE WHEN boards.status = 'draft' THEN EXCLUDED.name ELSE boards.name END,
-        status = CASE WHEN boards.status = 'frozen' THEN COALESCE(boards.frozen_from_status, 'active') ELSE boards.status END,
-        frozen_from_status = NULL, telegram_member_update_id = COALESCE(EXCLUDED.telegram_member_update_id, boards.telegram_member_update_id),
-        telegram_member_date = EXCLUDED.telegram_member_date
-      WHERE $4::bigint IS NULL OR boards.telegram_member_update_id IS NULL OR (COALESCE(boards.telegram_member_date, 0), boards.telegram_member_update_id) < ($5, $4)
-      RETURNING id, status`, [candidateId, name, chatId, updateId ?? null, eventDate]);
-    if (!board.rows[0]) {
-      await client.query('COMMIT');
-      return null;
-    }
-    const boardId = board.rows[0].id;
-    await client.query(`INSERT INTO publication_schedules (board_id, kind, weekdays, local_time) VALUES
-      ($1, 'daily', ARRAY[1,2,3,4,5]::smallint[], '11:00'), ($1, 'weekly', ARRAY[1]::smallint[], '10:30')
-      ON CONFLICT DO NOTHING`, [boardId]);
-    await client.query('COMMIT');
-    return { id: boardId, status: board.rows[0].status };
-  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
-}
-
-export async function migrateChatBoard(db: Database, oldChatId: number, newChatId: number) {
-  await db.query("UPDATE boards SET telegram_chat_id = $2 WHERE type = 'chat' AND telegram_chat_id = $1", [oldChatId, newChatId]);
-}
-
-export async function freezeChatBoard(db: Database, chatId: number, updateId?: number, eventDate = 0) {
-  await db.query(`UPDATE boards SET frozen_from_status = CASE WHEN status = 'frozen' THEN frozen_from_status ELSE status END,
-    status = 'frozen', telegram_member_update_id = COALESCE($2, telegram_member_update_id), telegram_member_date = $3
-    WHERE type = 'chat' AND telegram_chat_id = $1
-      AND ($2::bigint IS NULL OR telegram_member_update_id IS NULL OR (COALESCE(telegram_member_date, 0), telegram_member_update_id) < ($3, $2))`, [chatId, updateId ?? null, eventDate]);
-}
-
-export async function redeemBoardLink(db: Database, userId: string, token: string) {
-  const taskLaunch = token.match(/^task_([0-9a-f-]{36})_([0-9a-f-]{36})$/i);
-  if (taskLaunch) {
-    const task = await db.query<{id: string}>(`SELECT b.id FROM boards b JOIN memberships m ON m.board_id = b.id
-      JOIN tasks t ON t.board_id = b.id WHERE b.id = $1 AND t.id = $2 AND m.user_id = $3 AND b.status <> 'frozen'`,
-      [taskLaunch[1], taskLaunch[2], userId]);
-    return task.rows[0] ? boardForUser(db, userId, task.rows[0].id) : null;
-  }
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-    const result = await client.query<{id: string; status: string}>(`SELECT b.id, b.status FROM board_links l JOIN boards b ON b.id = l.board_id
-      WHERE l.token_hash = $1 AND l.revoked_at IS NULL AND b.type = 'chat' FOR UPDATE OF b, l`, [linkHash(token)]);
-    const link = result.rows[0];
-    if (link && link.status !== 'frozen') await client.query(`INSERT INTO memberships (board_id, user_id, role) VALUES ($1, $2, 'member')
-      ON CONFLICT (board_id, user_id) DO NOTHING`, [link.id, userId]);
-    await client.query('COMMIT');
-    return link ? boardForUser(db, userId, link.id) : null;
-  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
-}
-
-export async function activateChatBoard(db: Database, userId: string, boardId: string, name: string) {
-  return withBoardLock(db, boardId, async (client) => {
-    const result = await client.query(`UPDATE boards b SET name = CASE WHEN status = 'draft' THEN $3 ELSE name END, status = 'active'
-      FROM memberships m WHERE b.id = $1 AND b.type = 'chat' AND b.status IN ('draft', 'active')
-      AND m.board_id = b.id AND m.user_id = $2 RETURNING b.id, b.type, b.name, b.status`, [boardId, userId, name]);
-    if (result.rowCount) await client.query("UPDATE memberships SET role = 'admin' WHERE board_id = $1 AND user_id = $2", [boardId, userId]);
-    return result.rows[0] ?? null;
-  });
-}
-
-export async function createInvite(db: Database, userId: string, boardId: string) {
-  const allowed = await db.query("SELECT 1 FROM boards b JOIN memberships m ON m.board_id = b.id WHERE b.id = $1 AND b.type = 'chat' AND m.user_id = $2", [boardId, userId]);
-  if (!allowed.rowCount) return null;
-  const token = `invite_${randomBytes(24).toString('base64url')}`;
-  await db.query("INSERT INTO board_links (token_hash, board_id, kind) VALUES ($1, $2, 'invite')", [linkHash(token), boardId]);
-  return token;
-}
-
-export async function revokeInvites(db: Database, userId: string, boardId: string) {
-  const result = await db.query(`UPDATE board_links l SET revoked_at = now() FROM boards b, memberships m
-    WHERE l.board_id = $1 AND l.kind = 'invite' AND l.revoked_at IS NULL AND b.id = l.board_id
-      AND m.board_id = b.id AND m.user_id = $2 RETURNING l.token_hash`, [boardId, userId]);
-  return result.rowCount ?? 0;
-}
+export { connectChatBoard, migrateChatBoard, freezeChatBoard, redeemBoardLink, activateChatBoard, createInvite, revokeInvites } from './chat-boards.js';
 
 export type TaskStatus = 'todo' | 'in_progress' | 'waiting' | 'done';
 export type TaskPriority = 'normal' | 'urgent';
@@ -334,7 +257,7 @@ export async function createTask(db: Database, userId: string, boardId: string, 
   const client = transaction ?? await db.connect();
   try {
     if (!transaction) await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
+    await lockBoard(client, boardId);
     if (!(await client.query(`SELECT 1 FROM boards b JOIN memberships m ON m.board_id = b.id
       WHERE b.id = $1 AND b.status = 'active' AND m.user_id = $2 FOR SHARE OF b, m`, [boardId, userId])).rowCount) {
       if (!transaction) await client.query('ROLLBACK'); return null;
@@ -384,7 +307,7 @@ export async function claimTask(db: Database, userId: string, boardId: string, t
   const client = transaction ?? await db.connect();
   try {
     if (!transaction) await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
+    await lockBoard(client, boardId);
     const access = await client.query(`SELECT 1 FROM boards b JOIN memberships m ON m.board_id = b.id
       WHERE b.id = $1 AND b.status = 'active' AND m.user_id = $2 FOR SHARE OF b, m`, [boardId, userId]);
     if (!access.rowCount) throw new TaskActionError('Нет доступа к активной доске');
@@ -407,8 +330,8 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
   const client = transaction ?? await db.connect();
   try {
     if (!transaction) await client.query('BEGIN');
-    // ponytail: serialize dependency mutations per board; narrow lock scope only if board write throughput becomes limiting.
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
+    // ponytail: serialize shared-chat mutations; narrow the lock only if write throughput becomes limiting.
+    await lockBoard(client, boardId);
     const current = await client.query<any>(`SELECT t.*, to_char(t.deadline_date, 'YYYY-MM-DD') AS deadline_date FROM tasks t JOIN boards b ON b.id = t.board_id
       JOIN memberships m ON m.board_id = b.id AND m.user_id = $3
       WHERE t.id = $1 AND t.board_id = $2 AND t.archived_at IS NULL AND b.status = 'active' FOR UPDATE`, [taskId, boardId, userId]);
@@ -497,7 +420,7 @@ export async function setTaskArchived(db: Database, userId: string, boardId: str
   const client = transaction ?? await db.connect();
   try {
     if (!transaction) await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
+    await lockBoard(client, boardId);
     const current = await client.query('SELECT * FROM tasks WHERE id = $1 AND board_id = $2 FOR UPDATE', [taskId, boardId]);
     const result = await client.query(`UPDATE tasks t SET archived_at = CASE WHEN $4 THEN now() ELSE NULL END, updated_at = now() FROM boards b
     WHERE t.id = $1 AND t.board_id = $2 AND b.id = t.board_id AND b.status = 'active'
@@ -557,7 +480,7 @@ export async function addChecklistItem(db: Database, userId: string, boardId: st
   const client = transaction ?? await db.connect();
   try {
     if (!transaction) await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
+    await lockBoard(client, boardId);
     const task = await canReadTask(client, userId, boardId, taskId, true);
     if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) { if (!transaction) await client.query('ROLLBACK'); return null; }
     const position = (await client.query<{position: number}>(`SELECT COALESCE(MAX(position), -1) + 1 AS position
@@ -576,7 +499,7 @@ export async function updateChecklistItem(db: Database, userId: string, boardId:
   const client = transaction ?? await db.connect();
   try {
     if (!transaction) await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
+    await lockBoard(client, boardId);
     const task = await canReadTask(client, userId, boardId, taskId, true);
     if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) { if (!transaction) await client.query('ROLLBACK'); return null; }
     const current = await client.query('SELECT * FROM task_checklist_items WHERE id = $1 AND task_id = $2 AND board_id = $3 FOR UPDATE', [itemId, taskId, boardId]);
@@ -604,7 +527,7 @@ export async function deleteChecklistItem(db: Database, userId: string, boardId:
   const client = transaction ?? await db.connect();
   try {
     if (!transaction) await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
+    await lockBoard(client, boardId);
     const task = await canReadTask(client, userId, boardId, taskId, true);
     if (!task || (task.creator_user_id !== userId && task.assignee_user_id !== userId)) { if (!transaction) await client.query('ROLLBACK'); return false; }
     const result = await client.query('DELETE FROM task_checklist_items WHERE id = $1 AND task_id = $2 AND board_id = $3 RETURNING *', [itemId, taskId, boardId]);
@@ -712,7 +635,7 @@ export async function createRecurrence(db: Database, userId: string, boardId: st
 export async function updateRecurrence(db: Database, userId: string, boardId: string, recurrenceId: string,
   input: { paused?: boolean; archived?: boolean; endAt?: string | null } & Partial<RecurrenceInput>, transaction?: pg.PoolClient) {
   const run = async (client: pg.PoolClient) => {
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [boardId]);
+    await lockBoard(client, boardId);
     const current = await client.query<any>(`SELECT r.* FROM recurrence_templates r JOIN boards b ON b.id = r.board_id
       JOIN memberships m ON m.board_id = b.id AND m.user_id = $3
       WHERE r.id = $1 AND r.board_id = $2 AND b.status = 'active' FOR UPDATE`, [recurrenceId, boardId, userId]);

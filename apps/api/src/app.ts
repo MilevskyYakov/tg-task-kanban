@@ -17,6 +17,8 @@ import { taskInput } from './task-input.js';
 import { recurrenceInput } from './recurrence-input.js';
 import { ChecklistConfirmationError, SettingsConflictError } from './db.js';
 import { registerMcp } from './mcp.js';
+import { chatAccess, chatContext, createChatDirection, createChatLaunch, previewChatInvite, removeChatMember, resolveChatSchedules } from './chat-boards.js';
+import { withBoardLock } from './db.js';
 
 type ChatMemberUpdate = {
   date: number;
@@ -108,12 +110,49 @@ export function buildApp(config: Config, db: Database) {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     return removePairMember(db, id, request.params.id, id);
   });
-  app.post<{Body: {token?: string; acceptedHistory?: boolean}}>('/api/board-links/redeem', async (request, reply) => {
+  app.get<{Params: {id: string}}>('/api/boards/:id/chat', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    return chatContext(db, id, request.params.id, config.botToken);
+  });
+  app.post<{Params: {id: string}}>('/api/boards/:id/chat/link', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const token = await createChatLaunch(db, id, request.params.id, config.botToken);
+    return {url: `https://t.me/${config.botUsername}?startapp=${encodeURIComponent(token)}`};
+  });
+  app.post<{Params: {id: string}, Body: {name?: unknown; requestId?: unknown; memberVersion?: unknown; memberIds?: unknown}}>('/api/boards/:id/chat/boards', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const { name, requestId, memberVersion, memberIds } = request.body ?? {};
+    if (typeof name !== 'string' || !name.trim() || name.trim().length > 120 || typeof requestId !== 'string' || !uuid.test(requestId)
+      || (memberVersion !== undefined && (typeof memberVersion !== 'string' || !/^\d+$/.test(memberVersion)))
+      || (memberIds !== undefined && (!Array.isArray(memberIds) || memberIds.some(value => typeof value !== 'string' || !/^[1-9]\d{0,18}$/.test(value)))))
+      return reply.code(400).send({ error: 'Укажите название и корректное подтверждение участников' });
+    const result = await createChatDirection(db, id, request.params.id, config.botToken, { name: name.trim(), requestId, memberVersion: memberVersion as string | undefined, memberIds: memberIds as string[] | undefined });
+    return boardForUser(db, id, result.id);
+  });
+  app.delete<{Params: {id: string; memberId: string}}>('/api/boards/:id/chat/members/:memberId', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    if (!/^[1-9]\d{0,18}$/.test(request.params.memberId) || BigInt(request.params.memberId) > 9223372036854775807n) return reply.code(400).send({ error: 'Некорректный участник' });
+    return removeChatMember(db, id, request.params.id, request.params.memberId, config.botToken);
+  });
+  app.post<{Params: {id: string}; Body: {dailySourceId: string; weeklySourceId: string; scheduleVersion: string}}>('/api/boards/:id/chat/schedules/resolve', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const input = request.body;
+    if (!input || typeof input.dailySourceId !== 'string' || !uuid.test(input.dailySourceId) || typeof input.weeklySourceId !== 'string' || !uuid.test(input.weeklySourceId)
+      || typeof input.scheduleVersion !== 'string' || !/^[a-f0-9]{64}$/.test(input.scheduleVersion)) return reply.code(400).send({error: 'Выберите расписания'});
+    return resolveChatSchedules(db, id, request.params.id, config.botToken, input);
+  });
+  app.post<{Body: {token?: unknown}}>('/api/chat-invites/preview', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const token = request.body?.token;
+    if (typeof token !== 'string' || !/^invite_[A-Za-z0-9_-]{32}$/.test(token)) return reply.code(400).send({ error: 'Приглашение недействительно' });
+    return await previewChatInvite(db, token) ?? reply.code(404).send({ error: 'Приглашение недействительно' });
+  });
+  app.post<{Body: {token?: string; acceptedHistory?: boolean; acceptedAccess?: boolean}}>('/api/board-links/redeem', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     const token = request.body?.token;
     if (typeof token !== 'string' || !token || token.length > 128) return reply.code(400).send({ error: 'invalid board link' });
     if (token.startsWith('pair_') && !/^pair_[A-Za-z0-9_-]{32}$/.test(token)) return reply.code(400).send({ error: 'invalid board link' });
-    const board = token.startsWith('pair_') ? await redeemPairInvite(db, id, token, request.body.acceptedHistory === true) : await redeemBoardLink(db, id, token);
+    const board = token.startsWith('pair_') ? await redeemPairInvite(db, id, token, request.body.acceptedHistory === true) : await redeemBoardLink(db, id, token, request.body.acceptedAccess === true, config.botToken);
     return board ?? reply.code(404).send({ error: 'board link is invalid or revoked' });
   });
   app.post<{Params: {id: string}, Body: {name?: string}}>('/api/boards/:id/activate', async (request, reply) => {
@@ -141,7 +180,7 @@ export function buildApp(config: Config, db: Database) {
     const board = await boardForUser(db, user.id, request.params.id);
     if (!board || !['chat', 'pair'].includes(board.type)) return reply.code(404).send({ error: 'board not found' });
     if (board.type === 'chat' && !await isChatAdmin(config.botToken, board.telegram_chat_id, user.telegram_id)) return reply.code(403).send({ error: 'Telegram chat admin required' });
-    const token = board.type === 'pair' ? await changePairInvite(db, user.id, board.id) : await createInvite(db, user.id, board.id);
+    const token = board.type === 'pair' ? await changePairInvite(db, user.id, board.id) : await createInvite(db, user.id, board.id, config.botToken);
     return token ? { url: `https://t.me/${config.botUsername}?startapp=${encodeURIComponent(token)}` } : reply.code(404).send({ error: 'board not found' });
   });
   app.delete<{Params: {id: string}}>('/api/boards/:id/invites', async (request, reply) => {
@@ -151,7 +190,7 @@ export function buildApp(config: Config, db: Database) {
     if (board?.type === 'pair') { await changePairInvite(db, user.id, board.id, true); return { revoked: true }; }
     if (!board || board.type !== 'chat') return reply.code(404).send({ error: 'board not found' });
     if (!await isChatAdmin(config.botToken, board.telegram_chat_id, user.telegram_id)) return reply.code(403).send({ error: 'Telegram chat admin required' });
-    return { revoked: await revokeInvites(db, user.id, request.params.id) };
+    return { revoked: await revokeInvites(db, user.id, request.params.id, config.botToken) };
   });
   const validNameExpected = (expected: unknown) => expected === undefined || Boolean(expected && typeof expected === 'object'
     && Object.keys(expected).length === 1 && typeof (expected as {name?: unknown}).name === 'string');
@@ -174,12 +213,16 @@ export function buildApp(config: Config, db: Database) {
     if ((!partial || 'local_time' in body) && (typeof body.local_time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(body.local_time))) return 'invalid local time';
     if ((!partial || 'timezone' in body) && (typeof body.timezone !== 'string' || !body.timezone || !validPublicationTimezone(body.timezone))) return 'invalid timezone';
     if ((!partial || 'included_statuses' in body) && (!Array.isArray(body.included_statuses) || body.included_statuses.some((status) => !['todo', 'in_progress', 'waiting', 'done'].includes(status)))) return 'invalid statuses';
+    if ('included_board_ids' in body && (!Array.isArray(body.included_board_ids) || body.included_board_ids.some(id => typeof id !== 'string' || !uuid.test(id)) || new Set(body.included_board_ids).size !== body.included_board_ids.length)) return 'invalid board selection';
     return body;
   };
   app.get<{Params: {id: string}}>('/api/boards/:id/publications', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     const board = await boardForUser(db, id, request.params.id);
-    return board?.type === 'chat' ? { schedules: await schedulesForBoard(db, id, request.params.id) } : reply.code(404).send({ error: 'chat board not found' });
+    if (board?.type !== 'chat') return reply.code(404).send({ error: 'chat board not found' });
+    const deliveries = (await db.query(`SELECT r.id, r.kind, r.local_date::text, r.sent_parts, jsonb_array_length(r.messages) AS total_parts
+      FROM publication_runs r JOIN boards b ON b.id = r.board_id WHERE b.chat_root_id = $1 AND r.status = 'uncertain' ORDER BY r.local_date DESC`, [board.chat_root_id])).rows;
+    return { schedules: await schedulesForBoard(db, id, request.params.id), deliveries };
   });
   app.put<{Params: {id: string; kind: PublicationKind}, Body: Partial<Omit<PublicationSchedule, 'kind'>> & {expected?: Record<string, unknown>}}>('/api/boards/:id/publications/:kind', async (request, reply) => {
     const user = await sessionUser(db, request.cookies.session, config.sessionSecret);
@@ -189,14 +232,14 @@ export function buildApp(config: Config, db: Database) {
     if (board.status !== 'active') return reply.code(403).send({ error: 'board is read-only' });
     if (!await isChatAdmin(config.botToken, board.telegram_chat_id, user.telegram_id)) return reply.code(403).send({ error: 'Telegram chat admin required' });
     const { expected, ...changes } = request.body ?? {};
-    const fields = ['enabled','weekdays','local_time','timezone','included_statuses'];
+    const fields = ['enabled','weekdays','local_time','timezone','included_statuses','included_board_ids'];
     if (expected !== undefined && (!expected || typeof expected !== 'object' || Array.isArray(expected)
       || !Object.keys(changes).length || Object.keys(changes).some((key) => !fields.includes(key))
       || JSON.stringify(Object.keys(expected).sort()) !== JSON.stringify(Object.keys(changes).sort())
       || typeof scheduleInput(expected, true) === 'string')) return reply.code(400).send({ error: 'invalid expected schedule' });
     if (expected !== undefined && Array.isArray(changes.included_statuses) && !changes.included_statuses.length) return reply.code(400).send({ error: 'invalid statuses' });
     const input = scheduleInput(changes, expected !== undefined); if (typeof input === 'string') return reply.code(400).send({ error: input });
-    return await updateSchedule(db, board.id, request.params.kind, input, expected, user.id) ?? reply.code(403).send({ error: 'publication is not writable' });
+    return await updateSchedule(db, board.id, request.params.kind, input, expected, user.id, config.botToken) ?? reply.code(403).send({ error: 'publication is not writable' });
   });
   app.post<{Params: {id: string; kind: PublicationKind}, Body: Omit<PublicationSchedule, 'kind'>}>('/api/boards/:id/publications/:kind/preview', async (request, reply) => {
     const user = await sessionUser(db, request.cookies.session, config.sessionSecret);
@@ -205,7 +248,10 @@ export function buildApp(config: Config, db: Database) {
     if (!board || board.type !== 'chat' || !['daily', 'weekly'].includes(request.params.kind)) return reply.code(404).send({ error: 'publication not found' });
     if (!await isChatAdmin(config.botToken, board.telegram_chat_id, user.telegram_id)) return reply.code(403).send({ error: 'Telegram chat admin required' });
     const input = scheduleInput(request.body); if (typeof input === 'string') return reply.code(400).send({ error: input });
-    return { messages: await renderPublication(db, board.id, request.params.kind, input.included_statuses!, config.botUsername, input.timezone!) };
+    return withBoardLock(db, board.id, async client => {
+      await chatAccess(client, user.id, board.id, config.botToken);
+      return { messages: await renderPublication(client, board.id, request.params.kind, input.included_statuses!, config.botUsername, input.timezone!, new Date(), input.included_board_ids) };
+    });
   });
 
   app.get('/api/tasks/mine', async (request, reply) => {

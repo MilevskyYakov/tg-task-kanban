@@ -7,10 +7,10 @@ import { statusDisplayName, type TaskStatus } from './tasks';
 type Draft = Record<string, string | boolean | string[]>;
 type Target = { userId: string; boardId: string; projectId?: string; kind?: Schedule['kind'] };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-const labels: Record<string, string> = { name: 'Название', enabled: 'Включена', weekdays: 'Дни', local_time: 'Время', timezone: 'Часовой пояс', included_statuses: 'Статусы' };
+const labels: Record<string, string> = { name: 'Название', enabled: 'Включена', weekdays: 'Дни', local_time: 'Время', timezone: 'Часовой пояс', included_statuses: 'Статусы', included_board_ids: 'Доски сводки' };
 const saveLabels: Record<SaveState, string> = { idle: '', pending: 'Ожидает отправки', saving: 'Сохраняется…', saved: 'Сохранено', error: 'Не сохранено' };
 const toDraft = (value: Board | Project | Schedule): Draft => 'kind' in value
-  ? { enabled: value.enabled, weekdays: value.weekdays.join(','), local_time: value.local_time, timezone: value.timezone, included_statuses: value.included_statuses }
+  ? { enabled: value.enabled, weekdays: value.weekdays.join(','), local_time: value.local_time, timezone: value.timezone, included_statuses: value.included_statuses, ...(value.included_board_ids ? { included_board_ids: value.included_board_ids } : {}) }
   : { name: value.name };
 const wire = (draft: Draft) => Object.fromEntries(Object.entries(draft).map(([key, value]) => [key,
   key === 'weekdays' ? String(value).split(',').map(Number) : key === 'name' ? String(value).trim() : value]));
@@ -73,9 +73,18 @@ class SettingsEdit {
       const raw = localStorage.getItem(this.storageKey);
       if (raw) {
         const stored = JSON.parse(raw);
+        // Older publication drafts have no board selection intent. Preserve the
+        // server selection in every snapshot without losing edits or receipts.
+        if (stored.version === 1 && kind && Array.isArray(this.base.included_board_ids)) {
+          for (const value of [stored.base, stored.draft, stored.attempt?.draft]) {
+            if (value && typeof value === 'object' && !Array.isArray(value) && !Object.hasOwn(value, 'included_board_ids')) {
+              value.included_board_ids = [...this.base.included_board_ids];
+            }
+          }
+        }
         const valid = (value: unknown): value is Draft => Boolean(value && typeof value === 'object'
           && Object.keys(this.base).every((key) => Array.isArray(this.base[key])
-            ? Array.isArray((value as Draft)[key]) && ((value as Draft)[key] as unknown[]).every((item) => typeof item === 'string' && Object.hasOwn(statusDisplayName, item))
+            ? Array.isArray((value as Draft)[key]) && ((value as Draft)[key] as unknown[]).every((item) => typeof item === 'string' && (key === 'included_board_ids' ? /^[0-9a-f-]{36}$/i.test(item) : Object.hasOwn(statusDisplayName, item)))
             : typeof (value as Draft)[key] === typeof this.base[key])
           && Object.keys(value).length === Object.keys(this.base).length);
         if (stored.version !== 1 || !valid(stored.base) || !valid(stored.draft)) throw new Error('Invalid settings draft');
@@ -303,15 +312,18 @@ export function NameSetting(props: EditorProps & { children?: ReactNode }) {
       onChange={(event) => edit.set('name', event.target.value)} onBlur={() => void edit.autosave.flush()}/></label>{props.children}</div>
     {!readOnly && <Feedback edit={edit}/>}</div>;
 }
-export function PublicationSetting(props: EditorProps & {schedule: Schedule; onPreview: (schedule: Schedule) => void}) {
+export function PublicationSetting(props: EditorProps & {schedule: Schedule; boards?: Board[]; readOnly?: boolean; onPreview: (schedule: Schedule) => void}) {
   const edit = useEditor(props);
   const draft = edit.draft;
-  return <fieldset><legend>{props.schedule.kind === 'daily' ? 'План дня' : 'Недельная сводка'}</legend>
+  return <fieldset disabled={props.readOnly}><legend>{props.schedule.kind === 'daily' ? 'План дня' : 'Недельная сводка'}</legend>
     <label><input type="checkbox" checked={Boolean(draft.enabled)} onChange={(event) => edit.set('enabled', event.target.checked, true)}/> Включена</label>
     <Feedback edit={edit}/>
     <label>Дни (1–7)<input value={String(draft.weekdays)} aria-invalid={Boolean(edit.errors.weekdays)} onChange={(event) => edit.set('weekdays', event.target.value)}/></label>
     <label>Время<input type="time" value={String(draft.local_time)} aria-invalid={Boolean(edit.errors.local_time)} onChange={(event) => edit.set('local_time', event.target.value, true)}/></label>
     <label>Часовой пояс<input value={String(draft.timezone)} aria-invalid={Boolean(edit.errors.timezone)} onChange={(event) => edit.set('timezone', event.target.value)}/></label>
+    {props.boards && Array.isArray(draft.included_board_ids) && <section aria-label="Доски сводки"><h3>Доски сводки</h3><p>Новые доски включаются вручную. Доступ участников не меняется.</p>
+      {props.boards.map(board => <label className="checkbox" key={board.id}><input type="checkbox" checked={(draft.included_board_ids as string[]).includes(board.id)} onChange={event => edit.set('included_board_ids', event.target.checked ? [...draft.included_board_ids as string[], board.id].sort() : (draft.included_board_ids as string[]).filter(id => id !== board.id), true)}/>{board.name}{board.status !== 'active' ? ' · не публикуется' : ''}</label>)}
+      {!draft.included_board_ids.length && <p role="status">Доски не выбраны — сводка не отправляется.</p>}</section>}
     <div className="status-options">{Object.entries(statusDisplayName).map(([status, name]) => <label key={status}><input type="checkbox" checked={(draft.included_statuses as string[]).includes(status)} onChange={(event) => edit.set('included_statuses', event.target.checked ? [...draft.included_statuses as string[], status] : (draft.included_statuses as string[]).filter((value) => value !== status), true)}/> {name}</label>)}</div>
     <div className="actions"><button className="secondary" disabled={Boolean(Object.keys(edit.errors).length)} onClick={() => props.onPreview({ kind: props.schedule.kind, ...wire(draft) } as Schedule)}>Предпросмотр</button></div>
   </fieldset>;

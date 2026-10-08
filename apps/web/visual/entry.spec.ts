@@ -113,8 +113,8 @@ for (const width of [390, 320]) {
       start = token;
       await mkdir(evidence, { recursive: true });
       await attach(second, guest);
-      await expect(second.getByRole('heading', { name: 'Ожидаем администратора.' })).toBeVisible();
-      await second.screenshot({ path: `${evidence}/entry-group-wait-${width}.png` });
+      await expect(second.getByRole('heading', { name: 'Доска недоступна' })).toBeVisible();
+      await second.screenshot({ path: `${evidence}/entry-group-invite-required-${width}.png` });
       await expect(second.getByRole('button', { name: 'Начать работу' })).toHaveCount(0);
       await attach(page, owner);
       await expect(page.getByRole('heading', { name: 'Начните работу вместе с командой.' })).toBeVisible();
@@ -138,7 +138,14 @@ for (const width of [390, 320]) {
       await expect(page.getByRole('button', { name: 'Мои', exact: true })).toHaveAttribute('aria-pressed', 'true');
       await page.getByRole('button', { name: 'Все', exact: true }).click();
       await expect(page.getByRole('button', { name: /Первая задача команды/ })).toBeVisible();
-      await second.getByRole('button', { name: 'Проверить готовность' }).click();
+      const boardId = (await db.query('SELECT id FROM boards WHERE telegram_chat_id=$1', [-stamp])).rows[0].id;
+      const invitation = await app.inject({method: 'POST', url: `/api/boards/${boardId}/invites`, cookies: {session: owner.token}});
+      expect(invitation.statusCode).toBe(200);
+      start = new URL(invitation.json().url).searchParams.get('startapp')!;
+      await second.reload();
+      await expect(second.getByText('Доступ к задачам и истории этой доски.')).toBeVisible();
+      await second.getByRole('button', {name: 'Принять приглашение'}).click();
+      start = token;
       await second.getByRole('button', { name: /Бэклог/ }).click();
       await expect(second.getByRole('button', { name: /Первая задача команды/ })).toBeVisible();
       await webhook();

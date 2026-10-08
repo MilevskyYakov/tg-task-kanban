@@ -49,7 +49,7 @@ async function deliverEntry(db: Database, config: Config, key: string, prepare: 
 }
 
 export async function sendGroupWelcome(db: Database, config: Config, chatId: number) {
-  const board = (await db.query<{id: string}>("SELECT id FROM boards WHERE type = 'chat' AND telegram_chat_id = $1", [chatId])).rows[0];
+  const board = (await db.query<{id: string}>("SELECT id FROM boards WHERE type = 'chat' AND chat_root_id = id AND telegram_chat_id = $1 AND status <> 'archived'", [chatId])).rows[0];
   if (!board) return 'skipped';
   const key = entryKey(config, `board:${board.id}`);
   await db.query('INSERT INTO telegram_entry_deliveries (key, board_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [key, board.id]);
@@ -60,8 +60,8 @@ export async function sendGroupWelcome(db: Database, config: Config, chatId: num
       if (!current) throw new Error('Board frozen');
       // Only a definitely unsent attempt can reach here. Sent/uncertain links never rotate.
       const token = `board_${randomBytes(24).toString('base64url')}`;
-      await client.query("UPDATE board_links SET revoked_at = now() WHERE board_id = $1 AND kind = 'launch' AND revoked_at IS NULL", [board.id]);
-      await client.query("INSERT INTO board_links (token_hash, board_id, kind) VALUES ($1, $2, 'launch')", [createHash('sha256').update(token).digest('hex'), board.id]);
+      await client.query("UPDATE board_links SET revoked_at = now() WHERE board_id = $1 AND kind = 'chat_launch' AND revoked_at IS NULL", [board.id]);
+      await client.query("INSERT INTO board_links (token_hash, board_id, kind) VALUES ($1, $2, 'chat_launch')", [createHash('sha256').update(token).digest('hex'), board.id]);
       return { ...current, token };
     });
     const body = new FormData();

@@ -35,6 +35,9 @@
 .mcp-code:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .mcp-key { padding: 16px; border: 1px solid #FFFFFFCC; border-radius: 22px; background: var(--surface-soft); }
 .mcp-summary strong { font-size: 1rem; font-weight: 600; }
+.mcp-summary, .mcp-sheet { overflow-wrap: anywhere; }
+.mcp-auto { padding: 12px; border-left: 3px solid var(--primary); background: var(--primary-soft); color: var(--text); }
+.mcp-name + .mcp-modes { margin-top: 24px; }
 .mcp-summary p { margin: 6px 0 22px; }
 .mcp-secret h2 { margin: 0 0 8px; }
 .mcp-secret h2 + p { margin: 0 0 24px; }

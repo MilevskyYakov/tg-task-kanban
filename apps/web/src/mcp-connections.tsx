@@ -6,8 +6,8 @@ import { useTelegramEnvironment } from './environment';
 import type { NavigationState } from './navigation';
 import './mcp-connections.css';
 
-type Connection = {id: string; name: string; mode: 'read'|'write'; createdAt: string; revokedAt: string|null; boards: Pick<Board, 'id'|'name'|'status'>[]; lostBoardCount: number};
-type Draft = {requestId: string; name: string; mode: 'read'|'write'; boardIds: string[]};
+type Connection = {id: string; name: string; mode: 'read'|'write'; boardSelection: 'selected'|'all'; version: string; accessVersion: string; createdAt: string; revokedAt: string|null; boards: Pick<Board, 'id'|'name'|'status'>[]; excludedBoards: Pick<Board, 'id'|'name'|'status'>[]; lostBoardCount: number};
+type Draft = {requestId: string; name: string; mode: 'read'|'write'; boardIds: string[]; boardSelection: Connection['boardSelection']; expectedVersion?: string; expectedAccessVersion?: string; confirmExpansion?: boolean};
 type Listing = {items: Connection[]; nextCursor: string|null; serverUrl: string};
 const helpClients = ['Общая настройка', 'Hermes', 'Claude Code', 'Codex CLI', 'Claude.ai / Desktop'] as const;
 const accessLabel = (mode: Connection['mode']) => mode === 'read' ? 'Только чтение' : 'Чтение и изменение';
@@ -20,7 +20,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function McpConnections({navigate}: {navigate: (next: NavigationState) => void}) {
   const online = useTelegramEnvironment();
-  const [stage, setStage] = useState<'list'|'create'|'secret'|'details'|'lost'>('list');
+  const [stage, setStage] = useState<'list'|'create'|'edit'|'secret'|'details'|'lost'>('list');
   const [listing, setListing] = useState<Listing>();
   const [selected, setSelected] = useState<Connection>();
   const [secret, setSecret] = useState('');
@@ -28,11 +28,13 @@ export function McpConnections({navigate}: {navigate: (next: NavigationState) =>
   const [copied, setCopied] = useState(false);
   const [name, setName] = useState('');
   const [mode, setMode] = useState<Connection['mode']>('read');
+  const [boardSelection, setBoardSelection] = useState<Connection['boardSelection']>('selected');
+  const [conflict, setConflict] = useState(false);
   const [boardIds, setBoardIds] = useState<string[]>([]);
   const [boards, setBoards] = useState<Board[]>();
   const [boardDraft, setBoardDraft] = useState<string[]>([]);
   const [query, setQuery] = useState('');
-  const [dialog, setDialog] = useState<'boards'|'leave'|'revoke'|'help'>();
+  const [dialog, setDialog] = useState<'boards'|'leave'|'revoke'|'help'|'save'|'rotate'>();
   const [helpClient, setHelpClient] = useState<typeof helpClients[number]>('Общая настройка');
   const [pending, setPending] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -42,6 +44,8 @@ export function McpConnections({navigate}: {navigate: (next: NavigationState) =>
   const [message, setMessage] = useState('');
   const busy = useRef(false);
   const submitted = useRef<Draft | undefined>(undefined);
+  const rotation = useRef<{requestId: string; expectedVersion: string} | undefined>(undefined);
+  const revocation = useRef<{requestId: string; expectedVersion: string} | undefined>(undefined);
   const listRequest = useRef(0);
   const invalidSession = (error: unknown) => {
     if (!(error instanceof ApiError) || error.status !== 401) return false;
@@ -66,14 +70,14 @@ export function McpConnections({navigate}: {navigate: (next: NavigationState) =>
   }, [stage]);
   useEffect(() => {
     if (!secret || !selected) return;
-    const check = () => { if (document.visibilityState === 'visible') void request<Connection>('/'+selected.id).then(value => { if (value.revokedAt) { setSecret(''); setSelected(value); setStage('details'); } }).catch(invalidSession); };
+    const check = () => { if (document.visibilityState === 'visible') void request<Connection>('/'+selected.id).then(value => { if (value.revokedAt || value.version !== selected.version) { setSecret(''); setSelected(value); setStage('details'); } }).catch(invalidSession); };
     document.addEventListener('visibilitychange',check);
     return () => document.removeEventListener('visibilitychange',check);
-  }, [secret,selected?.id]);
-  const backToList = () => { setSecret(''); setCopied(false); setUncertain(false); submitted.current=undefined; setDialog(undefined); setError(''); setMessage(''); setStage('list'); void load(); };
+  }, [secret,selected?.id,selected?.version]);
+  const backToList = () => { setSecret(''); setCopied(false); setUncertain(false); setConflict(false); submitted.current=undefined; rotation.current=undefined; revocation.current=undefined; setDialog(undefined); setError(''); setMessage(''); setStage('list'); void load(); };
   const back = () => {
     if (busy.current) return;
-    if ((stage === 'secret' && !copied) || (stage === 'create' && (name || boardIds.length || uncertain))) { setDialog('leave'); return; }
+    if ((stage === 'secret' && !copied) || stage === 'edit' || uncertain || (stage === 'create' && (name || boardIds.length))) { setDialog('leave'); return; }
     if (stage === 'list') navigate({screen:'settings-account'}); else backToList();
   };
   const loadBoards = async () => {
@@ -83,19 +87,25 @@ export function McpConnections({navigate}: {navigate: (next: NavigationState) =>
   };
   const start = () => {
     if (busy.current || !online) return;
-    setStage('create'); setName(''); setMode('read'); setBoardIds([]); setSecret(''); setError(''); setMessage(''); setUncertain(false); submitted.current=undefined;
+    setStage('create'); setName(''); setMode('read'); setBoardSelection('selected'); setBoardIds([]); setSecret(''); setError(''); setMessage(''); setUncertain(false); setConflict(false); submitted.current=undefined; rotation.current=undefined;
+    void loadBoards();
+  };
+  const edit = () => {
+    if (!selected || selected.revokedAt || busy.current || !online) return;
+    setName(selected.name); setMode(selected.mode); setBoardSelection(selected.boardSelection); setBoardIds(selected.boards.map(board=>board.id));
+    setStage('edit'); setError(''); setMessage(''); setConflict(false); setUncertain(false); submitted.current=undefined;
     void loadBoards();
   };
   const open = async (id: string) => {
     if (busy.current) return;
     busy.current=true; setLoading(true); setError('');
-    try { setSelected(await request<Connection>('/'+id)); setStage('details'); }
+    try { setSelected(await request<Connection>('/'+id)); setStage('details'); setConflict(false); setUncertain(false); rotation.current=undefined; revocation.current=undefined; submitted.current=undefined; }
     catch (error) { if (!invalidSession(error)) setError('Не удалось загрузить подключение. Проверьте доступ и повторите.'); }
     finally { busy.current=false; setLoading(false); }
   };
   const create = async () => {
     if (busy.current || !online) return;
-    const payload = submitted.current ?? {requestId:crypto.randomUUID(),name:name.trim(),mode,boardIds};
+    const payload = submitted.current ?? {requestId:crypto.randomUUID(),name:name.trim(),mode,boardIds:boardSelection==='all' ? [] : boardIds,boardSelection};
     submitted.current=payload; busy.current=true; setPending(true); setError(''); setMessage('');
     try {
       const result = await request<{connection:Connection;key:string;serverUrl:string}>('',json('POST',payload));
@@ -104,21 +114,66 @@ export function McpConnections({navigate}: {navigate: (next: NavigationState) =>
       if (invalidSession(error)) return;
       if (error instanceof ApiError && error.data.code === 'KEY_ALREADY_ISSUED') {
         setSelected(error.data.connection as Connection); setStage('lost'); setSecret(''); setUncertain(false);
-      } else if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408) {
+      } else if (error instanceof ApiError && error.status >= 400 && error.status < 500 && ![408,429].includes(error.status)) {
         setUncertain(false); submitted.current=undefined; setError(error.message);
         if (error.status === 404) void loadBoards();
       } else { setUncertain(true); setError('Не удалось получить результат. Ключ мог быть создан.'); }
     } finally { busy.current=false; setPending(false); }
   };
+  const save = async () => {
+    if (!selected || busy.current || !online || conflict) return;
+    const payload = submitted.current ?? {requestId:crypto.randomUUID(),expectedVersion:selected.version,expectedAccessVersion:selected.accessVersion,name:name.trim(),mode,boardIds:boardSelection==='all' ? [] : boardIds,boardSelection,confirmExpansion:(mode==='write' && selected.mode!=='write') || (boardSelection==='all' && selected.boardSelection!=='all') || addedBoards.length>0};
+    submitted.current=payload; busy.current=true; setPending(true); setError('');
+    try {
+      const result = await request<{connection:Connection;replayed:boolean;appliedVersion?:string}>('/'+selected.id,json('PATCH',payload));
+      // A replay can report a newer configuration; never present the old draft as current.
+      const current = await request<Connection>('/'+selected.id);
+      setSelected(current); setStage('details'); setDialog(undefined); setUncertain(false); submitted.current=undefined;
+      setMessage(current.version === (result.appliedVersion ?? result.connection.version) ? 'Настройки сохранены. Ключ не изменился.' : 'Запрос был выполнен, но подключение уже изменилось. Показаны текущие настройки.');
+    } catch (error) {
+      if (invalidSession(error)) return;
+      setDialog(undefined);
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500 && ![408,429].includes(error.status)) {
+        setUncertain(false); submitted.current=undefined; setError(error.message);
+        setConflict(['VERSION_CONFLICT','CONNECTION_REVOKED','EXPANSION_CONFIRMATION_REQUIRED'].includes(String(error.data.code)));
+        if (error.status===404) void loadBoards();
+      } else { setUncertain(true); setError('Результат сохранения неизвестен. Повторите тот же запрос для проверки.'); }
+    } finally { busy.current=false; setPending(false); }
+  };
+  const rotate = async () => {
+    if (!selected || busy.current || !online) return;
+    const payload = rotation.current ?? {requestId:crypto.randomUUID(),expectedVersion:selected.version};
+    rotation.current=payload; busy.current=true; setPending(true); setError(''); setMessage('');
+    try {
+      const result = await request<{connection:Connection;key:string;serverUrl:string}>('/'+selected.id+'/rotate',json('POST',payload));
+      setSelected(result.connection); setSecret(result.key); setServerUrl(result.serverUrl); setCopied(false); setUncertain(false); setDialog(undefined); setStage('secret'); rotation.current=undefined;
+      setMessage('Ключ перевыпущен. Обновите его в клиенте: прежний ключ больше не работает.');
+    } catch (error) {
+      if (invalidSession(error)) return;
+      if (error instanceof ApiError && error.data.code === 'KEY_ALREADY_ISSUED') {
+        const current=error.data.connection as Connection;
+        setSelected(current); setSecret(''); setStage(current.revokedAt ? 'details' : 'lost'); setDialog(undefined); setUncertain(false); rotation.current=undefined;
+      } else if (error instanceof ApiError && error.status >= 400 && error.status < 500 && ![408,429].includes(error.status)) {
+        setError(error.message); setConflict(true); setUncertain(false); rotation.current=undefined; setDialog(undefined); setStage('details');
+      } else { setUncertain(true); setError('Результат перевыпуска неизвестен. Старый ключ мог перестать работать. Проверьте тот же запрос.'); }
+    } finally { busy.current=false; setPending(false); }
+  };
   const revoke = async () => {
     if (!selected || busy.current || !online) return;
+    const payload=revocation.current ?? {requestId:crypto.randomUUID(),expectedVersion:selected.version};
+    revocation.current=payload;
     busy.current=true; setPending(true); setError('');
     try {
-      await request('/'+selected.id,json('DELETE',{}));
+      await request('/'+selected.id,json('DELETE',payload));
       const result = await request<Connection>('/'+selected.id);
       if (!result.revokedAt) throw new Error('revoke not confirmed');
-      setSelected(result); setSecret(''); submitted.current=undefined; setDialog(undefined); setStage('details'); setMessage('Доступ отозван');
-    } catch (error) { if (!invalidSession(error)) setError('Не удалось подтвердить отзыв. Подключение может оставаться активным. Проверьте ещё раз.'); }
+      setSelected(result); setSecret(''); submitted.current=undefined; rotation.current=undefined; revocation.current=undefined; setUncertain(false); setConflict(false); setDialog(undefined); setStage('details'); setMessage('Доступ отозван');
+    } catch (error) {
+      if (invalidSession(error)) return;
+      if (error instanceof ApiError && error.data.code==='VERSION_CONFLICT') {
+        revocation.current=undefined; setConflict(true); setUncertain(false); setDialog(undefined); setStage('details'); setError(error.message);
+      } else setError('Не удалось подтвердить отзыв. Подключение может оставаться активным. Проверьте ещё раз.');
+    }
     finally { busy.current=false; setPending(false); }
   };
   const copy = async (value: string, kind: 'address'|'key'|'command' = 'address') => {
@@ -136,9 +191,14 @@ export function McpConnections({navigate}: {navigate: (next: NavigationState) =>
     : `codex mcp add task_kanban --url ${quotedUrl} --bearer-token-env-var TASK_KANBAN_MCP_KEY`;
   const launchCommand = `bash -c 'IFS= read -r -s -p "Ключ доступа: " TASK_KANBAN_MCP_KEY && printf "\\n" && export TASK_KANBAN_MCP_KEY && exec ${clientProgram}'`;
   const commandBlock = (value: string, label: string) => <><pre className="mcp-code mcp-command" tabIndex={0}><code>{value}</code></pre><button className="secondary" onClick={()=>void copy(value,'command')}>{label}</button></>;
-  const isolated = ['create','secret','lost'].includes(stage);
-  const title = stage === 'create' ? 'Новое подключение' : stage === 'secret' ? 'Ключ создан' : stage === 'lost' ? 'Ключ не получен' : stage === 'details' ? selected?.name ?? 'Подключение' : 'Подключения';
-  const summary = selected && <div className="mcp-summary"><strong>{selected.name}</strong><p>{accessLabel(selected.mode)}<br/>{selected.boards.map(board=>board.name).join(' · ') || 'Нет доступных досок'}</p>{selected.lostBoardCount > 0 && <p>Доступ к одной из выбранных досок потерян.</p>}</div>;
+  const isolated = ['create','edit','secret','lost'].includes(stage);
+  const title = stage === 'create' ? 'Новое подключение' : stage === 'edit' ? 'Редактировать подключение' : stage === 'secret' ? 'Ключ создан' : stage === 'lost' ? 'Ключ не получен' : stage === 'details' ? selected?.name ?? 'Подключение' : 'Подключения';
+  const selectionLabel = (value: Connection) => value.boardSelection === 'all' ? 'Автодоступ к текущим и будущим доскам' : 'Выбранные доски';
+  const summary = selected && <div className="mcp-summary"><strong>{selected.name}</strong><p>{selected.revokedAt ? 'Доступ отозван' : 'Активное'} · {accessLabel(selected.mode)}<br/>{selected.boards.map(board=>board.name).join(' · ') || 'Нет доступных досок'}</p><p className={selected.boardSelection==='all' ? 'mcp-auto' : ''}>{selectionLabel(selected)}</p><p>Создано: {new Date(selected.createdAt).toLocaleDateString('ru-RU')}</p>{selected.lostBoardCount > 0 && <p>Доступ к одной из выбранных досок потерян.</p>}{!!selected.excludedBoards?.length && <p>Не восстановлен после повторного вступления: {selected.excludedBoards.map(board=>board.name).join(' · ')}. Чтобы вернуть доступ, явно добавьте доску в выбранном режиме.</p>}</div>;
+  const effectiveBoards = boards?.filter(board => boardSelection==='selected' ? boardIds.includes(board.id) : stage!=='edit' || selected?.boardSelection!=='all' || !selected.excludedBoards.some(excluded=>excluded.id===board.id)) ?? [];
+  const addedBoards = effectiveBoards.filter(board=>stage==='create' || !selected?.boards.some(before=>before.id===board.id));
+  const removedBoards = stage==='edit' ? selected?.boards.filter(board=>!effectiveBoards.some(after=>after.id===board.id)) ?? [] : [];
+  const invalidDraft = !name.trim() || !boards || (stage==='create' && boardSelection==='selected' && !boardIds.length);
   const address = <div className="mcp-address"><p className="mcp-label">Адрес MCP-сервера</p><p className="mcp-code" tabIndex={0}>{serverUrl}</p><button className="secondary" onClick={()=>void copy(serverUrl)}>Копировать адрес</button></div>;
   const body = <>
     {!isolated && <button className="back settings-back" onClick={back}><Icon name="back"/>{stage === 'list' ? 'Аккаунт' : 'Подключения'}</button>}
@@ -147,32 +207,37 @@ export function McpConnections({navigate}: {navigate: (next: NavigationState) =>
     {message && <p className="mcp-feedback" role="status">{message}</p>}
     {stage === 'list' && <>
       {loading ? <Skeleton label="Загружаем подключения…"/> : error ? <button onClick={()=>void load()}>Повторить</button> : <>
-        {!listing?.items.length ? <div className="mcp-empty"><h2>Ваши задачи.<br/>В вашем AI-клиенте.</h2><p>Подключите Hermes или другой MCP-клиент. Вы сами выбираете доски и разрешённые действия.</p><p>Подключений пока нет</p></div> : <div className="mcp-list">{listing.items.map(item=><ActionRow key={item.id} label={item.name} value={<>{item.revokedAt ? 'Доступ отозван' : accessLabel(item.mode)}<small>{item.boards.map(board=>board.name).join(' · ') || 'Нет доступных досок'}{item.lostBoardCount > 0 && ' · Доступ к доске потерян'}</small></>} onClick={()=>void open(item.id)}/>)}</div>}
+        {!listing?.items.length ? <div className="mcp-empty"><h2>Ваши задачи.<br/>В вашем AI-клиенте.</h2><p>Подключите Hermes или другой MCP-клиент. Вы сами выбираете доски и разрешённые действия.</p><p>Подключений пока нет</p></div> : <div className="mcp-list">{listing.items.map(item=><ActionRow key={item.id} label={item.name} value={<>{item.revokedAt ? 'Доступ отозван' : 'Активное'} · {accessLabel(item.mode)}<small className={item.boardSelection==='all' ? 'mcp-auto' : ''}>{selectionLabel(item)}</small><small>{item.boards.map(board=>board.name).join(' · ') || 'Нет доступных досок'}{item.lostBoardCount > 0 && ' · Доступ к доске потерян'}</small><small>Создано: {new Date(item.createdAt).toLocaleDateString('ru-RU')}</small></>} onClick={()=>void open(item.id)}/>)}</div>}
         {listing?.nextCursor && <button className="secondary" onClick={()=>void load(true)}>Показать ещё</button>}
         <button className="mcp-primary" disabled={!online} onClick={start}>Добавить подключение</button>
       </>}
     </>}
-    {stage === 'create' && <form className="mcp-create" onSubmit={event=>{event.preventDefault();void create();}}>
-      <fieldset className="readonly-fields" disabled={pending || uncertain || !online}>
+    {(stage === 'create' || stage === 'edit') && <form className="mcp-create" onSubmit={event=>{event.preventDefault();if (uncertain) { void (stage==='edit' ? save() : create()); } else if (stage==='edit' || boardSelection==='all') setDialog('save'); else void create();}}>
+      <fieldset className="readonly-fields" disabled={pending || uncertain || conflict || !online}>
         <label className="mcp-name">Название<input autoFocus value={name} onChange={event=>setName(event.target.value)} placeholder="Мой Hermes" autoComplete="off" maxLength={80} required/></label>
-        <ActionRow label="Доски" value={boardIds.length ? boards?.filter(board=>boardIds.includes(board.id)).map(board=>board.name).join(', ') || 'Проверьте выбор досок' : 'Выберите доски'} onClick={()=>{setBoardDraft([...boardIds]);setQuery('');setDialog('boards');}}/>
+        <div className="mcp-modes" role="radiogroup" aria-label="Выбор досок"><ChoiceRow label="Выбранные доски" detail="Новые доски не добавляются автоматически" selected={boardSelection==='selected'} onClick={()=>setBoardSelection('selected')}/><ChoiceRow label="Все мои текущие и будущие доски" detail="Включая личные доски. Права распространяются и на новые доски" selected={boardSelection==='all'} onClick={()=>setBoardSelection('all')}/></div>
+        {boardSelection==='selected' ? <ActionRow label="Доски" value={boardIds.length ? boards?.filter(board=>boardIds.includes(board.id)).map(board=>board.name).join(', ') || 'Проверьте выбор досок' : 'Выберите доски'} onClick={()=>{setBoardDraft([...boardIds]);setQuery('');setDialog('boards');}}/> : <p className="mcp-auto">Автодоступ, включая личные доски. Сейчас: {effectiveBoards.map(board=>board.name).join(' · ') || 'Нет доступных досок'}. После потери членства повторное вступление не возвращает доступ автоматически.</p>}
         <div className="mcp-modes" role="radiogroup" aria-label="Разрешённые действия"><ChoiceRow label="Только чтение" detail="Просмотр и поиск задач" selected={mode==='read'} onClick={()=>setMode('read')}/><ChoiceRow label="Чтение и изменение" detail="Создание, назначение, сроки и статусы" selected={mode==='write'} onClick={()=>setMode('write')}/></div>
-        <p>Только ваши права. Новые доски не добавляются автоматически.</p><p>Без срока действия. Отключить доступ можно в любой момент.</p>
+        <p>{stage==='edit' ? 'Изменение настроек не меняет ключ. Перенастраивать клиент не нужно.' : 'Без срока действия. Отключить доступ можно в любой момент.'}</p>
       </fieldset>
-      {uncertain && <p>Сначала проверим подключение, чтобы не создать лишний доступ. Повтор использует тот же запрос.</p>}
-      {!uncertain && (!name.trim() || !boardIds.length) && <p className="mcp-hint">Укажите название и выберите хотя бы одну доску.</p>}
-      <button className="mcp-primary" disabled={pending || !online || (!uncertain && (!name.trim() || !boardIds.length))}>{pending ? 'Создаём ключ…' : uncertain ? 'Проверить результат' : 'Создать ключ'}</button>
+      {!boards && <button type="button" className="secondary" onClick={()=>void loadBoards()}>Повторить загрузку досок</button>}
+      {uncertain && <p>Сначала проверим результат. Повтор использует тот же запрос, без скрытого изменения прав или ключа.</p>}
+      {!uncertain && invalidDraft && <p className="mcp-hint">Укажите название и выберите доски. Дождитесь загрузки списка.</p>}
+      {conflict && selected && <><p>Черновик оставлен на экране. Автоматической перезаписи нет.</p><button type="button" onClick={()=>void open(selected.id)}>Открыть текущие настройки</button></>}
+      <button className="mcp-primary" disabled={pending || conflict || !online || (!uncertain && invalidDraft)}>{pending ? stage==='edit' ? 'Сохраняем…' : 'Создаём ключ…' : uncertain ? 'Проверить результат' : stage==='edit' ? 'Сохранить изменения' : 'Создать ключ'}</button>
     </form>}
     {stage === 'secret' && <div className="mcp-secret">{summary}<h2>Сохраните ключ сейчас</h2><p>После выхода повторный показ недоступен. Вставьте ключ в настройки клиента, не в переписку с агентом.</p>{address}<p className="mcp-label">Ключ доступа</p><p className="mcp-code mcp-key" tabIndex={0}>{secret}</p><p>Ключ действует до отзыва. При утечке отзовите подключение.</p><button className="mcp-help back" onClick={openHelp}>Как подключить клиент</button><div className="mcp-actions"><button onClick={()=>void copy(secret,'key')}>{copied ? 'Ключ скопирован' : 'Копировать ключ'}</button><button className="secondary" onClick={back}>Готово</button></div></div>}
-    {stage === 'lost' && <>{summary}<h2>Ключ создан, но не был получен</h2><p>Показать его повторно невозможно. Отзовите это подключение перед созданием нового.</p><button className="danger mcp-primary" disabled={!online} onClick={()=>{setError('');setDialog('revoke');}}>Отозвать доступ</button></>}
+    {stage === 'lost' && <>{summary}<h2>Ключ создан, но не был получен</h2><p>Показать его повторно невозможно. Можно явно перевыпустить ключ ещё раз, сохранив настройки, или отозвать доступ.</p><button className="mcp-primary" disabled={!online} onClick={()=>{setError('');setDialog('rotate');}}>Перевыпустить ключ</button><button className="danger mcp-primary" disabled={!online} onClick={()=>{setError('');setDialog('revoke');}}>Отозвать доступ</button></>}
     {stage === 'details' && selected && <div className="mcp-details">{summary}{selected.revokedAt ? <><p>Доступ отозван</p><button className="mcp-primary" disabled={!online} onClick={start}>Создать новое подключение</button></> : <>
-      <h2>Доступ</h2><p>{accessLabel(selected.mode)}</p><h2>Доски</h2>{selected.boards.length ? <ul>{selected.boards.map(board=><li key={board.id}>{board.name}{board.status!=='active' && ' — только чтение: доска неактивна'}</li>)}</ul> : <p>Это подключение больше не даёт доступа к задачам. Его можно отозвать.</p>}<h2>Срок действия</h2><p>До ручного отзыва</p>{address}<p>Ключ скрыт. Повторный показ недоступен.</p><button className="mcp-help back" onClick={openHelp}>Как подключить клиент</button><p>Чтобы изменить доступ или заменить потерянный ключ, отзовите это подключение и создайте новое.</p><button className="danger mcp-primary" disabled={!online} onClick={()=>{setError('');setDialog('revoke');}}>Отозвать доступ</button>
+      <h2>Доступ</h2><p>{accessLabel(selected.mode)}</p><h2>Доски</h2>{selected.boards.length ? <ul>{selected.boards.map(board=><li key={board.id}>{board.name}{board.status!=='active' && ' — только чтение: доска неактивна'}</li>)}</ul> : <p>Нет доступных досок. Можно изменить настройки или отозвать доступ.</p>}<h2>Срок действия</h2><p>До ручного отзыва</p>{address}<p>Ключ скрыт. Повторный показ недоступен.</p><button className="mcp-help back" onClick={openHelp}>Как подключить клиент</button><div className="mcp-actions"><button disabled={!online || uncertain || conflict} onClick={edit}>Редактировать</button><button className="secondary" disabled={!online || conflict} onClick={()=>{setError('');setDialog('rotate');}}>{uncertain ? 'Проверить перевыпуск' : 'Перевыпустить ключ'}</button>{conflict && <button onClick={()=>void open(selected.id)}>Открыть текущие настройки</button>}<button className="danger" disabled={!online} onClick={()=>{setError('');setDialog('revoke');}}>Отозвать доступ</button></div>
     </>}</div>}
   </>;
   return <AppShell message="" navigation={{screen:'settings-connections'}} navigate={navigate} hideNavigation={isolated || expired}>
     <div className="mcp-screen">{expired ? <SettingsScreen title="Войдите снова через Telegram"><p>Сессия закончилась. Закройте приложение и откройте его через бота.</p></SettingsScreen> : isolated ? <section className="mcp-form-screen"><header><IconButton label="Назад" disabled={pending} onClick={back}><Icon name="back"/></IconButton><h1>{title}</h1></header>{body}</section> : <SettingsScreen title={title}>{body}</SettingsScreen>}</div>
     {!expired && dialog === 'boards' && <Sheet title="Доступные доски" onClose={()=>setDialog(undefined)}><div className="mcp-sheet"><label>Найти доску<input value={query} onChange={event=>setQuery(event.target.value)}/></label>{!boards ? <><p>Доски не загружены</p><button onClick={()=>void loadBoards()}>Повторить загрузку</button></> : <div>{boards.filter(board=>board.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map(board=><ChoiceRow key={board.id} kind="check" label={board.name} detail={board.status==='active' ? boardTypeName(board) : 'Только чтение: доска неактивна'} selected={boardDraft.includes(board.id)} onClick={()=>setBoardDraft(ids=>ids.includes(board.id) ? ids.filter(id=>id!==board.id) : [...ids,board.id])}/>)}</div>}<button disabled={!boards} onClick={()=>{setBoardIds(boardDraft.filter(id=>boards?.some(board=>board.id===id)));setDialog(undefined);}}>Готово</button></div></Sheet>}
-    {!expired && dialog === 'leave' && <Sheet title={stage==='secret' ? 'Закрыть без сохранения ключа?' : uncertain ? 'Выйти без проверки результата?' : 'Выйти без сохранения?'} onClose={()=>setDialog(undefined)}><div className="mcp-sheet"><p>{stage==='secret' ? 'Показать его ещё раз не получится. Подключение останется активным до отзыва.' : uncertain ? 'Ключ мог быть создан. Проверьте список подключений и отзовите доступ, если ключ потерян.' : 'Название и выбор досок не сохранятся.'}</p><button onClick={()=>setDialog(undefined)}>Остаться</button><button className="secondary" onClick={backToList}>Закрыть</button></div></Sheet>}
+    {!expired && dialog === 'save' && <Sheet title="Подтвердить настройки доступа?" onClose={()=>{if (!busy.current) setDialog(undefined);}}><div className="mcp-sheet"><p>Название: {name.trim()}</p><p>{stage==='edit' ? `${accessLabel(selected!.mode)} → ${accessLabel(mode)}` : accessLabel(mode)}</p>{mode==='write' && (stage==='create' || selected?.mode!=='write') && <p><strong>Появится право создавать и изменять задачи.</strong></p>}{boardSelection==='all' && <p className="mcp-auto"><strong>Автодоступ ко всем текущим и будущим доскам, включая личные. Выбранные права распространяются на новые доски.</strong></p>}<p>Добавятся: {addedBoards.map(board=>board.name).join(' · ') || 'Нет'}</p><p>Исключатся: {removedBoards.map(board=>board.name).join(' · ') || 'Нет'}</p><p>Итоговый состав сейчас: {effectiveBoards.map(board=>board.name).join(' · ') || 'Нет доступных досок'}</p>{stage==='edit' && <p>Ключ не изменится.</p>}<button disabled={pending || !online || invalidDraft} onClick={()=>{if (stage==='edit') void save(); else {setDialog(undefined);void create();}}}>{pending ? 'Сохраняем…' : 'Подтвердить'}</button><button className="secondary" disabled={pending} onClick={()=>setDialog(undefined)}>Отмена</button></div></Sheet>}
+    {!expired && dialog === 'rotate' && <Sheet title="Перевыпустить ключ?" onClose={()=>{if (!busy.current) setDialog(undefined);}}><div className="mcp-sheet"><p>Старый ключ перестанет работать. Новый ключ покажем однократно. Обновите его в настройках клиента, иначе клиент потеряет доступ. Название, доски и права сохранятся.</p>{error && <p role="alert">{error}</p>}<button disabled={pending || !online} onClick={()=>void rotate()}>{pending ? 'Перевыпускаем…' : uncertain ? 'Проверить результат' : 'Подтвердить перевыпуск'}</button><button className="secondary" disabled={pending} onClick={()=>setDialog(undefined)}>{uncertain ? 'Закрыть без проверки' : 'Отмена'}</button></div></Sheet>}
+    {!expired && dialog === 'leave' && <Sheet title={stage==='secret' ? 'Закрыть без сохранения ключа?' : uncertain ? 'Выйти без проверки результата?' : 'Выйти без сохранения?'} onClose={()=>setDialog(undefined)}><div className="mcp-sheet"><p>{stage==='secret' ? 'Показать его ещё раз не получится. Подключение останется активным до отзыва.' : uncertain ? 'Изменение могло сохраниться, ключ — измениться. Проверьте подключение в списке. Потерянный ключ можно явно перевыпустить или отозвать доступ.' : 'Название и выбор досок не сохранятся.'}</p><button onClick={()=>setDialog(undefined)}>Остаться</button><button className="secondary" onClick={backToList}>Закрыть</button></div></Sheet>}
     {!expired && dialog === 'revoke' && selected && <Sheet title="Отозвать доступ?" onClose={()=>{if (!busy.current) setDialog(undefined);}}><div className="mcp-sheet"><p>{selected.name} больше не сможет читать и изменять задачи. Сами задачи останутся. Для нового подключения понадобится новый ключ.</p><p>Уже сохранённые изменения и ранее прочитанные данные не отменяются.</p>{error && <p role="alert">{error}</p>}<button className="danger" disabled={pending || !online} onClick={()=>void revoke()}>{pending ? 'Отзываем доступ…' : error ? 'Проверить ещё раз' : 'Отозвать доступ'}</button><button className="secondary" disabled={pending} onClick={()=>setDialog(undefined)}>Отмена</button></div></Sheet>}
     {!expired && dialog === 'help' && <Sheet title="Как подключить клиент" onClose={()=>setDialog(undefined)}><div className="mcp-sheet">
       <p>Адрес и ключ не привязаны к Hermes. Для каждого клиента создайте отдельное подключение — его можно будет отозвать независимо.</p>

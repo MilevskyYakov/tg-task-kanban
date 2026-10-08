@@ -8,7 +8,11 @@ test('publication statuses use agreed product language', () => {
 });
 
 test('historical waiting rows render as blocker in publication summaries', async () => {
-  const db = { query: async (sql: string) => sql.includes('SELECT name FROM boards')
+  const db = { query: async (sql: string) => sql.includes('SELECT chat_root_id')
+    ? { rows: [{ chat_root_id: 'board' }] }
+    : sql.includes('SELECT id, status FROM boards')
+      ? { rows: [{ id: 'board', status: 'active' }] }
+    : sql.includes('SELECT name FROM boards')
     ? { rows: [{ name: 'Команда' }] }
     : sql.includes('assignee_user_id IS NULL')
       ? { rows: [] }

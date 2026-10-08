@@ -9,7 +9,7 @@ import { ChecklistConfirmationError, claimTask, createTask, createProject, Proje
 import type { Config } from './config.js';
 import { taskInput } from './task-input.js';
 import { recurrenceInput } from './recurrence-input.js';
-import { createRecurrence, recurrenceColumns, recurrencesForBoard, updateRecurrence } from './db.js';
+import { createRecurrence, lockBoard, recurrenceColumns, recurrencesForBoard, updateRecurrence } from './db.js';
 
 const uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 const userId = z.string().regex(/^[1-9]\d{0,18}$/).refine(value => /^\d+$/.test(value) && BigInt(value) <= 9223372036854775807n);
@@ -72,7 +72,12 @@ const descriptions: Record<ToolName, string> = {
   create_recurrence: 'Создать серию повторяющихся задач (шаблон: частота, время, часовой пояс). Существующие карточки не создаёт и не меняет; экземпляры создаст планировщик по расписанию, уведомления о создании экземпляров не отправляются. requestId — UUID одного намерения; повтор с тем же requestId возвращает созданную серию без дубля. weekly требует ровно один weekday, monthly — dayOfMonth. Для изменения карточки-экземпляра используйте update_task — серия при этом не меняется.',
   update_recurrence: 'Изменить серию: пауза (paused), архив (archived), поля правила (frequency/localTime/timezone/weekdays/dayOfMonth/startAt/endAt) или содержания (title/description/projectId/assigneeUserId/priority). Одна операция за вызов, хотя бы одно поле. Возобновление (paused=false) пересчитывает next_occurrence_at; archived=true останавливает серию навсегда. Изменение серии не меняет уже созданные карточки-экземпляры — меняйте их отдельно через update_task.'
 };
-const connectionInput = z.object({ requestId: uuid, name: z.string().trim().min(1).max(80), boardIds: z.array(uuid).min(1).max(100).transform((ids) => [...new Set(ids)].sort()), mode: z.enum(['read', 'write']) }).strict();
+const connectionFields = { requestId: uuid, name: z.string().trim().min(1).max(80), boardIds: z.array(uuid).max(100).transform((ids) => [...new Set(ids)].sort()), mode: z.enum(['read', 'write']), boardSelection: z.enum(['selected', 'all']).default('selected') };
+const selectionValid = (value: {boardSelection: string; boardIds: string[]}) => value.boardSelection === 'all' ? value.boardIds.length === 0 : value.boardIds.length > 0;
+const connectionInput = z.object(connectionFields).strict().refine(selectionValid);
+const expectedVersion = z.string().regex(/^[1-9]\d*$/).max(20);
+const editInput = z.object({...connectionFields, expectedVersion, expectedAccessVersion: z.string().regex(/^[0-9a-f]{64}$/), confirmExpansion: z.boolean().default(false)}).strict().refine(value => value.boardSelection !== 'all' || value.boardIds.length === 0);
+const rotateInput = z.object({requestId: uuid, expectedVersion}).strict();
 class McpFailure extends Error {
   constructor(readonly code: string, message: string, readonly status = 400, readonly details: Record<string, unknown> = {}) { super(message); }
 }
@@ -97,19 +102,38 @@ async function transaction<T>(db: Database, run: (client: pg.PoolClient) => Prom
     await client.query('COMMIT'); return result;
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
-type Connection = { id: string; user_id: string; mode: 'read' | 'write' };
+type Connection = { id: string; user_id: string; mode: 'read' | 'write'; board_selection: 'selected' | 'all' };
+// Explicit grants authorize the current membership. Automatic grants never restore a lost tenure.
+const boardAccess = `(EXISTS (SELECT 1 FROM mcp_board_grants g WHERE g.connection_id=c.id AND g.board_id=m.board_id)
+  OR (c.board_selection='all' AND NOT EXISTS (SELECT 1 FROM mcp_membership_losses l WHERE l.board_id=m.board_id AND l.user_id=m.user_id)))`;
 async function connectionForKey(client: Database | pg.PoolClient, keyHash: string, lock = false): Promise<Connection> {
-  const result = await client.query<Connection>(`SELECT id, user_id, mode FROM mcp_connections WHERE key_hash = $1 AND revoked_at IS NULL ${lock ? 'FOR SHARE' : ''}`, [keyHash]);
+  const result = await client.query<Connection>(`SELECT id, user_id, mode, board_selection FROM mcp_connections WHERE key_hash = $1 AND revoked_at IS NULL ${lock ? 'FOR SHARE' : ''}`, [keyHash]);
   if (!result.rows[0]) throw new McpFailure('AUTH_REQUIRED', 'Ключ отсутствует, недействителен или отозван', 401);
   return result.rows[0];
 }
 async function connectionView(db: Database | pg.PoolClient, owner: string, id: string) {
-  const result = await db.query(`SELECT c.id, c.name, c.mode, c.created_at AS "createdAt", c.revoked_at AS "revokedAt",
-    c.board_count - count(b.id)::int AS "lostBoardCount", COALESCE(jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'status', b.status)) FILTER (WHERE b.id IS NOT NULL), '[]') AS boards
-    FROM mcp_connections c LEFT JOIN mcp_board_grants g ON g.connection_id = c.id
-    LEFT JOIN boards b ON b.id = g.board_id WHERE c.id = $1 AND c.user_id = $2 GROUP BY c.id`, [id, owner]);
+  const result = await db.query(`SELECT c.id, c.name, c.mode, c.board_selection AS "boardSelection", c.revision::text AS version,
+    c.created_at AS "createdAt", c.revoked_at AS "revokedAt",
+    GREATEST(0,c.board_count - (SELECT count(*)::int FROM mcp_board_grants WHERE connection_id=c.id)) AS "lostBoardCount",
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'status', b.status) ORDER BY b.name,b.id)
+      FROM memberships m JOIN boards b ON b.id=m.board_id WHERE m.user_id=c.user_id AND ${boardAccess}), '[]') AS boards,
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'status', b.status) ORDER BY b.name,b.id)
+      FROM memberships m JOIN boards b ON b.id=m.board_id WHERE m.user_id=c.user_id AND c.board_selection='all' AND NOT ${boardAccess}), '[]') AS "excludedBoards"
+    FROM mcp_connections c WHERE c.id=$1 AND c.user_id=$2`, [id, owner]);
   if (!result.rows[0]) throw missing();
-  return result.rows[0];
+  const connection = result.rows[0];
+  // Membership loss changes effective access without taking a connection lock.
+  return {...connection, accessVersion:hash(canonical(connection.boards.map((board: {id: string}) => board.id).sort()))};
+}
+async function connectionEvent(client: pg.PoolClient, id: string, requestId: string, fingerprint: string, action: string) {
+  await client.query(`INSERT INTO mcp_connection_events (connection_id,request_id,request_hash,action,revision,mode,board_selection,board_count)
+    SELECT id,$2,$3,$4,revision,mode,board_selection,board_count FROM mcp_connections WHERE id=$1`, [id,requestId,fingerprint,action]);
+}
+async function selectedMemberships(client: pg.PoolClient, owner: string, input: {boardSelection: string; boardIds: string[]}) {
+  const allowed = await client.query<{board_id: string}>(`SELECT board_id FROM memberships WHERE user_id=$1
+    AND ($3='all' OR board_id=ANY($2::uuid[])) ORDER BY board_id FOR SHARE`, [owner,input.boardIds,input.boardSelection]);
+  if (input.boardSelection === 'selected' && allowed.rowCount !== input.boardIds.length) throw new McpFailure('NOT_FOUND', 'Доступ к выбранным доскам изменился. Проверьте выбор', 404);
+  return allowed.rows.map(row => row.board_id);
 }
 function cursorFor(args: Record<string, unknown>, context: string) {
   const { cursor, ...filters } = args;
@@ -186,9 +210,9 @@ async function runTool(db: Database, keyHash: string, name: ToolName, raw: unkno
     if (write && connection.mode !== 'write') throw new McpFailure('READ_ONLY', 'Подключение разрешает только просмотр', 403);
     if (write) await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${connection.id}:${args.requestId}`]);
     if (args.boardId) {
-      if (write) await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [args.boardId]);
-      const access = await client.query(`SELECT b.status FROM mcp_board_grants g JOIN memberships m ON m.board_id=g.board_id AND m.user_id=g.user_id
-        JOIN boards b ON b.id=g.board_id WHERE g.connection_id=$1 AND g.board_id=$2 FOR SHARE OF b, m`, [connection.id, args.boardId]);
+      if (write) await lockBoard(client, args.boardId);
+      const access = await client.query(`SELECT b.status FROM mcp_connections c JOIN memberships m ON m.user_id=c.user_id
+        JOIN boards b ON b.id=m.board_id WHERE c.id=$1 AND b.id=$2 AND ${boardAccess} FOR SHARE OF b, m`, [connection.id, args.boardId]);
       if (!access.rows[0]) throw missing();
       if (write && access.rows[0].status !== 'active') throw new McpFailure('BOARD_READ_ONLY', 'Доска доступна только для чтения', 409);
     }
@@ -338,8 +362,8 @@ async function runTool(db: Database, keyHash: string, name: ToolName, raw: unkno
     const term = `%${(args.query ?? '').replace(/[\\%_]/g, '\\$&')}%`;
     let rows: Record<string, any>[];
     if (name === 'list_boards') {
-      rows = (await client.query(`SELECT b.id, b.name, b.type, b.status FROM mcp_board_grants g JOIN boards b ON b.id=g.board_id
-        JOIN memberships m ON m.board_id=b.id AND m.user_id=g.user_id WHERE g.connection_id=$1 AND ($2::uuid IS NULL OR b.id>$2) ORDER BY b.id LIMIT $3`, [connection.id, cursor.after, args.limit+1])).rows;
+      rows = (await client.query(`SELECT b.id, b.name, b.type, b.status FROM mcp_connections c JOIN memberships m ON m.user_id=c.user_id
+        JOIN boards b ON b.id=m.board_id WHERE c.id=$1 AND ${boardAccess} AND ($2::uuid IS NULL OR b.id>$2) ORDER BY b.id LIMIT $3`, [connection.id, cursor.after, args.limit+1])).rows;
     } else if (name === 'list_projects') {
       rows = (await client.query(`SELECT id, name FROM projects WHERE board_id=$1 AND (archived_at IS NOT NULL)=$2 AND name ILIKE $3 AND ($4::uuid IS NULL OR id>$4) ORDER BY id LIMIT $5`, [args.boardId, Boolean(args.archived), term, cursor.after, args.limit+1])).rows;
     } else if (name === 'list_recurrences') {
@@ -420,36 +444,97 @@ export function registerMcp(app: FastifyInstance, config: Config, db: Database, 
       const input = parse(connectionInput, request.body);
       const result = await transaction(db, async (client) => {
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [owner+input.requestId]);
-        const fingerprint = hash(canonical(input));
+        const {boardSelection, ...legacyInput} = input;
+        const fingerprint = hash(canonical(boardSelection === 'selected' ? legacyInput : input));
         const existing = (await client.query('SELECT id, request_hash FROM mcp_connections WHERE user_id=$1 AND create_request_id=$2', [owner, input.requestId])).rows[0];
         if (existing) {
           if (existing.request_hash !== fingerprint) throw new McpFailure('REQUEST_CONFLICT', 'Запрос уже использован с другими параметрами', 409);
           throw new McpFailure('KEY_ALREADY_ISSUED', 'Ключ создан, но повторный показ невозможен', 409, {connection: await connectionView(client, owner, existing.id)});
         }
-        const allowed = await client.query('SELECT board_id FROM memberships WHERE user_id=$1 AND board_id=ANY($2::uuid[]) ORDER BY board_id FOR SHARE', [owner, input.boardIds]);
-        if (allowed.rowCount !== input.boardIds.length) throw new McpFailure('NOT_FOUND', 'Доступ к выбранным доскам изменился. Проверьте выбор', 404);
+        const boardIds = await selectedMemberships(client,owner,input);
         const key = 'ktk_mcp_'+randomBytes(32).toString('base64url');
         const id = randomUUID();
-        await client.query('INSERT INTO mcp_connections (id,user_id,name,mode,key_hash,create_request_id,request_hash,board_count) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [id,owner,input.name,input.mode,hash(key),input.requestId,fingerprint,input.boardIds.length]);
-        await client.query('INSERT INTO mcp_board_grants (connection_id,user_id,board_id) SELECT $1,$2,unnest($3::uuid[])', [id,owner,input.boardIds]);
+        await client.query('INSERT INTO mcp_connections (id,user_id,name,mode,key_hash,create_request_id,request_hash,board_count,board_selection) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id,owner,input.name,input.mode,hash(key),input.requestId,fingerprint,boardIds.length,input.boardSelection]);
+        await client.query('INSERT INTO mcp_board_grants (connection_id,user_id,board_id) SELECT $1,$2,unnest($3::uuid[])', [id,owner,boardIds]);
+        await connectionEvent(client,id,input.requestId,fingerprint,'created');
         return {connection: await connectionView(client,owner,id), key, serverUrl: `${new URL(config.publicUrl).origin}/mcp`};
       });
       return reply.code(201).send(result);
     } catch (error) { return fail(error, reply); }
   }});
-  app.route<{Params: {id: string}}>({method: ['GET','DELETE'], url: '/api/mcp-connections/:id', bodyLimit: 65536, handler: async (request, reply) => {
+  app.route<{Params: {id: string}}>({method: ['GET','PATCH','DELETE'], url: '/api/mcp-connections/:id', bodyLimit: 65536, handler: async (request, reply) => {
     try {
       const owner = await management(request,reply);
       const id = parse(uuid,request.params.id);
       if (request.method === 'GET') return await connectionView(db,owner,id);
-      if (!request.headers['content-type']?.startsWith('application/json')) throw new McpFailure('INVALID_ARGUMENT','Требуется JSON');
+      if (!/^application\/json(?:;|$)/i.test(request.headers['content-type'] ?? '')) throw new McpFailure('INVALID_ARGUMENT','Требуется JSON');
+      if (request.method === 'PATCH') return await changeConnection(request,owner,id,'edited');
+      const input = parse(z.object({requestId: uuid.optional(), expectedVersion: expectedVersion.optional()}).strict(),request.body);
       await transaction(db,async (client) => {
-        const result = await client.query('UPDATE mcp_connections SET revoked_at=COALESCE(revoked_at,now()) WHERE id=$1 AND user_id=$2 RETURNING id', [id,owner]);
-        if (!result.rowCount) throw missing();
+        const current = (await client.query('SELECT revoked_at, revision::text, create_request_id FROM mcp_connections WHERE id=$1 AND user_id=$2 FOR UPDATE',[id,owner])).rows[0];
+        if (!current) throw missing();
+        if (input.requestId === current.create_request_id) throw new McpFailure('REQUEST_CONFLICT','Запрос уже использован для создания подключения',409);
+        const fingerprint = hash('revoked'+canonical(input));
+        const previous = input.requestId && (await client.query('SELECT request_hash FROM mcp_connection_events WHERE connection_id=$1 AND request_id=$2',[id,input.requestId])).rows[0];
+        if (previous && previous.request_hash !== fingerprint) throw new McpFailure('REQUEST_CONFLICT','Запрос уже использован с другими параметрами',409);
+        if (current.revoked_at || previous) return;
+        if (input.expectedVersion && input.expectedVersion !== current.revision) throw new McpFailure('VERSION_CONFLICT','Подключение изменилось. Откройте его заново',409);
+        await client.query('UPDATE mcp_connections SET revoked_at=now(),revision=revision+1 WHERE id=$1',[id]);
+        await connectionEvent(client,id,input.requestId ?? randomUUID(),fingerprint,'revoked');
       });
       return {id,revoked:true};
     } catch (error) { return fail(error,reply); }
   }});
+  async function changeConnection(request: FastifyRequest, owner: string, id: string, action: 'edited'|'rotated') {
+    limit('manage:'+owner,60);
+    const edit = action === 'edited' ? parse(editInput,request.body) : undefined;
+    const input = edit ?? parse(rotateInput,request.body);
+    return transaction(db,async client => {
+      const current = (await client.query('SELECT revoked_at,mode,board_selection,revision::text,create_request_id FROM mcp_connections WHERE id=$1 AND user_id=$2 FOR UPDATE',[id,owner])).rows[0];
+      if (!current) throw missing();
+      if (input.requestId === current.create_request_id) throw new McpFailure('REQUEST_CONFLICT','Запрос уже использован для создания подключения',409);
+      const fingerprint = hash(action+canonical(input));
+      const previous = (await client.query('SELECT request_hash,revision::text FROM mcp_connection_events WHERE connection_id=$1 AND request_id=$2',[id,input.requestId])).rows[0];
+      if (previous) {
+        if (previous.request_hash !== fingerprint) throw new McpFailure('REQUEST_CONFLICT','Запрос уже использован с другими параметрами',409);
+        const connection = await connectionView(client,owner,id);
+        if (action === 'rotated') throw new McpFailure('KEY_ALREADY_ISSUED','Ключ перевыпущен, но повторный показ невозможен',409,{connection});
+        return {connection,replayed:true,appliedVersion:previous.revision};
+      }
+      if (current.revoked_at) throw new McpFailure('CONNECTION_REVOKED','Подключение отозвано. Создайте новое',409);
+      if (current.revision !== input.expectedVersion) throw new McpFailure('VERSION_CONFLICT','Подключение изменилось. Откройте его заново; ваш черновик не сохранён',409);
+      let key: string | undefined;
+      if (edit) {
+        const input = edit;
+        const boardIds = await selectedMemberships(client,owner,input);
+        const before = await connectionView(client,owner,id);
+        if (input.expectedAccessVersion !== before.accessVersion) throw new McpFailure('VERSION_CONFLICT','Доступ к доскам изменился. Откройте текущие настройки и подтвердите изменения заново',409);
+        const enablingAll = input.boardSelection === 'all' && current.board_selection !== 'all';
+        const expansion = (input.mode === 'write' && current.mode !== 'write') || enablingAll ||
+          (input.boardSelection === 'selected' && boardIds.some(id => !before.boards.some((board: {id: string}) => board.id === id)));
+        if (expansion && !input.confirmExpansion) throw new McpFailure('EXPANSION_CONFIRMATION_REQUIRED','Подтвердите расширение доступа',409);
+        // Staying in automatic mode must not restore lost memberships as a side effect of renaming.
+        if (input.boardSelection === 'selected' || enablingAll) {
+          await client.query('DELETE FROM mcp_board_grants WHERE connection_id=$1',[id]);
+          await client.query('INSERT INTO mcp_board_grants (connection_id,user_id,board_id) SELECT $1,$2,unnest($3::uuid[])',[id,owner,boardIds]);
+        }
+        await client.query(`UPDATE mcp_connections SET name=$2,mode=$3,board_selection=$4,revision=revision+1,
+          board_count=(SELECT count(*) FROM mcp_board_grants WHERE connection_id=$1) WHERE id=$1`,[id,input.name,input.mode,input.boardSelection]);
+      } else {
+        key = 'ktk_mcp_'+randomBytes(32).toString('base64url');
+        await client.query('UPDATE mcp_connections SET key_hash=$2,revision=revision+1 WHERE id=$1',[id,hash(key)]);
+      }
+      await connectionEvent(client,id,input.requestId,fingerprint,action);
+      return {connection:await connectionView(client,owner,id),replayed:false,...(key ? {key,serverUrl:`${new URL(config.publicUrl).origin}/mcp`} : {})};
+    });
+  }
+  app.post<{Params: {id: string}}>('/api/mcp-connections/:id/rotate',{bodyLimit:65536},async (request,reply) => {
+    try {
+      const owner = await management(request,reply);
+      if (!/^application\/json(?:;|$)/i.test(request.headers['content-type'] ?? '')) throw new McpFailure('INVALID_ARGUMENT','Требуется JSON');
+      return await changeConnection(request,owner,parse(uuid,request.params.id),'rotated');
+    } catch (error) { return fail(error,reply); }
+  });
   app.route({method: ['POST','GET','HEAD','DELETE'], url:'/mcp', bodyLimit:65536, handler:async (request,reply) => {
     try {
       headers(request,reply);

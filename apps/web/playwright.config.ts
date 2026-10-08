@@ -12,6 +12,7 @@ export default defineConfig({
   use: {
     baseURL,
     browserName: 'chromium',
+    ...(process.env.PLAYWRIGHT_CHANNEL ? {channel: process.env.PLAYWRIGHT_CHANNEL} : {}),
     colorScheme: 'dark',
     locale: 'ru-RU',
     contextOptions: { reducedMotion: 'reduce' }

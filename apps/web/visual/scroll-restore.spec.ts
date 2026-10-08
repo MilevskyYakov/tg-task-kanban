@@ -75,7 +75,6 @@ async function openList(page: Page, width: number, options: MockOptions = {}) {
   await mockScrollList(page, options);
   await page.setViewportSize({ width, height: 844 });
   await page.goto('/');
-  await page.evaluate(() => document.fonts.ready);
   if (options.backlog) {
     await page.getByRole('button', { name: /Бэклог/ }).click();
     await expect(page.locator('.backlog-row')).toHaveCount(30);
@@ -84,6 +83,8 @@ async function openList(page: Page, width: number, options: MockOptions = {}) {
   } else {
     await expect(page.locator('.main-task-row')).toHaveCount(30);
   }
+  // The loading skeleton has no text and does not request the list font yet.
+  await page.evaluate(() => document.fonts.ready);
 }
 
 const rowSelector = (options: MockOptions) => options.backlog ? '.backlog-row' : options.view === 'kanban' ? '.kanban-task-row' : '.main-task-row';
@@ -119,6 +120,11 @@ async function expectRestored(page: Page, expectedY: number, row: ReturnType<Pag
 
 for (const width of [390, 320]) {
   test(`list ${width}x844: back returns to the original scroll position`, async ({ page }) => {
+    // A slow font must finish loading before the test records its scroll target.
+    await page.route('**/fonts/manrope-variable.ttf', async route => {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      await route.continue();
+    });
     await openList(page, width);
     await scrollToPosition(page, 1200);
     const index = await pickVisibleRowIndex(page, {});

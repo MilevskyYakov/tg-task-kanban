@@ -30,7 +30,14 @@ for (const width of [390, 320]) {
     const shot = async () => {
       await page.evaluate(() => document.fonts.ready);
       await expect(page).toHaveTitle('Таска');
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      const layout = await page.evaluate(() => ({
+        viewport: innerWidth, width: document.documentElement.scrollWidth,
+        margin: getComputedStyle(document.body).margin,
+        transition: getComputedStyle(document.body).transitionDuration
+      }));
+      // Reduced motion must not animate the reset from the browser's 8px margin.
+      expect(layout).toMatchObject({ margin: '0px', transition: '0s' });
+      expect(layout.width, JSON.stringify({ mode, ...layout })).toBeLessThanOrEqual(layout.viewport);
       await page.screenshot({ path: `${evidence}/tasca-${mode}-${width}.png` });
     };
     try {
@@ -38,6 +45,16 @@ for (const width of [390, 320]) {
       await expect(page.getByRole('img', { name: 'Таска' })).toBeVisible();
       await expect(page.getByRole('link', { name: 'Открыть в Telegram' }).first()).toHaveAttribute('href', 'https://t.me/kairostask_bot?start=landing');
       await shot();
+      // Replay the browser's default margin and its reset in one frame. Reduced
+      // motion must not create a transition that keeps the old 8px offset alive.
+      const reset = await page.evaluate(() => {
+        document.body.style.margin = '8px';
+        document.body.getAnimations().forEach(animation => animation.finish());
+        document.body.style.removeProperty('margin');
+        return { margin: getComputedStyle(document.body).margin, scrollWidth: document.documentElement.scrollWidth };
+      });
+      expect(reset.margin).toBe('0px');
+      expect(reset.scrollWidth).toBeLessThanOrEqual(width);
       mode = 'auth-error'; await page.reload();
       await expect(page.getByRole('heading', { name: 'Не удалось войти' })).toBeVisible();
       await shot();

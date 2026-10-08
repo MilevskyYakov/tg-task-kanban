@@ -4,7 +4,7 @@ import { flushSync } from 'react-dom';
 import './style.css';
 import { api, ApiError, json } from './api';
 import { ActionRow, AppShell, Avatar, Badge, ChoiceAction, ChoiceRow, CreateScreen, Disclosure, EnvironmentStatus, FieldRow, Icon, SectionHeader, SettingsScreen, Sheet, Skeleton, TaskGlyph, TasksScreen, type IconName } from './app-shell';
-import type { Board, Collaboration, Member, Project, Recurrence, Schedule } from './domain';
+import type { Board, Collaboration, Member, Project, PublicationDelivery, Recurrence, Schedule } from './domain';
 import { countLabel, initialNavigation, settingsSections, type NavigationState } from './navigation';
 import { TaskDetails } from './task-details';
 import { DeadlineField } from './deadline-field';
@@ -23,6 +23,7 @@ import { EntryGuide, GroupSetup, type EntryPath } from './bot-entry';
 import { McpConnections } from './mcp-connections';
 import { NameSetting, PublicationSetting, useSettingsEdits } from './settings-editor';
 import { Landing } from './landing';
+import { ChatBoards, ChatInvite } from './chat-boards';
 
 type TaskView = 'list' | 'kanban';
 type FilterChoice = 'project' | 'assignee' | 'status' | 'priority' | 'deadline';
@@ -37,6 +38,10 @@ function App() {
   const [boards, setBoards] = useState<Board[]>([]);
   const [pairFlow, setPairFlow] = useState<{board?: Board}>();
   const [pairInvite, setPairInvite] = useState('');
+  const [chatFlow, setChatFlow] = useState('');
+  const [chatInvite, setChatInvite] = useState('');
+  const [canManageChat, setCanManageChat] = useState(false);
+  const [deliveries, setDeliveries] = useState<PublicationDelivery[]>([]);
   const [entryPath, setEntryPath] = useState<EntryPath>();
   const [boardLinkError, setBoardLinkError] = useState<'invalid' | 'network'>();
   const [startupRetry, setStartupRetry] = useState(0);
@@ -167,10 +172,11 @@ function App() {
   const loadBoard = async (id: string, archive = showArchive) => {
     const version = ++boardLoadVersion.current;
     const [taskData, projectData, memberData, publicationData, recurrenceData] = await Promise.all([
-      api<{tasks: Task[]}>(`/api/boards/${id}/tasks${archive ? '?archived=true' : ''}`), api<{projects: Project[]}>(`/api/boards/${id}/projects${archive ? '?archived=true' : ''}`), api<{members: Member[]}>(`/api/boards/${id}/members`), boards.find((item) => item.id === id)?.type === 'chat' ? api<{schedules: Schedule[]}>(`/api/boards/${id}/publications`).catch(() => ({ schedules: [] })) : Promise.resolve({ schedules: [] }), api<{recurrences: Recurrence[]}>(`/api/boards/${id}/recurrences`)
+      api<{tasks: Task[]}>(`/api/boards/${id}/tasks${archive ? '?archived=true' : ''}`), api<{projects: Project[]}>(`/api/boards/${id}/projects${archive ? '?archived=true' : ''}`), api<{members: Member[]}>(`/api/boards/${id}/members`), boards.find((item) => item.id === id)?.type === 'chat' ? api<{schedules: Schedule[]; deliveries?: PublicationDelivery[]}>(`/api/boards/${id}/publications`) : Promise.resolve({ schedules: [], deliveries: [] }), api<{recurrences: Recurrence[]}>(`/api/boards/${id}/recurrences`)
     ]);
     if (version !== boardLoadVersion.current || activeBoardId.current !== id) return false;
     setTasks(taskData.tasks); setProjects(projectData.projects); setMembers(memberData.members); setSchedules(publicationData.schedules); setRecurrences(recurrenceData.recurrences);
+    setDeliveries(publicationData.deliveries ?? []);
     setSettingsLoadedFor(id);
     return true;
   };
@@ -227,15 +233,18 @@ function App() {
           setProfileUsername(telegramUser.username ? `@${telegramUser.username}` : '');
         }
         const startup = resolveStartupContext(webApp.initDataUnsafe?.start_param);
+        let chatEntry: string | undefined;
         if (startup.surface === 'entry') setEntryPath(startup.path);
         if (startup.surface === 'board-link') {
           if (startup.token.startsWith('pair_')) setPairInvite(startup.token);
+          else if (startup.token.startsWith('invite_')) setChatInvite(startup.token);
           else {
-            try { const board = await api<Board>('/api/board-links/redeem', json('POST', {token: startup.token})); setBoardOverrideId(board.id); }
+            try { const board = await api<Board>('/api/board-links/redeem', json('POST', {token: startup.token})); setBoardOverrideId(board.id); if (board.chatEntry) chatEntry = board.chat_root_id; }
             catch (error) { setBoardLinkError(error instanceof ApiError && [400, 403, 404].includes(error.status) ? 'invalid' : 'network'); }
           }
         }
-        await loadBoards();
+        const available = await loadBoards();
+        if (chatEntry && available.filter(board => board.chat_root_id === chatEntry).length > 1) setChatFlow(chatEntry);
         if (startup.surface === 'invalid-task') setTaskLinkError(404);
         if (startup.surface === 'task') {
           setBoardOverrideId(startup.boardId);
@@ -254,7 +263,7 @@ function App() {
   useEffect(() => {
     if (state !== 'ready' || pairFlow) return;
     const currentId = openTask?.board_id ?? (navigation.screen === 'create' ? createBoardId : board?.id);
-    if (!currentId || boards.find((item) => item.id === currentId)?.type !== 'pair') return;
+    if (!currentId || !['pair', 'chat'].includes(boards.find((item) => item.id === currentId)?.type ?? '')) return;
     let cancelled = false;
     const refresh = async () => {
       try {
@@ -270,7 +279,9 @@ function App() {
           createLock.current = false;
           setCreatePending(false); setCreateUncertain(false); setCreateSuccess(undefined); setCreatedResult(undefined); setCreateAnnouncement('');
           ++boardLoadVersion.current;
-          setBoards((items) => items.filter((item) => item.id !== currentId)); setTasks([]); setProjects([]); setMembers([]);
+          const root = boards.find(item => item.id === currentId)?.chat_root_id;
+          setBoards((items) => items.filter((item) => item.id !== currentId && (!root || item.chat_root_id !== root))); setTasks([]); setProjects([]); setMembers([]);
+          setSchedules([]); setDeliveries([]); setChatFlow('');
           setOpenTask(undefined); setCollaboration(undefined); setDetailProjects([]); setDetailMembers([]); setDetailTasks([]);
           setBulkOpen(false); setBulkDraft(undefined); setClaimingTask(undefined); setCreateTasks([]); setAccessLost(true);
         }
@@ -281,6 +292,14 @@ function App() {
     window.addEventListener('focus', visible); document.addEventListener('visibilitychange', visible);
     return () => { cancelled = true; clearInterval(timer); window.removeEventListener('focus', visible); document.removeEventListener('visibilitychange', visible); };
   }, [state, board?.id, openTask?.board_id, navigation.screen, createBoardId, pairFlow]);
+  useEffect(() => {
+    setCanManageChat(false);
+    if (state !== 'ready' || !board?.chat_root_id || !['settings-automation', 'settings-workspace'].includes(navigation.screen)) return;
+    let cancelled = false;
+    void api<{canManage: boolean}>(`/api/boards/${board.id}/chat`).then(value => { if (!cancelled) setCanManageChat(value.canManage); })
+      .catch(() => { if (!cancelled) setMessage('Не удалось проверить права управления чатом. Обновите доску.'); });
+    return () => { cancelled = true; };
+  }, [state, board?.id, board?.chat_root_id, navigation.screen, taskReload]);
   useEffect(() => {
     if (state !== 'ready') return;
 
@@ -672,6 +691,7 @@ function App() {
       {matchingBoards.map((item) => <ChoiceRow key={item.id} label={item.name} detail={`${boardTypeName(item)}${item.status === 'archived' ? ' · в архиве' : ''}`} selected={item.id === selectedTaskBoardId} onClick={() => chooseTaskBoard(item.id)}/>)}
     </div>
     <button className="secondary" onClick={() => { setShowBoardSheet(false); setPairFlow({}); }}>Создать доску на двоих</button>
+    {boards.filter(item => item.chat_root_id === item.id).map(item => <button className="secondary" key={item.id} onClick={() => { setShowBoardSheet(false); setChatFlow(item.id); }}>Доски чата · {item.name}</button>)}
     <button className="sheet-close secondary" onClick={() => setShowBoardSheet(false)}>Закрыть</button>
   </Sheet>;
   const filterSheet = showFilterSheet && !showAdvancedFilters && !filterChoice && <Sheet className="task-sheet filter-choice-sheet" title="Фильтры" onClose={() => setShowFilterSheet(false)}>
@@ -782,6 +802,11 @@ function App() {
     pairChanged(updated); setPairFlow(undefined); setPairInvite(''); setBoardOverrideId(updated.id); setNavigation({ screen: 'tasks' }); setFilters({ ...defaultFilters, scope: 'all' });
   };
   if (accessLost) return <main><EnvironmentStatus/><h1>Доступ закрыт</h1><p>Вы больше не участвуете в этой доске. Задачи и история остались у владельца.</p><button onClick={() => { setAccessLost(false); setBoardOverrideId(undefined); setNavigation({ screen: 'tasks' }); }}>К моим задачам</button></main>;
+  const openChatBoard = async (opened: Board) => {
+    await loadBoards(); setChatFlow(''); setChatInvite(''); setShowBoardSheet(false); setBoardOverrideId(opened.id); setTaskReload(value => value + 1); navigate({screen: 'tasks'});
+  };
+  if (state === 'ready' && chatInvite) return <AppShell message={message} navigation={navigation} navigate={navigate}><ChatInvite token={chatInvite} onJoined={openChatBoard} onClose={() => setChatInvite('')}/></AppShell>;
+  if (state === 'ready' && chatFlow) return <AppShell message={message} navigation={navigation} navigate={navigate}><ChatBoards key={chatFlow} boardId={chatFlow} userId={userId} onOpen={openChatBoard} onClose={() => { setChatFlow(''); setTaskReload(value => value + 1); }}/></AppShell>;
   if (state === 'ready' && boardLinkError) return <main><EnvironmentStatus/><section role="alert"><h1>{boardLinkError === 'invalid' ? 'Доска недоступна' : 'Не удалось открыть доску'}</h1><p>{boardLinkError === 'invalid' ? 'Ссылка недействительна или доступ закрыт. Попросите администратора проверить вход в группу.' : 'Нет связи. Повторите вход по этой ссылке.'}</p>{boardLinkError === 'network' && <button onClick={() => setStartupRetry((value) => value + 1)}>Повторить</button>}<button className="secondary" onClick={() => { setBoardLinkError(undefined); setBoardOverrideId(undefined); }}>К моим задачам</button></section></main>;
   if (state === 'ready' && entryPath) return <EntryGuide path={entryPath} onPath={setEntryPath} onClose={() => { setEntryPath(undefined); navigate({ screen: 'tasks' }); }}
     onPersonal={() => { const personal = boards.find((item) => item.type === 'personal'); if (personal) chooseTaskBoard(personal.id); setEntryPath(undefined); navigate({ screen: 'tasks' }); }}
@@ -837,10 +862,11 @@ function App() {
     setPreview(result.messages.join('\n\n———\n\n'));
   };
   const publicationSettings = board?.type === 'chat' && board.status === 'active' && settingsLoadedFor === board.id && schedules.length ? <Disclosure label="Публикации в чат"><div className="publications">{schedules.map((schedule) =>
-    <PublicationSetting key={`${userId}:${board.id}:${schedule.kind}`} edits={settingsEdits} userId={userId} board={board} schedule={schedule}
+    <PublicationSetting key={`${userId}:${board.chat_root_id ?? board.id}:${schedule.kind}`} edits={settingsEdits} userId={userId} board={{...board, id: board.chat_root_id ?? board.id}} schedule={schedule}
+      boards={board.chat_root_id ? boards.filter(item => item.chat_root_id === board.chat_root_id) : undefined} readOnly={Boolean(board.chat_root_id) && !canManageChat}
       onConfirmed={(saved) => { if ('kind' in saved && activeBoardId.current === board.id) setSchedules((items) => items.map((item) => item.kind === saved.kind ? saved : item)); }}
       onPreview={(value) => void action(() => previewSchedule(value), 'Предпросмотр готов', false)}/>
-  )}{preview && <pre>{preview}</pre>}</div></Disclosure> : null;
+  )}{deliveries.map(delivery => <p role="alert" key={delivery.id}>Доставка за {delivery.local_date} не подтверждена. Подтверждено частей: {delivery.sent_parts}{delivery.total_parts !== null ? ` из ${delivery.total_parts}` : ''}. Проверьте сообщения в чате. Автоматического повтора не будет.</p>)}{preview && <pre>{preview}</pre>}</div></Disclosure> : null;
 
   const frequencyOptions = [{ value: 'daily', label: 'Ежедневно' }, { value: 'weekdays', label: 'По будням' }, { value: 'weekly', label: 'Еженедельно' }, { value: 'monthly', label: 'Ежемесячно' }];
   const projectOptions = [{ value: '', label: 'Без проекта' }, ...projects.filter((item) => !item.archived_at).map((item) => ({ value: item.id, label: item.name }))];
@@ -861,6 +887,7 @@ function App() {
   const workspaceSettings = <SettingsScreen title={board?.name ?? 'Рабочее пространство'} subtitle={board ? 'Доска, проекты и участники' : 'Доски, проекты и участники'}>
     <button className="back settings-back" onClick={() => navigate({ screen: 'settings' })}><Icon name="back"/>Настройки</button>
     {board?.type === 'pair' && <ActionRow label="Доступ" value={board.status === 'archived' ? 'Доска в архиве' : 'Доска на двоих'} onClick={() => setPairFlow({ board })}/>}
+    {board?.chat_root_id && <ActionRow label="Доски этого чата" value="Общие участники и направления" onClick={() => setChatFlow(board.chat_root_id!)}/>}
     {!board ? settingsBoardList('settings-workspace') : <fieldset className="settings-groups readonly-fields" disabled={board.status === 'archived' || board.status === 'frozen'}>
       <section className="settings-group"><h2>Доска</h2>{(board.role === 'owner' || board.role === 'admin') ? <NameSetting key={`${userId}:${board.id}`} edits={settingsEdits} userId={userId} board={board}
         onConfirmed={(saved) => { if ('id' in saved) setBoards((items) => items.map((item) => item.id === saved.id ? { ...item, ...saved } : item)); }}/> : <p>{board.name}</p>}<small>{board.type === 'chat' ? 'Права администратора Telegram проверяются при изменении чат-доски.' : board.type === 'pair' ? 'Приглашениями и архивом управляет владелец.' : 'Личное рабочее пространство.'}</small></section>
