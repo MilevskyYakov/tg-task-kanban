@@ -7,7 +7,7 @@ import { readStorage, removeStorage, writeStorage } from './environment';
 type Chat = {rootId: string; name: string; multiEnabled: boolean; memberVersion: string; canManage: boolean; boards: Board[]; members: Member[];
   conflictingSchedules?: (Schedule & {board_id: string; name: string})[]; scheduleVersion?: string};
 type Creation = {name: string; requestId: string; memberVersion?: string; memberIds?: string[]};
-export function ChatBoards({ boardId, userId, onOpen, onClose }: {boardId: string; userId: string; onOpen: (board: Board) => Promise<void>; onClose: () => void}) {
+export function ChatBoards({ boardId, userId, onOpen, onClose, onDeleted }: {boardId: string; userId: string; onOpen: (board: Board) => Promise<void>; onClose: () => void; onDeleted: () => void}) {
   const key = `tasks.chat-create.${userId}.${boardId}`;
   const [chat, setChat] = useState<Chat>();
   const [creating, setCreating] = useState(false);
@@ -118,7 +118,8 @@ export function ChatBoards({ boardId, userId, onOpen, onClose }: {boardId: strin
         <button className="secondary" onClick={() => setAccess(false)}>К доскам чата</button>
       </> : <>
         <div className="choice-list" role="radiogroup" aria-label="Доски этого чата">{chat.boards.map(board => <ChoiceRow key={board.id} label={board.name} detail={board.status === 'active' ? 'Общие участники' : 'Только чтение'} selected={false} onClick={() => void run(() => onOpen(board))}/>)}</div>
-        {!chat.boards.length && <p>Доступных досок нет.</p>}
+        {!chat.boards.length && <p>Доступных досок нет. Администратор может создать новую или восстановить удалённую.</p>}
+        {chat.canManage && <button className="secondary" onClick={onDeleted}>Восстановить удалённую доску</button>}
         {chat.canManage && <section className="settings-form" aria-label="Общий вход в чат-доски"><p>Общая ссылка открывает выбор досок этого чата, но не выдаёт доступ. Отправьте её в чат самостоятельно — бот ничего не публикует.</p>
           <button className="secondary" disabled={busy} onClick={() => void run(async () => {
             const result = await api<{url: string}>(`/api/boards/${boardId}/chat/link`, {method: 'POST'}); setEntryLink(result.url);

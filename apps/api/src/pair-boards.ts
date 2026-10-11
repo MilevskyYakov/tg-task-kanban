@@ -9,7 +9,7 @@ const linkHash = (token: string) => createHash('sha256').update(token).digest('h
 
 async function pairAccess(client: pg.PoolClient, userId: string, boardId: string, ownerOnly = true) {
   const result = await client.query(`SELECT b.*, m.role FROM boards b JOIN memberships m ON m.board_id = b.id
-    WHERE b.id = $1 AND b.type = 'pair' AND m.user_id = $2 FOR UPDATE OF b`, [boardId, userId]);
+    WHERE b.id = $1 AND b.type = 'pair' AND b.deleted_at IS NULL AND m.user_id = $2 FOR UPDATE OF b`, [boardId, userId]);
   const board = result.rows[0];
   if (!board || (ownerOnly && board.owner_user_id !== userId)) throw new BoardAccessError('Нет доступа к управлению доской');
   return board;
@@ -22,6 +22,8 @@ export async function createPairBoard(db: Database, userId: string, name: string
       ON CONFLICT (owner_user_id, create_request_id) WHERE type = 'pair' DO UPDATE SET name = boards.name
       RETURNING id, type, name, status, 'owner' AS role`, [randomUUID(), name, userId, requestId]);
     const board = result.rows[0];
+    if ((await client.query('SELECT deleted_at FROM boards WHERE id = $1', [board.id])).rows[0].deleted_at)
+      throw new BoardAccessError('Доска из этого запроса удалена. Восстановите её или начните новое создание', 409);
     await client.query(`INSERT INTO memberships (board_id, user_id, role) VALUES ($1, $2, 'owner')
       ON CONFLICT DO NOTHING`, [board.id, userId]);
     return board;
@@ -33,7 +35,7 @@ export async function previewPairInvite(db: Database, userId: string, token: str
       EXISTS (SELECT 1 FROM memberships WHERE board_id = b.id AND user_id = $2) AS joined,
       (SELECT count(*) FROM memberships WHERE board_id = b.id) >= 2 AS full
     FROM board_links l JOIN boards b ON b.id = l.board_id JOIN users u ON u.id = b.owner_user_id
-    WHERE l.token_hash = $1 AND l.kind = 'invite' AND l.revoked_at IS NULL AND b.type = 'pair' AND b.status = 'active'`, [linkHash(token), userId]);
+    WHERE l.token_hash = $1 AND l.kind = 'invite' AND l.revoked_at IS NULL AND b.type = 'pair' AND b.status = 'active' AND b.deleted_at IS NULL`, [linkHash(token), userId]);
   return result.rows[0] ?? null;
 }
 
@@ -42,7 +44,7 @@ export async function redeemPairInvite(db: Database, userId: string, token: stri
   if (!link) return null;
   return withBoardLock(db, link.board_id, async (client) => {
     const valid = await client.query(`SELECT b.id FROM boards b JOIN board_links l ON l.board_id = b.id
-      WHERE b.id = $1 AND b.type = 'pair' AND b.status = 'active' AND l.kind = 'invite'
+      WHERE b.id = $1 AND b.type = 'pair' AND b.status = 'active' AND b.deleted_at IS NULL AND l.kind = 'invite'
         AND l.token_hash = $2 AND l.revoked_at IS NULL FOR UPDATE OF b`, [link.board_id, linkHash(token)]);
     if (!valid.rowCount) return null;
     const member = await client.query('SELECT 1 FROM memberships WHERE board_id = $1 AND user_id = $2', [link.board_id, userId]);

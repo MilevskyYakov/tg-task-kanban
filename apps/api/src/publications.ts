@@ -46,7 +46,7 @@ export async function schedulesForBoard(db: Database, userId: string, boardId: s
       COALESCE(s.included_board_ids, ARRAY[s.board_id]) AS included_board_ids
     FROM boards b JOIN boards root ON root.id = b.chat_root_id
     JOIN publication_schedules s ON s.board_id = CASE WHEN root.chat_multi_enabled THEN root.id ELSE b.id END
-    JOIN memberships m ON m.board_id = b.id
+    JOIN available_memberships m ON m.board_id = b.id
     WHERE b.id = $1 AND m.user_id = $2 ORDER BY s.kind`, [boardId, userId]);
   return result.rows;
 }
@@ -55,7 +55,7 @@ export async function updateSchedule(db: Database, boardId: string, kind: Public
   return withBoardLock(db, boardId, async (client) => {
     if (userId && botToken) await chatAccess(client, userId, boardId, botToken);
     const target = (await client.query(`SELECT CASE WHEN r.chat_multi_enabled THEN r.id ELSE b.id END AS id FROM boards b
-      JOIN boards r ON r.id = b.chat_root_id WHERE b.id = $1 AND b.status = 'active'`, [boardId])).rows[0];
+      JOIN boards r ON r.id = b.chat_root_id WHERE b.id = $1 AND b.status = 'active' AND b.deleted_at IS NULL`, [boardId])).rows[0];
     if (!target) return null;
     boardId = target.id;
     const current = await client.query<PublicationSchedule>(`SELECT s.kind, s.enabled, s.weekdays,
@@ -122,7 +122,7 @@ function listWithTail(lines: string[], keep: number) {
 }
 
 async function renderBoardPublication(db: Pick<Database, 'query'>, boardId: string, kind: PublicationKind, statuses: string[], botUsername: string, timezone: string, now: Date) {
-  const board = await db.query<{name: string}>("SELECT name FROM boards WHERE id = $1 AND type = 'chat'", [boardId]);
+  const board = await db.query<{name: string}>("SELECT name FROM boards WHERE id = $1 AND type = 'chat' AND deleted_at IS NULL", [boardId]);
   if (!board.rows[0]) return [];
   const tasks = await reportTasks(db, boardId, kind, statuses, timezone, now);
   const title = `${kind === 'daily' ? 'ПЛАН ДНЯ' : 'НЕДЕЛЯ'} · ${escapeHtml(board.rows[0].name)}`;
@@ -179,7 +179,7 @@ export async function publicationBoards(db: Pick<Database, 'query'>, boardId: st
   const root = (await db.query('SELECT chat_root_id FROM boards WHERE id = $1 AND type = \'chat\'', [boardId])).rows[0];
   if (!root) return [];
   const ids = selection ?? [boardId];
-  const boards = (await db.query<{id: string; status: string}>('SELECT id, status FROM boards WHERE chat_root_id = $1 AND id = ANY($2::uuid[]) ORDER BY name, id', [root.chat_root_id, ids])).rows;
+  const boards = (await db.query<{id: string; status: string}>('SELECT id, status FROM boards WHERE chat_root_id = $1 AND deleted_at IS NULL AND id = ANY($2::uuid[]) ORDER BY name, id', [root.chat_root_id, ids])).rows;
   if (boards.length !== new Set(ids).size) throw new BoardAccessError('Сводка может включать только доски этого чата', 400);
   return boards;
 }
@@ -205,8 +205,14 @@ export async function queueDuePublications(db: Database, now = new Date()) {
   for (const schedule of schedules.rows) {
     const local = localParts(now, schedule.timezone);
     if (!schedule.weekdays.includes(weekday(local.weekday)) || `${local.hour}:${local.minute}` < schedule.local_time) continue;
-    await db.query(`INSERT INTO publication_runs (id, board_id, kind, local_date, report_at) VALUES ($1, $2, $3, $4, $5)
-      ON CONFLICT (board_id, kind, local_date) DO NOTHING`, [randomUUID(), schedule.board_id, schedule.kind, `${local.year}-${local.month}-${local.day}`, now.toISOString()]);
+    await withBoardLock(db, schedule.board_id, async client => {
+      await client.query(`INSERT INTO publication_runs (id, board_id, kind, local_date, report_at)
+        SELECT $1, s.board_id, s.kind, $4, $5 FROM publication_schedules s JOIN boards b ON b.id = s.board_id
+        WHERE s.board_id = $2 AND s.kind = $3 AND s.enabled AND b.status = 'active'
+          AND cardinality(COALESCE(s.included_board_ids, ARRAY[s.board_id])) > 0
+          AND (b.deleted_at IS NULL OR (b.chat_root_id = b.id AND b.chat_multi_enabled))
+        ON CONFLICT (board_id, kind, local_date) DO NOTHING`, [randomUUID(), schedule.board_id, schedule.kind, `${local.year}-${local.month}-${local.day}`, now.toISOString()]);
+    });
   }
 }
 

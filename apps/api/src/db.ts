@@ -82,18 +82,18 @@ export async function sessionUser(db: Database, token: string | undefined, secre
 
 export async function boardsForUser(db: Database | pg.PoolClient, userId: string) {
   const result = await db.query(`SELECT b.id, b.type, b.name, b.status, b.chat_root_id, m.role FROM boards b
-    JOIN memberships m ON m.board_id = b.id WHERE m.user_id = $1 ORDER BY b.name`, [userId]);
+    JOIN available_memberships m ON m.board_id = b.id WHERE m.user_id = $1 ORDER BY b.name`, [userId]);
   return result.rows;
 }
 
 export async function boardForUser(db: Database, userId: string, boardId: string) {
   const result = await db.query(`SELECT b.id, b.type, b.name, b.status, b.telegram_chat_id, b.chat_root_id, m.role FROM boards b
-    JOIN memberships m ON m.board_id = b.id WHERE b.id = $1 AND m.user_id = $2`, [boardId, userId]);
+    JOIN available_memberships m ON m.board_id = b.id WHERE b.id = $1 AND m.user_id = $2`, [boardId, userId]);
   return result.rows[0] ?? null;
 }
 
 export async function boardMembers(db: Database | pg.PoolClient, userId: string, boardId: string) {
-  const result = await db.query(`SELECT u.id, u.first_name, u.username, member.role FROM memberships viewer
+  const result = await db.query(`SELECT u.id, u.first_name, u.username, member.role FROM available_memberships viewer
     JOIN memberships member ON member.board_id = viewer.board_id JOIN users u ON u.id = member.user_id
     WHERE viewer.board_id = $1 AND viewer.user_id = $2 ORDER BY u.first_name`, [boardId, userId]);
   return result.rows;
@@ -101,14 +101,14 @@ export async function boardMembers(db: Database | pg.PoolClient, userId: string,
 
 export async function taskFilterState(db: Database, userId: string, boardId: string) {
   const result = await db.query<{filters: unknown}>(`SELECT s.filters FROM task_filter_states s
-    JOIN memberships m ON m.board_id = s.board_id AND m.user_id = s.user_id
+    JOIN available_memberships m ON m.board_id = s.board_id AND m.user_id = s.user_id
     WHERE s.user_id = $1 AND s.board_id = $2`, [userId, boardId]);
   return result.rows[0]?.filters ?? {};
 }
 
 export async function saveTaskFilterState(db: Database, userId: string, boardId: string, filters: unknown) {
   const result = await db.query(`INSERT INTO task_filter_states (user_id, board_id, filters)
-    SELECT $1, $2, $3::jsonb FROM memberships WHERE user_id = $1 AND board_id = $2
+    SELECT $1, $2, $3::jsonb FROM available_memberships WHERE user_id = $1 AND board_id = $2
     ON CONFLICT (user_id, board_id) DO UPDATE SET filters = EXCLUDED.filters, updated_at = now()
     RETURNING filters`, [userId, boardId, JSON.stringify(filters)]);
   return result.rows[0]?.filters ?? null;
@@ -116,12 +116,12 @@ export async function saveTaskFilterState(db: Database, userId: string, boardId:
 
 export async function renameBoard(db: Database, userId: string, boardId: string, name: string, expected?: {name: string}) {
   return withBoardLock(db, boardId, async (client) => {
-    const current = await client.query(`SELECT b.id, b.type, b.name FROM boards b JOIN memberships m ON m.board_id=b.id
+    const current = await client.query(`SELECT b.id, b.type, b.name FROM boards b JOIN available_memberships m ON m.board_id=b.id
       WHERE b.id=$1 AND m.user_id=$2 AND m.role IN ('owner','admin') AND b.status IN ('active','draft')
       AND (b.type <> 'pair' OR (b.owner_user_id=$2 AND b.status='active')) FOR UPDATE OF b`, [boardId, userId]);
     if (!current.rows[0]) return null;
     checkSettingsExpected(current.rows[0], expected);
-    const result = await client.query(`UPDATE boards b SET name = $3 FROM memberships m
+    const result = await client.query(`UPDATE boards b SET name = $3 FROM available_memberships m
       WHERE b.id = $1 AND m.board_id = b.id AND m.user_id = $2 AND m.role IN ('owner', 'admin')
         AND b.status IN ('active','draft')
         AND (b.type <> 'pair' OR (b.owner_user_id = $2 AND b.status = 'active')) RETURNING b.id, b.type, b.name`,
@@ -163,7 +163,7 @@ export type RecurrenceInput = TaskInput & RecurrenceRule;
 
 export async function projectsForBoard(db: Database, userId: string, boardId: string, archived = false) {
   const result = await db.query(`SELECT p.id, p.name, p.archived_at FROM projects p
-    JOIN memberships m ON m.board_id = p.board_id
+    JOIN available_memberships m ON m.board_id = p.board_id
     WHERE p.board_id = $1 AND m.user_id = $2 AND ($3 OR p.archived_at IS NULL)
     ORDER BY p.name`, [boardId, userId, archived]);
   return result.rows;
@@ -172,7 +172,7 @@ export async function projectsForBoard(db: Database, userId: string, boardId: st
 export async function createProject(db: Database, userId: string, boardId: string, name: string, transaction?: pg.PoolClient) {
   const run = async (client: pg.PoolClient) => {
     const result = await client.query(`INSERT INTO projects (id, board_id, name, created_by)
-      SELECT $3, b.id, $4, $2 FROM boards b JOIN memberships m ON m.board_id = b.id
+      SELECT $3, b.id, $4, $2 FROM boards b JOIN available_memberships m ON m.board_id = b.id
       WHERE b.id = $1 AND b.status = 'active' AND m.user_id = $2
       ON CONFLICT (board_id, lower(btrim(name))) WHERE archived_at IS NULL
       DO UPDATE SET name = projects.name
@@ -187,14 +187,14 @@ export async function updateProject(db: Database, userId: string, boardId: strin
     try {
       if (input.expected) {
         const current = await client.query(`SELECT p.id,p.name,p.archived_at FROM projects p
-          JOIN boards b ON b.id=p.board_id JOIN memberships m ON m.board_id=b.id
+          JOIN boards b ON b.id=p.board_id JOIN available_memberships m ON m.board_id=b.id
           WHERE p.id=$1 AND p.board_id=$2 AND m.user_id=$3 AND b.status='active' AND p.archived_at IS NULL FOR UPDATE OF p,b`, [projectId, boardId, userId]);
         if (!current.rows[0]) return null;
         checkSettingsExpected(current.rows[0], input.expected);
       }
       const result = await client.query(`UPDATE projects p SET name = COALESCE($4, p.name),
           archived_at = CASE WHEN $5::boolean IS NULL THEN p.archived_at WHEN $5 THEN now() ELSE NULL END
-        FROM boards b, memberships m WHERE p.id = $1 AND p.board_id = $2 AND b.id = p.board_id
+        FROM boards b, available_memberships m WHERE p.id = $1 AND p.board_id = $2 AND b.id = p.board_id
           AND b.status = 'active' AND m.board_id = b.id AND m.user_id = $3
         RETURNING p.id, p.name, p.archived_at`, [projectId, boardId, userId, input.name ?? null, input.archived ?? null]);
       return result.rows[0] ?? null;
@@ -223,7 +223,7 @@ const taskColumns = `t.id, t.board_id, t.project_id, p.name AS project_name, t.c
 
 export async function tasksForBoard(db: Database, userId: string, boardId: string, archived = false) {
   const result = await db.query(`SELECT ${taskColumns} FROM tasks t
-    JOIN memberships m ON m.board_id = t.board_id
+    JOIN available_memberships m ON m.board_id = t.board_id
     LEFT JOIN projects p ON p.id = t.project_id
     LEFT JOIN users assignee ON assignee.id = t.assignee_user_id
     LEFT JOIN tasks blocker ON blocker.id = t.blocked_by_task_id AND blocker.board_id = t.board_id
@@ -234,7 +234,7 @@ export async function tasksForBoard(db: Database, userId: string, boardId: strin
 
 export async function taskForBoard(db: Database, userId: string, boardId: string, taskId: string) {
   const result = await db.query(`SELECT ${taskColumns} FROM tasks t
-    JOIN memberships m ON m.board_id = t.board_id
+    JOIN available_memberships m ON m.board_id = t.board_id
     LEFT JOIN projects p ON p.id = t.project_id
     LEFT JOIN users assignee ON assignee.id = t.assignee_user_id
     LEFT JOIN tasks blocker ON blocker.id = t.blocked_by_task_id AND blocker.board_id = t.board_id
@@ -244,7 +244,7 @@ export async function taskForBoard(db: Database, userId: string, boardId: string
 
 export async function tasksForAssignee(db: Database, userId: string) {
   const result = await db.query(`SELECT ${taskColumns}, b.name AS board_name FROM tasks t
-    JOIN boards b ON b.id = t.board_id JOIN memberships m ON m.board_id = b.id AND m.user_id = $1
+    JOIN boards b ON b.id = t.board_id JOIN available_memberships m ON m.board_id = b.id AND m.user_id = $1
     LEFT JOIN projects p ON p.id = t.project_id
     LEFT JOIN users assignee ON assignee.id = t.assignee_user_id
     LEFT JOIN tasks blocker ON blocker.id = t.blocked_by_task_id AND blocker.board_id = t.board_id
@@ -264,7 +264,7 @@ export async function createTask(db: Database, userId: string, boardId: string, 
   try {
     if (!transaction) await client.query('BEGIN');
     await lockBoard(client, boardId);
-    if (!(await client.query(`SELECT 1 FROM boards b JOIN memberships m ON m.board_id = b.id
+    if (!(await client.query(`SELECT 1 FROM boards b JOIN available_memberships m ON m.board_id = b.id
       WHERE b.id = $1 AND b.status = 'active' AND m.user_id = $2 FOR SHARE OF b, m`, [boardId, userId])).rowCount) {
       if (!transaction) await client.query('ROLLBACK'); return null;
     }
@@ -288,7 +288,7 @@ export async function createTask(db: Database, userId: string, boardId: string, 
       completed_at, deadline_date, deadline_timezone, create_request_id, create_request_hash, issue_url, importance, urgency)
     SELECT $3, b.id, $4, $2, $5, $6, $7, $8, $9, $10, $11, $12, $13,
       CASE WHEN $8 = 'done' THEN now() ELSE NULL END, $14, $15, $16, $17, $18, $19, $20
-    FROM boards b JOIN memberships creator ON creator.board_id = b.id
+    FROM boards b JOIN available_memberships creator ON creator.board_id = b.id
     LEFT JOIN projects p ON p.id = $4 AND p.board_id = b.id AND p.archived_at IS NULL
     LEFT JOIN memberships assignee ON assignee.board_id = b.id AND assignee.user_id = $5
     WHERE b.id = $1 AND b.status = 'active' AND creator.user_id = $2
@@ -316,7 +316,7 @@ export async function claimTask(db: Database, userId: string, boardId: string, t
   try {
     if (!transaction) await client.query('BEGIN');
     await lockBoard(client, boardId);
-    const access = await client.query(`SELECT 1 FROM boards b JOIN memberships m ON m.board_id = b.id
+    const access = await client.query(`SELECT 1 FROM boards b JOIN available_memberships m ON m.board_id = b.id
       WHERE b.id = $1 AND b.status = 'active' AND m.user_id = $2 FOR SHARE OF b, m`, [boardId, userId]);
     if (!access.rowCount) throw new TaskActionError('Нет доступа к активной доске');
     const current = await client.query('SELECT * FROM tasks WHERE id = $1 AND board_id = $2 FOR UPDATE', [taskId, boardId]);
@@ -341,7 +341,7 @@ export async function updateTask(db: Database, userId: string, boardId: string, 
     // ponytail: serialize shared-chat mutations; narrow the lock only if write throughput becomes limiting.
     await lockBoard(client, boardId);
     const current = await client.query<any>(`SELECT t.*, to_char(t.deadline_date, 'YYYY-MM-DD') AS deadline_date FROM tasks t JOIN boards b ON b.id = t.board_id
-      JOIN memberships m ON m.board_id = b.id AND m.user_id = $3
+      JOIN available_memberships m ON m.board_id = b.id AND m.user_id = $3
       WHERE t.id = $1 AND t.board_id = $2 AND t.archived_at IS NULL AND b.status = 'active' FOR UPDATE`, [taskId, boardId, userId]);
     const task = current.rows[0];
     if (!task) { if (!transaction) await client.query('ROLLBACK'); return null; }
@@ -436,7 +436,7 @@ export async function setTaskArchived(db: Database, userId: string, boardId: str
     const result = await client.query(`UPDATE tasks t SET archived_at = CASE WHEN $4 THEN now() ELSE NULL END, updated_at = now() FROM boards b
     WHERE t.id = $1 AND t.board_id = $2 AND b.id = t.board_id AND b.status = 'active'
       AND (t.creator_user_id = $3 OR t.assignee_user_id = $3)
-      AND EXISTS (SELECT 1 FROM memberships WHERE board_id = t.board_id AND user_id = $3)
+      AND EXISTS (SELECT 1 FROM available_memberships WHERE board_id = t.board_id AND user_id = $3)
       AND (($4 AND t.archived_at IS NULL) OR (NOT $4 AND t.archived_at IS NOT NULL)) RETURNING t.id`,
     [taskId, boardId, userId, archived]);
     if (result.rowCount) await client.query(`INSERT INTO task_audit_events (id, board_id, task_id, actor_user_id, action, before_data)
@@ -448,7 +448,7 @@ export async function setTaskArchived(db: Database, userId: string, boardId: str
 
 async function canReadTask(db: Database | pg.PoolClient, userId: string, boardId: string, taskId: string, activeOnly = false) {
   const result = await db.query(`SELECT t.creator_user_id, t.assignee_user_id FROM tasks t
-    JOIN boards b ON b.id = t.board_id JOIN memberships m ON m.board_id = t.board_id
+    JOIN boards b ON b.id = t.board_id JOIN available_memberships m ON m.board_id = t.board_id
     WHERE t.id = $1 AND t.board_id = $2 AND m.user_id = $3 AND ($4::boolean = false OR (t.archived_at IS NULL AND b.status = 'active'))`,
     [taskId, boardId, userId, activeOnly]);
   return result.rows[0] ?? null;
@@ -602,7 +602,7 @@ export async function incompleteChecklistCount(db: Database, userId: string, boa
 export async function claimAssignmentNotification(db: Database, notificationId: string) {
   const result = await db.query(`UPDATE task_assignment_notifications n SET status = 'sending' FROM tasks t, users u
     WHERE n.id = $1 AND n.status = 'pending' AND t.id = n.task_id AND u.id = n.assignee_user_id
-      AND EXISTS (SELECT 1 FROM memberships m JOIN boards b ON b.id = m.board_id
+      AND EXISTS (SELECT 1 FROM available_memberships m JOIN boards b ON b.id = m.board_id
         WHERE m.board_id = t.board_id AND m.user_id = n.assignee_user_id AND b.status = 'active')
       AND t.assignee_user_id = n.assignee_user_id
     RETURNING n.id, n.kind, t.title, u.telegram_id`, [notificationId]);
@@ -627,7 +627,7 @@ export const recurrenceColumns = `r.id, r.board_id, r.creator_user_id, r.project
 
 export async function recurrencesForBoard(db: Database, userId: string, boardId: string) {
   const result = await db.query(`SELECT ${recurrenceColumns} FROM recurrence_templates r
-    JOIN memberships m ON m.board_id = r.board_id WHERE r.board_id = $1 AND m.user_id = $2
+    JOIN available_memberships m ON m.board_id = r.board_id WHERE r.board_id = $1 AND m.user_id = $2
     ORDER BY r.created_at DESC`, [boardId, userId]);
   return result.rows;
 }
@@ -641,7 +641,7 @@ export async function createRecurrence(db: Database, userId: string, boardId: st
       assignee_user_id, title, description, priority, frequency, weekdays, day_of_month, local_time,
       timezone, starts_at, ends_at, next_occurrence_at, importance, urgency)
     SELECT $3, b.id, $2, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
-    FROM boards b JOIN memberships creator ON creator.board_id = b.id
+    FROM boards b JOIN available_memberships creator ON creator.board_id = b.id
     LEFT JOIN projects p ON p.id = $4 AND p.board_id = b.id AND p.archived_at IS NULL
     LEFT JOIN memberships assignee ON assignee.board_id = b.id AND assignee.user_id = $5
     WHERE b.id = $1 AND b.status = 'active' AND creator.user_id = $2
@@ -659,7 +659,7 @@ export async function updateRecurrence(db: Database, userId: string, boardId: st
   const run = async (client: pg.PoolClient) => {
     await lockBoard(client, boardId);
     const current = await client.query<any>(`SELECT r.* FROM recurrence_templates r JOIN boards b ON b.id = r.board_id
-      JOIN memberships m ON m.board_id = b.id AND m.user_id = $3
+      JOIN available_memberships m ON m.board_id = b.id AND m.user_id = $3
       WHERE r.id = $1 AND r.board_id = $2 AND b.status = 'active' FOR UPDATE`, [recurrenceId, boardId, userId]);
     const row = current.rows[0];
     if (!row || (row.creator_user_id !== userId && row.assignee_user_id !== userId)) return null;
@@ -720,10 +720,10 @@ export async function runRecurrenceScheduler(db: Database, now = new Date()) {
   let created = 0;
   const boards = await db.query<{board_id: string}>(`SELECT DISTINCT r.board_id FROM recurrence_templates r
     JOIN boards b ON b.id = r.board_id WHERE r.paused_at IS NULL AND r.archived_at IS NULL
-      AND r.next_occurrence_at <= $1 AND b.status = 'active' ORDER BY r.board_id`, [now.toISOString()]);
+      AND r.next_occurrence_at <= $1 AND b.status = 'active' AND b.deleted_at IS NULL ORDER BY r.board_id`, [now.toISOString()]);
   for (const {board_id: boardId} of boards.rows) await withBoardLock(db, boardId, async (client) => {
     const due = await client.query<any>(`SELECT r.* FROM recurrence_templates r JOIN boards b ON b.id = r.board_id
-      WHERE r.board_id = $2 AND b.status = 'active' AND r.paused_at IS NULL AND r.archived_at IS NULL AND r.next_occurrence_at <= $1
+      WHERE r.board_id = $2 AND b.status = 'active' AND b.deleted_at IS NULL AND r.paused_at IS NULL AND r.archived_at IS NULL AND r.next_occurrence_at <= $1
       ORDER BY r.next_occurrence_at FOR UPDATE OF r, b`, [now.toISOString(), boardId]);
     for (const row of due.rows) {
       let occurrence = row.next_occurrence_at as Date | null;

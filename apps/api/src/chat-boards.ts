@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type pg from 'pg';
-import { boardForUser, boardsForUser, boardMembers, lockBoard, withBoardLock, type Database } from './db.js';
+import { boardForUser, boardsForUser, lockBoard, withBoardLock, type Database } from './db.js';
 import { BoardAccessError } from './pair-boards.js';
 import { isChatAdmin } from './telegram.js';
 
@@ -72,7 +72,7 @@ export async function migrateChatBoard(db: Database, oldChatId: number, newChatI
       // Telegram can announce the new supergroup before delivering its migration message.
       // Only an unused onboarding placeholder may be folded into the existing chat.
       const used = (await client.query(`SELECT 1 WHERE
-        EXISTS (SELECT 1 FROM boards WHERE chat_root_id = $1 AND (id <> $1 OR status <> 'draft')) OR
+        EXISTS (SELECT 1 FROM boards WHERE chat_root_id = $1 AND (id <> $1 OR status <> 'draft' OR lifecycle_version > 1)) OR
         EXISTS (SELECT 1 FROM memberships WHERE board_id = $1) OR EXISTS (SELECT 1 FROM tasks WHERE board_id = $1) OR
         EXISTS (SELECT 1 FROM projects WHERE board_id = $1) OR EXISTS (SELECT 1 FROM recurrence_templates WHERE board_id = $1) OR
         EXISTS (SELECT 1 FROM publication_schedules WHERE board_id = $1 AND enabled) OR EXISTS (SELECT 1 FROM publication_runs WHERE board_id = $1)`, [target.id])).rowCount;
@@ -94,7 +94,7 @@ export async function chatAccess(client: pg.PoolClient, userId: string, boardId:
     JOIN memberships m ON m.board_id = b.id AND m.user_id = $2 JOIN users u ON u.id = m.user_id WHERE b.id = $1`, [boardId, userId])).rows[0];
   if (!root) fail('Доска недоступна', 404);
   if (botToken !== undefined) {
-    if (root.status !== 'active') fail('Доски чата доступны только для чтения', 403);
+    if (root.status !== 'active' && !(root.deleted_at && root.status === 'draft')) fail('Доски чата доступны только для чтения', 403);
     if (!await isChatAdmin(botToken, root.telegram_chat_id, root.actor_telegram_id)) fail('Требуются права администратора Telegram', 403);
   }
   return root;
@@ -102,11 +102,12 @@ export async function chatAccess(client: pg.PoolClient, userId: string, boardId:
 export async function chatContext(db: Database, userId: string, boardId: string, botToken: string) {
   return withBoardLock(db, boardId, async client => {
     const root = await chatAccess(client, userId, boardId);
-    const canManage = root.status === 'active' && await isChatAdmin(botToken, root.telegram_chat_id, root.actor_telegram_id);
+    const canManage = (root.status === 'active' || (root.deleted_at && root.status === 'draft')) && await isChatAdmin(botToken, root.telegram_chat_id, root.actor_telegram_id);
     const boards = (await boardsForUser(client, userId)).filter(board => board.chat_root_id === root.id);
     const schedules = await legacySchedules(client, root.id);
     return { rootId: root.id, name: root.name, multiEnabled: root.chat_multi_enabled, memberVersion: root.chat_members_version,
-      canManage, boards, members: await boardMembers(client, userId, root.id),
+      canManage, boards, members: (await client.query(`SELECT u.id, u.first_name, u.username, m.role
+        FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.board_id = $1 ORDER BY u.first_name`, [root.id])).rows,
       ...(schedules.some(schedule => schedule.board_id !== root.id) ? { conflictingSchedules: schedules, scheduleVersion: hash(JSON.stringify(schedules)) } : {}) };
   });
 }
@@ -115,12 +116,14 @@ export async function createChatDirection(db: Database, userId: string, boardId:
   return withBoardLock(db, boardId, async client => {
     const root = await chatAccess(client, userId, boardId, botToken);
     const requestHash = hash(JSON.stringify({name: input.name, memberVersion: input.memberVersion ?? null, memberIds: input.memberIds ? [...input.memberIds].sort() : null}));
-    const existing = (await client.query('SELECT id, chat_create_hash FROM boards WHERE chat_root_id = $1 AND created_by_user_id = $2 AND create_request_id = $3', [root.id, userId, input.requestId])).rows[0];
+    const existing = (await client.query('SELECT id, chat_create_hash, deleted_at FROM boards WHERE chat_root_id = $1 AND created_by_user_id = $2 AND create_request_id = $3', [root.id, userId, input.requestId])).rows[0];
     if (existing) {
+      if (existing.deleted_at) fail('Доска из этого запроса удалена. Восстановите её или начните новое создание');
       if (existing.chat_create_hash !== requestHash) fail('Этот запрос уже использован с другими данными');
       return { id: existing.id };
     }
-    const independent = await client.query(`SELECT 1 FROM publication_schedules s JOIN boards b ON b.id = s.board_id WHERE b.chat_root_id = $1 AND b.id <> $1`, [root.id]);
+    if (root.deleted_at && root.status === 'draft') await client.query("UPDATE boards SET status = 'active' WHERE id = $1", [root.id]);
+    const independent = await client.query(`SELECT 1 FROM publication_schedules s JOIN boards b ON b.id = s.board_id WHERE b.chat_root_id = $1 AND b.id <> $1 AND b.deleted_at IS NULL`, [root.id]);
     if (independent.rowCount) fail('Сначала согласуйте отдельные расписания досок. Прежние публикации продолжаются.');
     if (!root.chat_multi_enabled) {
       if (!input.memberIds?.includes(userId) || input.memberVersion !== root.chat_members_version) fail('Подтвердите актуальный состав участников перед созданием второй доски');
@@ -150,7 +153,8 @@ export async function removeChatMember(db: Database, userId: string, boardId: st
 }
 export async function previewChatInvite(db: Database, token: string) {
   return (await db.query(`SELECT b.name, l.kind = 'chat_invite' AS shared FROM board_links l JOIN boards b ON b.id = l.board_id
-    WHERE l.token_hash = $1 AND l.kind IN ('invite', 'chat_invite') AND l.revoked_at IS NULL AND b.status IN ('active', 'draft')`, [hash(token)])).rows[0] ?? null;
+    WHERE l.token_hash = $1 AND l.kind IN ('invite', 'chat_invite') AND l.revoked_at IS NULL AND b.status IN ('active', 'draft')
+      AND (b.deleted_at IS NULL OR (l.kind = 'chat_invite' AND EXISTS (SELECT 1 FROM boards child WHERE child.chat_root_id = b.id AND child.deleted_at IS NULL)))`, [hash(token)])).rows[0] ?? null;
 }
 export async function redeemBoardLink(db: Database, userId: string, token: string, acceptedAccess = false, botToken?: string) {
   const boardLaunch = /^open_([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.exec(token);
@@ -171,6 +175,9 @@ export async function redeemBoardLink(db: Database, userId: string, token: strin
       WHERE l.token_hash = $1 AND l.revoked_at IS NULL AND b.type = 'chat' FOR UPDATE OF l`, [hash(token)])).rows[0];
     if (!link) return null;
     const current = (await client.query('SELECT 1 FROM memberships WHERE board_id = $1 AND user_id = $2', [link.id, userId])).rowCount;
+    const common = ['chat_launch', 'chat_invite'].includes(link.kind);
+    if (link.deleted_at && !common) return null;
+    if (link.deleted_at && !current && !(await client.query('SELECT 1 FROM boards WHERE chat_root_id = $1 AND deleted_at IS NULL', [link.id])).rowCount) return null;
     if (!current && !['active', 'draft'].includes(link.status)) return null;
     if (!current) {
       let role = 'member';
@@ -184,13 +191,13 @@ export async function redeemBoardLink(db: Database, userId: string, token: strin
       await client.query('INSERT INTO memberships VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [link.id, userId, role]);
     }
     const board = (await client.query(`SELECT b.id, b.type, b.name, b.status, b.chat_root_id, m.role FROM boards b JOIN memberships m ON m.board_id = b.id WHERE b.id = $1 AND m.user_id = $2`, [link.id, userId])).rows[0];
-    return board ? { ...board, ...(link.kind === 'chat_launch' ? { chatEntry: true } : {}) } : null;
+    return board ? { ...board, ...(link.kind === 'chat_launch' || (common && link.deleted_at) ? { chatEntry: true } : {}) } : null;
   });
 }
 export async function activateChatBoard(db: Database, userId: string, boardId: string, name: string) {
   return withBoardLock(db, boardId, async client => {
     const result = await client.query(`UPDATE boards b SET name = CASE WHEN status = 'draft' THEN $3 ELSE name END, status = 'active'
-      FROM memberships m WHERE b.id = $1 AND b.type = 'chat' AND b.status IN ('draft', 'active')
+      FROM available_memberships m WHERE b.id = $1 AND b.type = 'chat' AND b.status IN ('draft', 'active')
       AND m.board_id = b.id AND m.user_id = $2 RETURNING b.id, b.type, b.name, b.status`, [boardId, userId, name]);
     if (result.rowCount) await client.query("UPDATE memberships SET role = 'admin' WHERE board_id = $1 AND user_id = $2", [boardId, userId]);
     return result.rows[0] ?? null;
@@ -208,6 +215,7 @@ export async function createInvite(db: Database, userId: string, boardId: string
   return withBoardLock(db, boardId, async client => {
     const root = await chatAccess(client, userId, boardId, botToken);
     if (!['active', 'draft'].includes(root.status)) return null;
+    if (!(await client.query('SELECT 1 FROM boards WHERE chat_root_id = $1 AND deleted_at IS NULL', [root.id])).rowCount) return null;
     const token = `invite_${randomBytes(24).toString('base64url')}`;
     await client.query('INSERT INTO board_links (token_hash, board_id, kind) VALUES ($1, $2, $3)', [hash(token), root.id, root.chat_multi_enabled ? 'chat_invite' : 'invite']);
     return token;
@@ -223,7 +231,7 @@ export async function revokeInvites(db: Database, userId: string, boardId: strin
 async function legacySchedules(client: pg.PoolClient, rootId: string) {
   return (await client.query(`SELECT s.board_id, b.name, s.kind, s.enabled, s.weekdays, to_char(s.local_time, 'HH24:MI') AS local_time,
     s.timezone, s.included_statuses, s.included_board_ids, s.updated_at FROM publication_schedules s JOIN boards b ON b.id = s.board_id
-    WHERE b.chat_root_id = $1 ORDER BY s.kind, s.board_id`, [rootId])).rows;
+    WHERE b.chat_root_id = $1 AND (b.id = $1 OR b.deleted_at IS NULL) ORDER BY s.kind, s.board_id`, [rootId])).rows;
 }
 export async function resolveChatSchedules(db: Database, userId: string, boardId: string, botToken: string,
   input: {dailySourceId: string; weeklySourceId: string; scheduleVersion: string}) {
