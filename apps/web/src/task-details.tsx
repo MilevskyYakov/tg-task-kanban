@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, api } from './api';
 import { ActionRow, Avatar, ChoiceRow, EnvironmentStatus, Icon, Sheet } from './app-shell';
 import { issueUrlShort, type Collaboration, type Member, type Project } from './domain';
-import { dateInputToIso, deadlineDraft, deadlinePatch, priorityDisplayName, statusDisplayName, type DeadlineDraft, type Task, type TaskPriority, type TaskStatus } from './tasks';
+import { dateInputToIso, deadlineDraft, deadlinePatch, priorityDisplayName, statusDisplayName, taskArchiveRestriction, type DeadlineDraft, type Task, type TaskPriority, type TaskStatus } from './tasks';
 import { DeadlineField } from './deadline-field';
 import { PrioritySheet } from './task-priority';
 import { assessmentText } from './tasks';
@@ -260,6 +260,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const savable = !readOnly;
+  const archiveRestriction = readOnly && !task.archived_at ? 'Доска доступна только для чтения' : taskArchiveRestriction(task, userId);
   const confirmed = useRef(onConfirmed);
   confirmed.current = onConfirmed;
   const persistDraft = () => setStorageWarning(!writeTaskDraft(localDraftKey, draftRef.current, baseRef.current, unversionedRef.current ? undefined : versionRef.current));
@@ -492,6 +493,17 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
     catch (caught) { setError(caught instanceof Error ? caught.message : 'Ошибка'); }
     finally { setBusy(false); }
   };
+  const archiveTask = () => {
+    if (busy || archiveRestriction) return;
+    void run(async () => {
+      await flushNow();
+      const { patch, errors } = taskPatch(draftRef.current, baseRef.current);
+      if (Object.keys(patch).length || Object.keys(errors).length || conflictRef.current || checklistConfirmationRef.current) {
+        throw new Error('Сначала сохраните правки задачи и разрешите ошибки или конфликт.');
+      }
+      await onArchive();
+    });
+  };
   const uploadImage = (file: File) => {
     if (readOnly || busy || uploadInFlight.current) return;
     uploadInFlight.current = true;
@@ -587,7 +599,7 @@ export function TaskDetails({ task, userId, collaboration, projects, members, ca
   return <main className={`task-details${descriptionEditing ? ' detail-description-editing' : ''}`}>
     <EnvironmentStatus/>
     <h1 className="visually-hidden">Детали задачи</h1>
-    <header className="task-details-bar"><button className="detail-icon" aria-label="Назад к задачам" onClick={leave}><Icon name="back"/></button><span><i/> {boardName}</span><div className="detail-menu-wrap"><button className="detail-icon" aria-label="Другие действия" aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)}><Icon name="more"/></button>{menuOpen && <div className="detail-menu">{task.recurrence_template_id && <p>Повторяющаяся задача</p>}{savable && task.recurrence_template_id && <button type="button" disabled={busy} aria-disabled={seriesWorking} onClick={() => void openSeriesConfirmation()}>Применить к будущим повторам</button>}<button type="button" aria-expanded={historyOpen} onClick={() => setHistoryOpen((value) => !value)}>История <Icon name="chevron"/></button>{historyOpen && <div className="detail-history">{collaboration.timeline.map((item) => <p key={item.id}>{item.actor_name} · {item.action}<small>{new Date(item.created_at).toLocaleString('ru-RU')}</small></p>)}</div>}<div className="detail-danger-zone"><button type="button" className="danger" disabled={busy || readOnly} onClick={() => { void flushNow(); void run(onArchive); }}>Архивировать задачу</button></div></div>}</div></header>
+    <header className="task-details-bar"><button className="detail-icon" aria-label="Назад к задачам" onClick={leave}><Icon name="back"/></button><span><i/> {boardName}</span><div className="detail-menu-wrap"><button className="detail-icon" aria-label="Другие действия" aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)}><Icon name="more"/></button>{menuOpen && <div className="detail-menu">{task.recurrence_template_id && <p>Повторяющаяся задача</p>}{savable && task.recurrence_template_id && <button type="button" disabled={busy} aria-disabled={seriesWorking} onClick={() => void openSeriesConfirmation()}>Применить к будущим повторам</button>}<button type="button" aria-expanded={historyOpen} onClick={() => setHistoryOpen((value) => !value)}>История <Icon name="chevron"/></button>{historyOpen && <div className="detail-history">{collaboration.timeline.map((item) => <p key={item.id}>{item.actor_name} · {item.action}<small>{new Date(item.created_at).toLocaleString('ru-RU')}</small></p>)}</div>}<div className="detail-danger-zone"><button type="button" className="danger" disabled={busy || readOnly || Boolean(archiveRestriction)} aria-describedby={archiveRestriction ? 'detail-archive-restriction' : undefined} onClick={archiveTask}>Архивировать задачу</button>{archiveRestriction && <p id="detail-archive-restriction">{archiveRestriction}</p>}</div></div>}</div></header>
 
     {readOnly && <p className="notice">Доска доступна только для чтения.</p>}
     {savable && <p className="detail-save-state" role="status" data-state={displayedSaveState}>{saveStateLabels[displayedSaveState]}</p>}

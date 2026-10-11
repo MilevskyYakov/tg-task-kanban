@@ -40,6 +40,7 @@ export function buildApp(config: Config, db: Database) {
   const attachmentFileLimits = { maxFileSize: 15 * 1024 * 1024, allowedMimeTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] };
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof AssessmentError) return reply.code(error.status).send({ error: error.message });
+    if (error instanceof TaskActionError) return reply.code(403).send({ error: error.message });
     if (error instanceof BoardAccessError) return reply.code(error.status).send({ error: error.message });
     if (error instanceof ChecklistConfirmationError) return reply.code(409).send({ error: error.message, incompleteChecklist: error.count });
     if (error instanceof SettingsConflictError) return reply.code(409).send({ error: error.message, current: error.current });
@@ -411,12 +412,12 @@ export function buildApp(config: Config, db: Database) {
   app.delete<{Params: {id: string; taskId: string}}>('/api/boards/:id/tasks/:taskId', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     return await setTaskArchived(db, id, request.params.id, request.params.taskId, true)
-      ? { archived: true } : reply.code(403).send({ error: 'task action is not allowed' });
+      ? { archived: true } : reply.code(403).send({ error: 'Задача недоступна' });
   });
   app.post<{Params: {id: string; taskId: string}}>('/api/boards/:id/tasks/:taskId/reopen', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     return await setTaskArchived(db, id, request.params.id, request.params.taskId, false)
-      ? { archived: false } : reply.code(403).send({ error: 'task action is not allowed' });
+      ? { archived: false } : reply.code(403).send({ error: 'Задача недоступна' });
   });
 
   app.get<{Params: {id: string; taskId: string}}>('/api/boards/:id/tasks/:taskId/collaboration', async (request, reply) => {

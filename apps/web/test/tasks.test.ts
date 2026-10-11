@@ -64,10 +64,26 @@ import {
   restoreTaskViewState,
   serializeTaskViewState,
   statusDisplayName,
+  taskArchiveRestriction,
   taskStatusRestriction,
   validateTaskCreate,
   type Task
 } from '../src/tasks.js';
+
+test('archive and restore keep author/assignee restrictions separate from status permissions', () => {
+  for (const archived of [true, false]) {
+    const task = { creator_user_id: 'creator', assignee_user_id: 'assignee', board_status: 'active', archived_at: archived ? undefined : '2026-10-11' };
+    for (const user of ['creator', 'assignee']) assert.equal(taskArchiveRestriction(task, user, archived), null);
+    const reason = `${archived ? 'Архивировать' : 'Восстановить'} задачу может только её автор или исполнитель`;
+    assert.equal(taskArchiveRestriction(task, 'other', archived), reason);
+    assert.equal(taskArchiveRestriction({ ...task, assignee_user_id: undefined }, 'assignee', archived), reason);
+    assert.equal(taskArchiveRestriction({ ...task, assignee_user_id: undefined }, 'creator', archived), null);
+    for (const board_status of ['frozen', 'archived']) assert.equal(taskArchiveRestriction({ ...task, board_status }, 'creator', archived), 'Доска доступна только для чтения');
+    assert.equal(taskArchiveRestriction({ ...task, archived_at: archived ? '2026-10-11' : undefined }, 'creator', archived), archived ? 'Задача уже в архиве' : 'Задача не в архиве');
+    assert.equal(taskArchiveRestriction(task, '', archived), 'Задача недоступна');
+    assert.equal(taskStatusRestriction(task), null, 'archive restrictions do not restrict statuses');
+  }
+});
 
 test('API checklist conflicts validate the count rather than matching error text', () => {
   assert.equal(new ApiError('incomplete checklist confirmation required', 409, { incompleteChecklist: 2 }).incompleteChecklist, 2);

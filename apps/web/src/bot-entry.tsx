@@ -26,7 +26,8 @@ export function BoardEntryAction({ boardId }: { boardId: string }) {
     } finally { lock.current = false; if (active.current) setBusy(false); }
   };
   return <div>
-    <ActionRow label="Вход в эту доску" value={busy ? 'Открываем бота…' : 'Получить сообщение для пересылки'} icon={<Icon name="send"/>} disabled={busy} onClick={() => void open()}/>
+    <ActionRow label="Переслать ссылку на доску" value={busy ? 'Открываем бота…' : null} icon={<Icon name="send"/>} disabled={busy} onClick={() => void open()}/>
+    <p className="pair-notice">Бот подготовит сообщение для пересылки. Доступ к доске не изменится</p>
     {error && <p className="pair-notice error" role="alert">{error}</p>}
     {opened && <p className="pair-notice" role="status">В чате бота нажмите «Начать», если Telegram предложит. Затем перешлите сообщение с обложкой и ссылкой в нужный диалог.</p>}
   </div>;

@@ -3,12 +3,12 @@ import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { buildApp } from '../../api/src/app';
-import { createDatabase, createTask, login } from '../../api/src/db';
+import { connectChatBoard, createDatabase, createTask, login } from '../../api/src/db';
 import { changePairInvite, createPairBoard, redeemPairInvite, removePairMember, setPairArchived } from '../../api/src/pair-boards';
 import type { Config } from '../../api/src/config';
 
-const evidence = fileURLToPath(new URL('../../../artifacts/visual-evidence/issue-180/', import.meta.url));
-for (const width of [390, 320]) {
+const evidence = fileURLToPath(new URL('../../../artifacts/visual-evidence/issue-192/', import.meta.url));
+for (const width of [390, 320, 1280]) {
   test(`board entry photo flow, exact board, access and UI states ${width}`, async ({ page, browser }) => {
     const url = process.env.TEST_DATABASE_URL;
     if (!url) throw new Error('TEST_DATABASE_URL is required');
@@ -20,6 +20,10 @@ for (const width of [390, 320]) {
     const [owner, guest, outsider] = people;
     const board = await createPairBoard(db, owner.userId, 'Запуск сайта и совместная подготовка материалов для команды', randomUUID());
     const other = await createPairBoard(db, owner.userId, 'Другая доска', randomUUID());
+    const chat = (await connectChatBoard(db, -stamp, 'Общая доска команды'))!;
+    await db.query("UPDATE boards SET status = 'active' WHERE id = $1", [chat.id]);
+    await db.query("INSERT INTO memberships (board_id, user_id, role) VALUES ($1, $2, 'member')", [chat.id, owner.userId]);
+    const personal = (await db.query("SELECT name FROM boards WHERE owner_user_id = $1 AND type = 'personal'", [owner.userId])).rows[0];
     await redeemPairInvite(db, guest.userId, (await changePairInvite(db, owner.userId, board.id))!, true);
     await createTask(db, owner.userId, board.id, { title: 'Секретная задача нужной доски', assigneeUserId: owner.userId });
     const app = buildApp(config, db);
@@ -28,6 +32,7 @@ for (const width of [390, 320]) {
     const originalFetch = globalThis.fetch;
     const photos: FormData[] = [];
     globalThis.fetch = async (input, options) => {
+      if (String(input).endsWith('/getChatMember')) return Response.json({ ok: true, result: { status: 'member' } });
       expect(String(input).endsWith('/sendPhoto')).toBe(true);
       expect(options?.body).toBeInstanceOf(FormData);
       photos.push(options!.body as FormData);
@@ -37,6 +42,17 @@ for (const width of [390, 320]) {
     let release: (() => void) | undefined;
     let pending: Promise<void> | undefined;
     const errors: string[] = [];
+    const entryRequests: string[] = [];
+    const action = page.getByRole('button', { name: 'Переслать ссылку на доску', exact: true });
+    const busyAction = page.getByRole('button', { name: 'Переслать ссылку на доску Открываем бота…', exact: true });
+    const openedNotice = page.getByRole('status').filter({ hasText: 'В чате бота нажмите «Начать»' });
+    const openWorkspace = async (name: string) => {
+      await page.locator('.bottom-navigation').getByRole('button', { name: 'Настройки', exact: true }).click();
+      await expect(action).toHaveCount(0);
+      await page.getByRole('button', { name: /Рабочее пространство/ }).click();
+      await expect(action).toHaveCount(0);
+      await page.locator('.settings-list-row').filter({ has: page.getByText(name, { exact: true }) }).click();
+    };
     const attach = async (target: Page, person: typeof owner, start: string, savedBoard?: string) => {
       await target.setViewportSize({ width, height: 844 });
       target.on('pageerror', (error) => errors.push(error.message));
@@ -47,6 +63,7 @@ for (const width of [390, 320]) {
         const path = new URL(request.url()).pathname;
         if (path === '/api/auth/telegram') return route.fulfill({ json: { userId: person.userId } });
         if (path.endsWith('/entry')) {
+          entryRequests.push(path);
           if (pending) await pending;
           if (failEntry) return route.fulfill({ status: 503, json: { error: 'Нет связи. Повторите.' } });
         }
@@ -59,23 +76,43 @@ for (const width of [390, 320]) {
       await mkdir(evidence, { recursive: true });
       await attach(page, owner, `open_${board.id}`, other.id);
       await page.goto('/');
-      const action = page.getByRole('button', { name: 'Вход в эту доску Получить сообщение для пересылки' });
-      await expect(action).toBeVisible();
+      await expect(action).toHaveCount(0);
+      await expect(page.getByText('Вход в эту доску', { exact: true })).toHaveCount(0);
       await expect(page.getByRole('button', { name: board.name, exact: true })).toBeVisible();
       await page.locator('.unassessed-tasks > summary').click();
       await expect(page.getByText('Секретная задача нужной доски', { exact: true })).toBeVisible();
       await page.screenshot({ path: `${evidence}/actual-board-${width}.png`, fullPage: true });
+      await expect(page.locator('.scope-tabs')).toBeVisible();
+      expect(await page.locator('.scope-tabs').evaluate(element => element.previousElementSibling?.textContent)).toBe('ДоступДоска на двоих');
+      await openWorkspace(board.name);
+      await expect(action).toHaveCount(1);
+      await expect(action).toBeVisible();
+      await expect(page.getByText('Бот подготовит сообщение для пересылки. Доступ к доске не изменится', { exact: true })).toBeVisible();
+      await page.screenshot({ path: `${evidence}/actual-settings-${width}.png`, fullPage: true });
       failEntry = true;
       await action.click();
       await expect(page.getByRole('alert')).toContainText('Нет связи');
       await page.screenshot({ path: `${evidence}/actual-error-${width}.png`, fullPage: true });
+      await openWorkspace(other.name);
+      await expect(page.getByRole('alert')).toHaveCount(0);
+      await expect(action).toBeEnabled();
+      await openWorkspace(board.name);
+      await expect(page.getByRole('alert')).toHaveCount(0);
+      await action.click();
+      await expect(page.getByRole('alert')).toContainText('Нет связи');
       failEntry = false;
       pending = new Promise<void>((resolve) => { release = resolve; });
-      await action.click();
-      await expect(page.getByRole('button', { name: 'Вход в эту доску Открываем бота…' })).toBeDisabled();
+      const beforeRepeat = entryRequests.length;
+      await action.evaluate(element => { for (let i = 0; i < 10; i++) (element as HTMLButtonElement).click(); });
+      await expect(busyAction).toBeDisabled();
+      await expect(page.getByRole('alert')).toHaveCount(0);
+      await expect.poll(() => entryRequests.length).toBe(beforeRepeat + 1);
+      await page.screenshot({ path: `${evidence}/actual-pending-${width}.png`, fullPage: true });
       release!(); pending = undefined;
       await expect.poll(() => page.evaluate(() => (window as unknown as {entryUrl?: string}).entryUrl)).toBe(`https://t.me/test_bot?start=entry_${board.id}`);
-      await expect(page.getByRole('status')).toContainText('В чате бота нажмите «Начать»');
+      await expect(openedNotice).toBeVisible();
+      expect(entryRequests.every(path => path === `/api/boards/${board.id}/entry`)).toBe(true);
+      await page.screenshot({ path: `${evidence}/actual-opened-${width}.png`, fullPage: true });
       expect(photos).toHaveLength(0);
       const response = await app.inject({ method: 'POST', url: '/api/telegram/webhook', headers: { 'x-telegram-bot-api-secret-token': config.webhookSecret }, payload: {
         update_id: stamp, message: { message_id: stamp, chat: { id: stamp, type: 'private' }, text: `/start entry_${board.id}` }
@@ -110,28 +147,65 @@ for (const width of [390, 320]) {
       await setPairArchived(db, owner.userId, board.id, true);
       await page.reload();
       await expect(page.getByText('Доска в архиве. Задачи и история доступны только для чтения.')).toBeVisible();
+      await expect(action).toHaveCount(0);
+      await openWorkspace(board.name);
+      await expect(page.locator('fieldset.readonly-fields')).toHaveAttribute('disabled', '');
+      await expect(page.getByRole('textbox', { name: 'Название нового проекта' })).toBeDisabled();
       await expect(action).toBeEnabled();
+      await action.click();
+      await expect(openedNotice).toBeVisible();
+      expect(entryRequests.at(-1)).toBe(`/api/boards/${board.id}/entry`);
+      await page.screenshot({ path: `${evidence}/actual-archived-${width}.png`, fullPage: true });
       await setPairArchived(db, owner.userId, board.id, false);
       await removePairMember(db, owner.userId, board.id, guest.userId);
       await recipient.reload();
       await expect(recipient.getByRole('heading', { name: 'Доска недоступна' })).toBeVisible();
       // Navigating away must cancel the effect of an outstanding link request.
       await page.reload();
+      await openWorkspace(board.name);
       await expect(action).toBeVisible();
       pending = new Promise<void>((resolve) => { release = resolve; });
       await action.click();
-      await expect(page.getByRole('button', { name: 'Вход в эту доску Открываем бота…' })).toBeDisabled();
-      await page.getByRole('button', { name: 'Настройки', exact: true }).click();
+      await expect(busyAction).toBeDisabled();
+      await openWorkspace('Общая доска команды');
+      await expect(action).toBeEnabled();
+      await expect(openedNotice).toHaveCount(0);
+      await expect(page.getByRole('alert')).toHaveCount(0);
       release!(); pending = undefined;
-      await expect(page.getByRole('heading', { name: 'Настройки', exact: true })).toBeVisible();
       await page.waitForLoadState('networkidle');
       expect(await page.evaluate(() => (window as unknown as {entryUrl?: string}).entryUrl)).toBeUndefined();
+      await action.click();
+      await expect.poll(() => page.evaluate(() => (window as unknown as {entryUrl?: string}).entryUrl)).toBe(`https://t.me/test_bot?start=entry_${chat.id}`);
+      expect(entryRequests.at(-1)).toBe(`/api/boards/${chat.id}/entry`);
+      await page.screenshot({ path: `${evidence}/actual-chat-${width}.png`, fullPage: true });
+      await openWorkspace(other.name);
+      await expect(openedNotice).toHaveCount(0);
+      await action.click();
+      await expect.poll(() => page.evaluate(() => (window as unknown as {entryUrl?: string}).entryUrl)).toBe(`https://t.me/test_bot?start=entry_${other.id}`);
+      expect(entryRequests.at(-1)).toBe(`/api/boards/${other.id}/entry`);
+      await openWorkspace(personal.name);
+      await expect(page.getByRole('heading', { name: personal.name, exact: true })).toBeVisible();
+      await expect(action).toHaveCount(0);
+      await page.locator('.settings-back').click();
+      await page.getByRole('button', { name: /Автоматизация/ }).click();
+      await expect(action).toHaveCount(0);
+      await page.locator('.settings-list-row').filter({ has: page.getByText(board.name, { exact: true }) }).click();
+      await expect(page.getByRole('heading', { name: board.name, exact: true })).toBeVisible();
+      await expect(action).toHaveCount(0);
+      for (const status of ['draft', 'frozen']) {
+        await db.query('UPDATE boards SET status = $2 WHERE id = $1', [chat.id, status]);
+        await page.reload();
+        await openWorkspace('Общая доска команды');
+        await expect(page.getByRole('heading', { name: 'Общая доска команды', exact: true })).toBeVisible();
+        await expect(action).toHaveCount(0);
+      }
       expect(errors).toEqual([]);
     } finally {
       release?.();
       await recipient.close(); await foreign.close();
       globalThis.fetch = originalFetch;
       await app.close();
+      await db.query('DELETE FROM boards WHERE id = $1', [chat.id]);
       await db.query('DELETE FROM boards WHERE owner_user_id = ANY($1)', [people.map((person) => person.userId)]);
       await db.query('DELETE FROM users WHERE id = ANY($1)', [people.map((person) => person.userId)]);
       await db.query('DELETE FROM telegram_entry_deliveries WHERE key LIKE $1', [`%:command:${createHash('sha256').update(`${stamp}:${stamp}`).digest('hex')}`]);

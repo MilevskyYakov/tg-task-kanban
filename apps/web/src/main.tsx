@@ -13,7 +13,7 @@ import { PriorityField, PrioritySheet, PriorityTasks } from './task-priority';
 import { assessmentText, emptyAssessment, compareTaskPriority, normalizeTaskFilters, taskFiltersForBoard, type Assessment } from './tasks';
 import { TaskFilterSheet } from './task-filters';
 import { deadlineDraft, deadlinePatch, formatTaskDeadline, isTaskOverdue } from './tasks';
-import { activeFilterCount, dateInputToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveStartupContext, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, taskStatusRestriction, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
+import { activeFilterCount, dateInputToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveStartupContext, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, taskArchiveRestriction, taskStatusRestriction, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
 import { TaskKanban } from './task-kanban';
 import { FoundationFixture } from './visual-fixture';
 import { creationHaptic, readStorage, removeStorage, useTaskKeyboardViewport, writeStorage } from './environment';
@@ -692,7 +692,9 @@ function App() {
   const recentBoards = recentBoardIds.map((id) => boards.find((item) => item.id === id)).filter((item): item is Board => Boolean(item));
   const matchingBoards = boards.filter((item) => item.name.toLocaleLowerCase('ru-RU').includes(boardSearch.trim().toLocaleLowerCase('ru-RU')));
   const setFilter = <K extends keyof TaskFilters>(key: K, value: TaskFilters[K]) => { ++filterEditVersion.current; setFilters((current) => normalizeTaskFilters({ ...current, ...(key === 'scope' ? { assignee: '', unassigned: false } : {}), [key]: value })); };
-  const taskCard = (task: Task) => <article
+  const taskCard = (task: Task) => {
+    const archiveRestriction = taskArchiveRestriction({ ...task, board_status: board?.status ?? task.board_status }, userId, !task.archived_at);
+    return <article
     className={`task ${task.priority === 'urgent' ? 'urgent' : ''} ${task.overdue ? 'overdue' : ''} ${task.wait_check_due ? 'wait-due' : ''} ${!task.assignee_user_id ? 'unassigned' : ''} ${draggedTask === task.id ? 'dragging' : ''}`}
     key={task.id} draggable={Boolean(board && !task.archived_at && !taskStatusRestriction(task))}
     onDragStart={(event) => { setDraggedTask(task.id); event.dataTransfer.setData('text/plain', task.id); }} onDragEnd={() => setDraggedTask(undefined)}>
@@ -702,11 +704,12 @@ function App() {
       <div className="meta">{task.project_name && <small>{task.project_name}</small>}<small>{task.assignee_name ?? 'Без ответственного'}</small>{(task.deadline || task.deadline_date) && <small>{formatTaskDeadline(task)}</small>}<small>{assessmentText(task)}</small></div>
       {task.overdue && <small className="flag">Дедлайн прошёл</small>}{task.wait_check_due && <small className="flag">Пора проверить ожидание</small>}{task.blocker_title ? <small>Блокирует: {task.blocker_title}</small> : task.wait_reason && <small>Внешний блокер: {task.wait_reason}</small>}
     </div>
-    {board && <div className="actions"><button onClick={() => openCollaboration(task)}>Открыть</button>{task.archived_at ? <button onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}/reopen`, {method: 'POST'}), 'Задача восстановлена')}>Восстановить</button> : <>
+    {board && <div className="actions"><button onClick={() => openCollaboration(task)}>Открыть</button>{task.archived_at ? <button disabled={Boolean(archiveRestriction)} aria-describedby={archiveRestriction ? `archive-restriction-${task.id}` : undefined} onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}/reopen`, {method: 'POST'}), 'Задача восстановлена')}>Восстановить</button> : <>
       <label className="status-control">Статус<select aria-label={`Статус задачи ${task.title}`} value={task.status} onChange={(event) => void move(task, event.target.value as TaskStatus)}>{statuses.map((status) => <option key={status} value={status}>{statusDisplayName[status]}</option>)}</select></label>
-      <button onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}`, {method: 'DELETE'}), 'Задача архивирована')}>В архив</button>
-    </>}</div>}
+      <button disabled={Boolean(archiveRestriction)} aria-describedby={archiveRestriction ? `archive-restriction-${task.id}` : undefined} onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}`, {method: 'DELETE'}), 'Задача архивирована')}>В архив</button>
+    </>}{archiveRestriction && <small id={`archive-restriction-${task.id}`}>{archiveRestriction}</small>}</div>}
   </article>;
+  };
   const taskList = () => <div className="task-list">{filteredTasks.map(taskCard)}</div>;
   const initials = (name?: string) => name?.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toLocaleUpperCase('ru-RU') || '—';
   const mainTaskRow = (task: Task) => <article className="main-task-row" data-task-id={task.id} data-priority={task.priority} key={task.id}>
@@ -965,6 +968,7 @@ function App() {
     {!board && <button className="secondary" onClick={() => setShowDeletedBoards(true)}>Удалённые доски</button>}
     {board?.type === 'pair' && <ActionRow label="Доступ" value={board.status === 'archived' ? 'Доска в архиве' : 'Доска на двоих'} onClick={() => setPairFlow({ board })}/>}
     {board?.chat_root_id && <ActionRow label="Доски этого чата" value="Общие участники и направления" onClick={() => setChatFlow(board.chat_root_id!)}/>}
+    {board && ['pair', 'chat'].includes(board.type) && ['active', 'archived'].includes(board.status) && <BoardEntryAction key={board.id} boardId={board.id}/>}
     {!board ? settingsBoardList('settings-workspace') : <fieldset className="settings-groups readonly-fields" disabled={board.status === 'archived' || board.status === 'frozen'}>
       <section className="settings-group" data-tone="board"><h2><Icon name="board"/>Доска</h2>{(board.role === 'owner' || board.role === 'admin') ? <NameSetting key={`${userId}:${board.id}`} edits={settingsEdits} userId={userId} board={board}
         onConfirmed={(saved) => { if ('id' in saved) setBoards((items) => items.map((item) => item.id === saved.id ? { ...item, ...saved } : item)); }}/> : <p>{board.name}</p>}<small>{board.type === 'chat' ? 'Права администратора Telegram проверяются при изменении чат-доски.' : board.type === 'pair' ? 'Приглашениями и архивом управляет владелец.' : 'Личное рабочее пространство.'}</small></section>
@@ -1008,7 +1012,6 @@ function App() {
   if (navigation.screen === 'tasks') return <AppShell message={message} announcement={createAnnouncement} navigation={navigation} navigate={navigate}><TasksScreen boardName={board?.name ?? 'Все доски'} onSelectBoard={() => setShowBoardSheet(true)}>
     {createdNotice}
     {board?.type === 'pair' && <><ActionRow label="Доступ" value={board.status === 'archived' ? 'Доска в архиве' : 'Доска на двоих'} onClick={() => setPairFlow({ board })}/>{board.status === 'archived' && <p className="notice">Доска в архиве. Задачи и история доступны только для чтения.</p>}</>}
-    {board && ['pair', 'chat'].includes(board.type) && ['active', 'archived'].includes(board.status) && <BoardEntryAction key={board.id} boardId={board.id}/>}
     {taskToolbar}{backlog && board ? backlogContent() : <>{taskLoadState === 'loading' ? <Skeleton label="Загрузка задач"/> : taskLoadState === 'error' ? <div className="task-state" role="alert"><p>Не удалось загрузить задачи.</p><button onClick={() => setTaskReload((value) => value + 1)}>Повторить</button></div> : taskView === 'kanban' ? mainKanban : groupedTaskList()}{taskLoadState === 'ready' && taskView === 'list' && !filteredTasks.length && (board?.status === 'active' && !tasks.length ? <section className="task-state"><h2>Начните с первой задачи.</h2><p>Добавьте задачу или вставьте список. Исполнителя можно выбрать позже.</p><button onClick={() => navigate({ screen: 'create' })}>Добавить задачу</button><button className="secondary" onClick={() => { setBulkDraft({ boardId: board.id, boardName: board.name, projects, project: '', text: '', started: false }); setBulkOpen(true); }}>Вставить список</button></section> : <p className="task-state">{tasks.length ? 'Задач по этим условиям нет.' : 'Назначенных задач пока нет.'}</p>)}</>}{boardOverrideId && <p className="context-note">Открыта доска по ссылке; ваш обычный выбор не изменён.</p>}{boardSheet}{filterSheet}{filterChoiceSheet}{kanbanStatusSheet}</TasksScreen></AppShell>;
   if (navigation.screen === 'create') return <AppShell message="" announcement={createAnnouncement} navigation={navigation} navigate={navigate} hideNavigation><CreateScreen boardName={boards.find((item) => item.id === createBoardId)?.name ?? 'Все доски'} onClose={() => navigate(createOrigin)} onSelectBoard={() => { if (!createLock.current && !createUncertain && !createSaved && !(createSuccess && !createSuccess.another)) setCreateChoice('board'); }}>
     {message && <p className="app-message create-message" role="status">{message}</p>}

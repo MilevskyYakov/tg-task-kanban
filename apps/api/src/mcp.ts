@@ -343,7 +343,7 @@ async function runTool(db: Database, keyHash: string, name: ToolName, raw: unkno
           task = { id: recurrence.id, revision: recurrence.version }; taskId = recurrence.id;
         } else {
           const changed = await setTaskArchived(db, connection.user_id, args.boardId, args.taskId, args.archived, client);
-          if (!changed) throw new McpFailure('ACTION_FORBIDDEN', 'Действие недоступно или выбранные данные изменились', 403);
+          if (!changed) throw new McpFailure('ACTION_FORBIDDEN', 'Задача недоступна', 403);
           task = (await client.query(`SELECT ${taskColumns} FROM tasks t WHERE t.id=$1 AND t.board_id=$2`, [args.taskId, args.boardId])).rows[0];
         }
         if (!task) throw new McpFailure('ACTION_FORBIDDEN', 'Действие недоступно или выбранные данные изменились', 403);

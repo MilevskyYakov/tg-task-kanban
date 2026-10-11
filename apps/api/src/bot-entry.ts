@@ -99,7 +99,7 @@ export async function sendBoardEntry(db: Database, config: Config, messageId: nu
     const user = (await db.query<{id: string}>('SELECT id FROM users WHERE telegram_id = $1', [chatId])).rows[0];
     const board = user && boardId ? await boardForUser(db, user.id, boardId) : null;
     if (!board || !['chat', 'pair'].includes(board.type) || !['active', 'archived'].includes(board.status)) {
-      return { method: 'sendMessage', body: { chat_id: chatId, text: 'Не удалось получить вход в доску. Откройте доступную вам общую доску в Таске и нажмите «Получить сообщение для пересылки».' } };
+      return { method: 'sendMessage', body: { chat_id: chatId, text: 'Не удалось получить вход в доску. В Таске откройте «Настройки» → «Рабочее пространство», выберите доступную вам общую доску и нажмите «Переслать ссылку на доску».' } };
     }
     const url = `https://t.me/${config.botUsername}?startapp=open_${board.id}`;
     const photo = await readFile(new URL('../../../artifacts/ux/assets/board-entry.png', import.meta.url));
