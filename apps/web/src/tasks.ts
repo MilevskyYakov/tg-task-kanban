@@ -105,6 +105,16 @@ export const priorityDisplayName: Record<TaskPriority, string> = { normal: 'Об
 export const taskStatusRestriction = (task: Pick<Task, 'board_status'>): string | null =>
   task.board_status && task.board_status !== 'active' ? 'Доска доступна только для чтения' : null;
 
+export function taskArchiveRestriction(task: Pick<Task, 'board_status' | 'creator_user_id' | 'assignee_user_id' | 'archived_at'>, userId: string, archived = true): string | null {
+  if (!userId) return 'Задача недоступна';
+  const boardRestriction = taskStatusRestriction(task);
+  if (boardRestriction) return boardRestriction;
+  if (task.creator_user_id !== userId && task.assignee_user_id !== userId) {
+    return `${archived ? 'Архивировать' : 'Восстановить'} задачу может только её автор или исполнитель`;
+  }
+  return Boolean(task.archived_at) === archived ? archived ? 'Задача уже в архиве' : 'Задача не в архиве' : null;
+}
+
 export type StartupContext =
   | { surface: 'tasks' }
   | { surface: 'entry'; path: 'personal' | 'pair' | 'group' | 'help' }

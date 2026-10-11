@@ -13,7 +13,7 @@ import { PriorityField, PrioritySheet, PriorityTasks } from './task-priority';
 import { assessmentText, emptyAssessment, compareTaskPriority, normalizeTaskFilters, taskFiltersForBoard, type Assessment } from './tasks';
 import { TaskFilterSheet } from './task-filters';
 import { deadlineDraft, deadlinePatch, formatTaskDeadline, isTaskOverdue } from './tasks';
-import { activeFilterCount, dateInputToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveStartupContext, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, taskStatusRestriction, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
+import { activeFilterCount, dateInputToIso, defaultFilters, filterTasks, groupTasksByDeadline, groupTasksByProject, optimisticUpdate, presentCreatedTask, resolveStartupContext, resolveTaskBoard, restoreTaskViewState, serializeTaskViewState, statusDisplayName, taskArchiveRestriction, taskStatusRestriction, validateTaskCreate, type DeadlineGroup, type Task, type TaskFilters, type TaskStatus } from './tasks';
 import { TaskKanban } from './task-kanban';
 import { FoundationFixture } from './visual-fixture';
 import { creationHaptic, readStorage, removeStorage, useTaskKeyboardViewport, writeStorage } from './environment';
@@ -685,7 +685,9 @@ function App() {
   const recentBoards = recentBoardIds.map((id) => boards.find((item) => item.id === id)).filter((item): item is Board => Boolean(item));
   const matchingBoards = boards.filter((item) => item.name.toLocaleLowerCase('ru-RU').includes(boardSearch.trim().toLocaleLowerCase('ru-RU')));
   const setFilter = <K extends keyof TaskFilters>(key: K, value: TaskFilters[K]) => { ++filterEditVersion.current; setFilters((current) => normalizeTaskFilters({ ...current, ...(key === 'scope' ? { assignee: '', unassigned: false } : {}), [key]: value })); };
-  const taskCard = (task: Task) => <article
+  const taskCard = (task: Task) => {
+    const archiveRestriction = taskArchiveRestriction({ ...task, board_status: board?.status ?? task.board_status }, userId, !task.archived_at);
+    return <article
     className={`task ${task.priority === 'urgent' ? 'urgent' : ''} ${task.overdue ? 'overdue' : ''} ${task.wait_check_due ? 'wait-due' : ''} ${!task.assignee_user_id ? 'unassigned' : ''} ${draggedTask === task.id ? 'dragging' : ''}`}
     key={task.id} draggable={Boolean(board && !task.archived_at && !taskStatusRestriction(task))}
     onDragStart={(event) => { setDraggedTask(task.id); event.dataTransfer.setData('text/plain', task.id); }} onDragEnd={() => setDraggedTask(undefined)}>
@@ -695,11 +697,12 @@ function App() {
       <div className="meta">{task.project_name && <small>{task.project_name}</small>}<small>{task.assignee_name ?? 'Без ответственного'}</small>{(task.deadline || task.deadline_date) && <small>{formatTaskDeadline(task)}</small>}<small>{assessmentText(task)}</small></div>
       {task.overdue && <small className="flag">Дедлайн прошёл</small>}{task.wait_check_due && <small className="flag">Пора проверить ожидание</small>}{task.blocker_title ? <small>Блокирует: {task.blocker_title}</small> : task.wait_reason && <small>Внешний блокер: {task.wait_reason}</small>}
     </div>
-    {board && <div className="actions"><button onClick={() => openCollaboration(task)}>Открыть</button>{task.archived_at ? <button onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}/reopen`, {method: 'POST'}), 'Задача восстановлена')}>Восстановить</button> : <>
+    {board && <div className="actions"><button onClick={() => openCollaboration(task)}>Открыть</button>{task.archived_at ? <button disabled={Boolean(archiveRestriction)} aria-describedby={archiveRestriction ? `archive-restriction-${task.id}` : undefined} onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}/reopen`, {method: 'POST'}), 'Задача восстановлена')}>Восстановить</button> : <>
       <label className="status-control">Статус<select aria-label={`Статус задачи ${task.title}`} value={task.status} onChange={(event) => void move(task, event.target.value as TaskStatus)}>{statuses.map((status) => <option key={status} value={status}>{statusDisplayName[status]}</option>)}</select></label>
-      <button onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}`, {method: 'DELETE'}), 'Задача архивирована')}>В архив</button>
-    </>}</div>}
+      <button disabled={Boolean(archiveRestriction)} aria-describedby={archiveRestriction ? `archive-restriction-${task.id}` : undefined} onClick={() => action(() => api(`/api/boards/${task.board_id}/tasks/${task.id}`, {method: 'DELETE'}), 'Задача архивирована')}>В архив</button>
+    </>}{archiveRestriction && <small id={`archive-restriction-${task.id}`}>{archiveRestriction}</small>}</div>}
   </article>;
+  };
   const taskList = () => <div className="task-list">{filteredTasks.map(taskCard)}</div>;
   const initials = (name?: string) => name?.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toLocaleUpperCase('ru-RU') || '—';
   const mainTaskRow = (task: Task) => <article className="main-task-row" data-task-id={task.id} data-priority={task.priority} key={task.id}>

@@ -432,7 +432,17 @@ export async function setTaskArchived(db: Database, userId: string, boardId: str
   try {
     if (!transaction) await client.query('BEGIN');
     await lockBoard(client, boardId);
+    const access = await client.query(`SELECT b.status FROM boards b JOIN memberships m ON m.board_id = b.id
+      WHERE b.id = $1 AND m.user_id = $2 FOR SHARE OF b, m`, [boardId, userId]);
+    if (!access.rowCount) { if (!transaction) await client.query('ROLLBACK'); return false; }
     const current = await client.query('SELECT * FROM tasks WHERE id = $1 AND board_id = $2 FOR UPDATE', [taskId, boardId]);
+    const task = current.rows[0];
+    if (!task) { if (!transaction) await client.query('ROLLBACK'); return false; }
+    if (access.rows[0].status !== 'active') throw new TaskActionError('Доска доступна только для чтения');
+    if (task.creator_user_id !== userId && task.assignee_user_id !== userId) {
+      throw new TaskActionError(`${archived ? 'Архивировать' : 'Восстановить'} задачу может только её автор или исполнитель`);
+    }
+    if (Boolean(task.archived_at) === archived) throw new TaskActionError(archived ? 'Задача уже в архиве' : 'Задача не в архиве');
     const result = await client.query(`UPDATE tasks t SET archived_at = CASE WHEN $4 THEN now() ELSE NULL END, updated_at = now() FROM boards b
     WHERE t.id = $1 AND t.board_id = $2 AND b.id = t.board_id AND b.status = 'active'
       AND (t.creator_user_id = $3 OR t.assignee_user_id = $3)
