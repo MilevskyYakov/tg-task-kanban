@@ -43,6 +43,7 @@ test('board entry: exact destination, photo, read-only launch, lost access and b
   const memberships = async () => (await db.query('SELECT * FROM memberships WHERE board_id = ANY($1) ORDER BY board_id, user_id', [boards.map((item) => item.id)])).rows;
   try {
     const before = await memberships();
+    const linksBefore = (await db.query('SELECT * FROM board_links WHERE board_id = ANY($1) ORDER BY token_hash', [boards.map((item) => item.id)])).rows;
     const entry = await call(owner, 'GET', `/api/boards/${board.id}/entry`);
     assert.equal(entry.statusCode, 200);
     assert.equal(entry.headers['cache-control'], 'no-store');
@@ -80,6 +81,7 @@ test('board entry: exact destination, photo, read-only launch, lost access and b
     assert.equal((await call(outsider, 'GET', `/api/boards/${board.id}/tasks/${task.id}`)).statusCode, 403);
     assert.deepEqual((await call(outsider, 'GET', `/api/boards/${board.id}/tasks`)).json().tasks, []);
     assert.deepEqual(await memberships(), before, 'launch does not create memberships');
+    assert.deepEqual((await db.query('SELECT * FROM board_links WHERE board_id = ANY($1) ORDER BY token_hash', [boards.map((item) => item.id)])).rows, linksBefore, 'entry and launch do not create or change invitations');
     // Observe the shared launch resolver itself: all statements must be read-only.
     const statements: string[] = [];
     const observed = { query: (sql: string, params: unknown[]) => { statements.push(sql); return db.query(sql, params); }, connect: () => { throw new Error('launch must not start a write transaction'); } } as unknown as typeof db;
@@ -95,6 +97,7 @@ test('board entry: exact destination, photo, read-only launch, lost access and b
     await command(6, stamp, `entry_${personal}`);
     assert.equal(photos.length, 2, 'foreign, unknown and malformed requests reveal no photo or board title');
     assert.ok(messages.every((message) => !/Private|history|Secret task/.test(message.text)));
+    assert.ok(messages.every((message) => /«Настройки» → «Рабочее пространство».*«Переслать ссылку на доску»/.test(message.text)));
     await command(7, stamp, payload, 'group');
     assert.equal(photos.length, 2, 'only explicit private commands can send entries');
 
