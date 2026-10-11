@@ -119,9 +119,9 @@ async function connectionView(db: Database | pg.PoolClient, owner: string, id: s
     c.created_at AS "createdAt", c.revoked_at AS "revokedAt",
     GREATEST(0,c.board_count - (SELECT count(*)::int FROM mcp_board_grants WHERE connection_id=c.id)) AS "lostBoardCount",
     COALESCE((SELECT jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'status', b.status) ORDER BY b.name,b.id)
-      FROM memberships m JOIN boards b ON b.id=m.board_id WHERE m.user_id=c.user_id AND ${boardAccess}), '[]') AS boards,
+      FROM available_memberships m JOIN boards b ON b.id=m.board_id WHERE m.user_id=c.user_id AND ${boardAccess}), '[]') AS boards,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'status', b.status) ORDER BY b.name,b.id)
-      FROM memberships m JOIN boards b ON b.id=m.board_id WHERE m.user_id=c.user_id AND c.board_selection='all' AND NOT ${boardAccess}), '[]') AS "excludedBoards"
+      FROM available_memberships m JOIN boards b ON b.id=m.board_id WHERE m.user_id=c.user_id AND c.board_selection='all' AND NOT ${boardAccess}), '[]') AS "excludedBoards"
     FROM mcp_connections c WHERE c.id=$1 AND c.user_id=$2`, [id, owner]);
   if (!result.rows[0]) throw missing();
   const connection = result.rows[0];
@@ -133,7 +133,7 @@ async function connectionEvent(client: pg.PoolClient, id: string, requestId: str
     SELECT id,$2,$3,$4,revision,mode,board_selection,board_count FROM mcp_connections WHERE id=$1`, [id,requestId,fingerprint,action]);
 }
 async function selectedMemberships(client: pg.PoolClient, owner: string, input: {boardSelection: string; boardIds: string[]}) {
-  const allowed = await client.query<{board_id: string}>(`SELECT board_id FROM memberships WHERE user_id=$1
+  const allowed = await client.query<{board_id: string}>(`SELECT board_id FROM available_memberships WHERE user_id=$1
     AND ($3='all' OR board_id=ANY($2::uuid[])) ORDER BY board_id FOR SHARE`, [owner,input.boardIds,input.boardSelection]);
   if (input.boardSelection === 'selected' && allowed.rowCount !== input.boardIds.length) throw new McpFailure('NOT_FOUND', 'Доступ к выбранным доскам изменился. Проверьте выбор', 404);
   return allowed.rows.map(row => row.board_id);
@@ -222,7 +222,7 @@ async function runTool(db: Database, keyHash: string, name: ToolName, raw: unkno
     if (write) await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${connection.id}:${args.requestId}`]);
     if (args.boardId) {
       if (write) await lockBoard(client, args.boardId);
-      const access = await client.query(`SELECT b.status FROM mcp_connections c JOIN memberships m ON m.user_id=c.user_id
+      const access = await client.query(`SELECT b.status FROM mcp_connections c JOIN available_memberships m ON m.user_id=c.user_id
         JOIN boards b ON b.id=m.board_id WHERE c.id=$1 AND b.id=$2 AND ${boardAccess} FOR SHARE OF b, m`, [connection.id, args.boardId]);
       if (!access.rows[0]) throw missing();
       if (write && access.rows[0].status !== 'active') throw new McpFailure('BOARD_READ_ONLY', 'Доска доступна только для чтения', 409);
@@ -373,7 +373,7 @@ async function runTool(db: Database, keyHash: string, name: ToolName, raw: unkno
     const term = `%${(args.query ?? '').replace(/[\\%_]/g, '\\$&')}%`;
     let rows: Record<string, any>[];
     if (name === 'list_boards') {
-      rows = (await client.query(`SELECT b.id, b.name, b.type, b.status FROM mcp_connections c JOIN memberships m ON m.user_id=c.user_id
+      rows = (await client.query(`SELECT b.id, b.name, b.type, b.status FROM mcp_connections c JOIN available_memberships m ON m.user_id=c.user_id
         JOIN boards b ON b.id=m.board_id WHERE c.id=$1 AND ${boardAccess} AND ($2::uuid IS NULL OR b.id>$2) ORDER BY b.id LIMIT $3`, [connection.id, cursor.after, args.limit+1])).rows;
     } else if (name === 'list_projects') {
       rows = (await client.query(`SELECT id, name FROM projects WHERE board_id=$1 AND (archived_at IS NOT NULL)=$2 AND name ILIKE $3 AND ($4::uuid IS NULL OR id>$4) ORDER BY id LIMIT $5`, [args.boardId, Boolean(args.archived), term, cursor.after, args.limit+1])).rows;

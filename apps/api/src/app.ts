@@ -20,6 +20,7 @@ import { ChecklistConfirmationError, SettingsConflictError } from './db.js';
 import { registerMcp } from './mcp.js';
 import { chatAccess, chatContext, createChatDirection, createChatLaunch, previewChatInvite, removeChatMember, resolveChatSchedules } from './chat-boards.js';
 import { withBoardLock } from './db.js';
+import { boardDeletionPreview, changeBoardDeletion, deletedBoards } from './board-deletion.js';
 
 type ChatMemberUpdate = {
   date: number;
@@ -79,6 +80,22 @@ export function buildApp(config: Config, db: Database) {
   app.get('/api/boards', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;
     return { boards: await boardsForUser(db, id) };
+  });
+  app.get('/api/boards/deleted', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    return {boards: await deletedBoards(db, id, config.botToken)};
+  });
+  app.get<{Params: {id: string}}>('/api/boards/:id/deletion', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    return boardDeletionPreview(db, id, request.params.id, config.botToken);
+  });
+  app.post<{Params: {id: string}; Body: {action?: unknown; requestId?: unknown; confirmation?: unknown}}>('/api/boards/:id/deletion', async (request, reply) => {
+    const id = await userId(request, reply); if (typeof id !== 'string') return id;
+    const {action, requestId, confirmation} = request.body ?? {};
+    if (typeof action !== 'string' || !['delete', 'restore'].includes(action) || typeof requestId !== 'string' || !uuid.test(requestId)
+      || typeof confirmation !== 'string' || !/^[a-f0-9]{64}$/.test(confirmation))
+      return reply.code(400).send({error: 'Проверьте действие и подтверждение состава данных'});
+    return changeBoardDeletion(db, id, request.params.id, config.botToken, {action: action as 'delete' | 'restore', requestId, confirmation});
   });
   app.get<{Params: {id: string}}>('/api/boards/:id', async (request, reply) => {
     const id = await userId(request, reply); if (typeof id !== 'string') return id;

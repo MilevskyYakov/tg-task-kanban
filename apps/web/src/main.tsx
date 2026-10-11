@@ -30,6 +30,7 @@ import './settings.css';
 import { NameSetting, PublicationSetting, useSettingsEdits } from './settings-editor';
 import { Landing } from './landing';
 import { ChatBoards, ChatInvite } from './chat-boards';
+import { BoardDeletionAction, DeletedBoards } from './board-deletion';
 
 type TaskView = 'list' | 'kanban' | 'matrix';
 type FilterChoice = 'project';
@@ -45,6 +46,7 @@ function App() {
   const [pairFlow, setPairFlow] = useState<{board?: Board}>();
   const [pairInvite, setPairInvite] = useState('');
   const [chatFlow, setChatFlow] = useState('');
+  const [showDeletedBoards, setShowDeletedBoards] = useState(false);
   const [chatInvite, setChatInvite] = useState('');
   const [canManageChat, setCanManageChat] = useState(false);
   const [deliveries, setDeliveries] = useState<PublicationDelivery[]>([]);
@@ -267,7 +269,11 @@ function App() {
           }
         }
         const available = await loadBoards();
-        if (chatEntry && available.filter(board => board.chat_root_id === chatEntry).length > 1) setChatFlow(chatEntry);
+        if (chatEntry) {
+          const chatBoards = available.filter(board => board.chat_root_id === chatEntry);
+          if (chatBoards.length !== 1) setChatFlow(chatEntry);
+          else setBoardOverrideId(chatBoards[0].id);
+        }
         if (startup.surface === 'invalid-task') setTaskLinkError(404);
         if (startup.surface === 'task') {
           setBoardOverrideId(startup.boardId);
@@ -297,13 +303,14 @@ function App() {
         setOpenTask((item) => item?.board_id === current.id ? { ...item, board_status: current.status } : item);
       } catch (error) {
         if (!cancelled && error instanceof ApiError && [403, 404].includes(error.status)) {
+          const available = await api<{boards: Board[]}>('/api/boards').catch(() => undefined);
+          if (cancelled) return;
           ++createGeneration.current;
           createContext.current.accessLost = true;
           createLock.current = false;
           setCreatePending(false); setCreateUncertain(false); setCreateSuccess(undefined); setCreatedResult(undefined); setCreateAnnouncement('');
           ++boardLoadVersion.current;
-          const root = boards.find(item => item.id === currentId)?.chat_root_id;
-          setBoards((items) => items.filter((item) => item.id !== currentId && (!root || item.chat_root_id !== root))); setTasks([]); setProjects([]); setMembers([]);
+          setBoards((items) => available?.boards ?? items.filter((item) => item.id !== currentId)); setTasks([]); setProjects([]); setMembers([]);
           setSchedules([]); setDeliveries([]); setChatFlow('');
           setOpenTask(undefined); setCollaboration(undefined); setDetailProjects([]); setDetailMembers([]); setDetailTasks([]);
           setBulkOpen(false); setBulkDraft(undefined); setClaimingTask(undefined); setCreateTasks([]); setAccessLost(true);
@@ -865,17 +872,20 @@ function App() {
   const openPair = (updated: Board) => {
     pairChanged(updated); setPairFlow(undefined); setPairInvite(''); setBoardOverrideId(updated.id); setNavigation({ screen: 'tasks' }); setFilters({ ...defaultFilters, scope: 'all' });
   };
-  if (accessLost) return <main><EnvironmentStatus/><h1>Доступ закрыт</h1><p>Вы больше не участвуете в этой доске. Задачи и история остались у владельца.</p><button onClick={() => { setAccessLost(false); setBoardOverrideId(undefined); setNavigation({ screen: 'tasks' }); }}>К моим задачам</button></main>;
+  if (accessLost) return <main><EnvironmentStatus/><h1>Доступ закрыт</h1><p>Доска удалена или вы больше не участвуете в ней. Задачи и история сохранены.</p><button onClick={() => { setAccessLost(false); setBoardOverrideId(undefined); setNavigation({ screen: 'tasks' }); }}>К моим задачам</button></main>;
   const openChatBoard = async (opened: Board) => {
     await loadBoards(); setChatFlow(''); setChatInvite(''); setShowBoardSheet(false); setBoardOverrideId(opened.id); setTaskReload(value => value + 1); navigate({screen: 'tasks'});
   };
   if (state === 'ready' && chatInvite) return <AppShell message={message} navigation={navigation} navigate={navigate}><ChatInvite token={chatInvite} onJoined={openChatBoard} onClose={() => setChatInvite('')}/></AppShell>;
-  if (state === 'ready' && chatFlow) return <AppShell message={message} navigation={navigation} navigate={navigate}><ChatBoards key={chatFlow} boardId={chatFlow} userId={userId} onOpen={openChatBoard} onClose={() => { setChatFlow(''); setTaskReload(value => value + 1); }}/></AppShell>;
+  if (state === 'ready' && chatFlow) return <AppShell message={message} navigation={navigation} navigate={navigate}><ChatBoards key={chatFlow} boardId={chatFlow} userId={userId} onOpen={openChatBoard} onDeleted={() => { setChatFlow(''); setShowDeletedBoards(true); }} onClose={() => { setChatFlow(''); setTaskReload(value => value + 1); }}/></AppShell>;
   if (state === 'ready' && boardLinkError) return <main><EnvironmentStatus/><section role="alert"><h1>{boardLinkError === 'invalid' ? 'Доска недоступна' : 'Не удалось открыть доску'}</h1><p>{boardLinkError === 'invalid' ? 'Ссылка недействительна или доступ закрыт. Попросите отправителя прислать отдельное приглашение. Если вы уже вступили, попросите владельца проверить ваш доступ.' : 'Не удалось проверить доступ. Повторите вход по этой ссылке или попросите отдельное приглашение.'}</p>{boardLinkError === 'network' && <button onClick={() => setStartupRetry((value) => value + 1)}>Повторить</button>}<button className="secondary" onClick={() => { setBoardLinkError(undefined); setBoardOverrideId(undefined); }}>К моим задачам</button></section></main>;
   if (state === 'ready' && entryPath) return <EntryGuide path={entryPath} onPath={setEntryPath} onClose={() => { setEntryPath(undefined); navigate({ screen: 'tasks' }); }}
     onPersonal={() => { const personal = boards.find((item) => item.type === 'personal'); if (personal) chooseTaskBoard(personal.id); setEntryPath(undefined); navigate({ screen: 'tasks' }); }}
     onPair={() => { setEntryPath(undefined); setPairFlow({}); }}/ >;
-  if (state === 'ready' && board?.type === 'chat' && board.status !== 'active' && !openTask && !taskLinkError && !pairInvite && !pairFlow) return <GroupSetup key={board.id} board={board}
+  if (state === 'ready' && showDeletedBoards) return <AppShell message={message} navigation={navigation} navigate={navigate}><DeletedBoards
+    onChanged={async deleted => { await loadBoards(); setTaskReload(value => value + 1); setMessage(deleted ? 'Доска удалена. Данные сохранены.' : 'Доска восстановлена. Автоматизация и MCP-доступ не включены.'); }}
+    onChat={id => { setShowDeletedBoards(false); setChatFlow(id); }} onClose={() => setShowDeletedBoards(false)}/></AppShell>;
+  if (state === 'ready' && board?.type === 'chat' && board.status !== 'active' && navigation.screen !== 'settings-workspace' && !openTask && !taskLinkError && !pairInvite && !pairFlow) return <GroupSetup key={board.id} board={board}
     onReady={(updated) => { setBoards((items) => items.map((item) => item.id === updated.id ? { ...item, ...updated } : item)); setBoardOverrideId(updated.id); setNavigation({ screen: 'tasks' }); setTaskReload((value) => value + 1); }}
     onClose={() => { setBoardOverrideId(undefined); navigate(globalBoardId === board.id ? { screen: 'settings-workspace' } : { screen: 'tasks' }); }}/ >;
   if (state === 'ready' && pairInvite) return <PairInvite token={pairInvite} onJoined={openPair} onClose={() => setPairInvite('')}/>;
@@ -932,7 +942,7 @@ function App() {
     setPreview(result.messages.join('\n\n———\n\n'));
   };
   const publicationSettings = board?.type === 'chat' && board.status === 'active' && settingsLoadedFor === board.id && schedules.length ? <Disclosure label="Публикации в чат" icon={<Icon name="send"/>}><div className="publications">{schedules.map((schedule) =>
-    <PublicationSetting key={`${userId}:${board.chat_root_id ?? board.id}:${schedule.kind}`} edits={settingsEdits} userId={userId} board={{...board, id: board.chat_root_id ?? board.id}} schedule={schedule}
+    <PublicationSetting key={`${userId}:${board.chat_root_id ?? board.id}:${schedule.kind}`} edits={settingsEdits} userId={userId} board={board} schedule={schedule}
       boards={board.chat_root_id ? boards.filter(item => item.chat_root_id === board.chat_root_id) : undefined} readOnly={Boolean(board.chat_root_id) && !canManageChat}
       onConfirmed={(saved) => { if ('kind' in saved && activeBoardId.current === board.id) setSchedules((items) => items.map((item) => item.kind === saved.kind ? saved : item)); }}
       onPreview={(value) => void action(() => previewSchedule(value), 'Предпросмотр готов', false)}/>
@@ -955,6 +965,7 @@ function App() {
     <div className="settings-footer"><img className="brand-wordmark" src="/brand/tasca-ru-green.svg" alt="Таска"/><p>Создано kAIros</p>Версия 0.1 · <button className="link" onClick={() => setEntryPath('help')}>Помощь</button></div>
   </SettingsScreen>;
   const workspaceSettings = <SettingsScreen title={board?.name ?? 'Рабочее пространство'} subtitle={board ? 'Доска, проекты и участники' : 'Доски, проекты и участники'} icon="workspace" onBack={() => navigate({ screen: 'settings' })}>
+    {!board && <button className="secondary" onClick={() => setShowDeletedBoards(true)}>Удалённые доски</button>}
     {board?.type === 'pair' && <ActionRow label="Доступ" value={board.status === 'archived' ? 'Доска в архиве' : 'Доска на двоих'} onClick={() => setPairFlow({ board })}/>}
     {board?.chat_root_id && <ActionRow label="Доски этого чата" value="Общие участники и направления" onClick={() => setChatFlow(board.chat_root_id!)}/>}
     {board && ['pair', 'chat'].includes(board.type) && ['active', 'archived'].includes(board.status) && <BoardEntryAction key={board.id} boardId={board.id}/>}
@@ -965,6 +976,10 @@ function App() {
         onConfirmed={(saved) => { if ('id' in saved && activeBoardId.current === board.id) setProjects((items) => items.map((value) => value.id === saved.id ? saved : value)); }}><button className="secondary" type="button" onClick={() => void action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: true})), 'Проект архивирован')}>В архив</button></NameSetting>)}<form className="settings-form inline-form" onSubmit={(event) => void addProject(event)}><input aria-label="Название нового проекта" name="name" placeholder="Новый проект" maxLength={120} required/><button disabled={projectCreatePending}>{projectCreatePending ? 'Добавляем…' : 'Добавить'}</button></form></section>
       <section className="settings-group" data-tone="assignee"><h2><Icon name="assignee"/>Участники</h2><div className="member-list">{members.map((member) => <div key={member.id}><Avatar initials={initials(member.first_name)} label={member.first_name}/><span><strong>{member.first_name}</strong><small>{member.username ? `@${member.username}` : 'Telegram'}</small></span></div>)}</div></section>
     </fieldset>}
+    {board && board.type !== 'personal' && <BoardDeletionAction key={`deletion:${board.id}`} boardId={board.id} onChanged={async deleted => {
+      await loadBoards(); setBoardOverrideId(undefined); setTasks([]); setProjects([]); setMembers([]);
+      setNavigation({screen: 'settings-workspace'}); setTaskReload(value => value + 1); setMessage(deleted ? 'Доска удалена. Данные сохранены.' : 'Доска восстановлена. Автоматизация и MCP-доступ не включены.');
+    }}/>}
   </SettingsScreen>;
   const automationSettings = <SettingsScreen title={board?.name ?? 'Автоматизация'} subtitle={board ? 'Повторения, публикации и уведомления' : 'Выберите доску для настройки'} icon="automation" onBack={() => navigate({ screen: 'settings' })}>
     {!board ? settingsBoardList('settings-automation') : <fieldset className="settings-groups readonly-fields" disabled={board.status !== 'active'}>

@@ -20,7 +20,7 @@ async function deliverEntry(db: Database, config: Config, key: string, prepare: 
     WHERE key = $1 AND status = 'sending' AND updated_at < now() - interval '2 minutes'`, [key]);
   const claimed = await db.query(`UPDATE telegram_entry_deliveries d SET status = 'sending', attempts = attempts + 1, updated_at = now(), error_code = NULL
     WHERE key = $1 AND (status = 'pending' OR ($2 AND status = 'failed'))
-      AND (board_id IS NULL OR EXISTS (SELECT 1 FROM boards b WHERE b.id = d.board_id AND b.status <> 'frozen')) RETURNING key`, [key, retryFailed]);
+      AND (board_id IS NULL OR EXISTS (SELECT 1 FROM boards b WHERE b.id = d.board_id AND b.status <> 'frozen' AND b.deleted_at IS NULL)) RETURNING key`, [key, retryFailed]);
   if (!claimed.rowCount) {
     const row = (await db.query<{status: Delivery}>('SELECT status FROM telegram_entry_deliveries WHERE key = $1', [key])).rows[0];
     if (!retryFailed && row?.status === 'failed') return 'failed';
@@ -49,14 +49,14 @@ async function deliverEntry(db: Database, config: Config, key: string, prepare: 
 }
 
 export async function sendGroupWelcome(db: Database, config: Config, chatId: number) {
-  const board = (await db.query<{id: string}>("SELECT id FROM boards WHERE type = 'chat' AND chat_root_id = id AND telegram_chat_id = $1 AND status <> 'archived'", [chatId])).rows[0];
+  const board = (await db.query<{id: string}>("SELECT id FROM boards WHERE type = 'chat' AND chat_root_id = id AND telegram_chat_id = $1 AND status <> 'archived' AND deleted_at IS NULL", [chatId])).rows[0];
   if (!board) return 'skipped';
   const key = entryKey(config, `board:${board.id}`);
   await db.query('INSERT INTO telegram_entry_deliveries (key, board_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [key, board.id]);
   return deliverEntry(db, config, key, async () => {
     const photo = await readFile(new URL('../../../artifacts/ux/assets/group-welcome.png', import.meta.url));
     const message = await withBoardLock(db, board.id, async (client) => {
-      const current = (await client.query<{name: string; telegram_chat_id: string}>("SELECT name, telegram_chat_id FROM boards WHERE id = $1 AND status <> 'frozen' FOR UPDATE", [board.id])).rows[0];
+      const current = (await client.query<{name: string; telegram_chat_id: string}>("SELECT name, telegram_chat_id FROM boards WHERE id = $1 AND status <> 'frozen' AND deleted_at IS NULL FOR UPDATE", [board.id])).rows[0];
       if (!current) throw new Error('Board frozen');
       // Only a definitely unsent attempt can reach here. Sent/uncertain links never rotate.
       const token = `board_${randomBytes(24).toString('base64url')}`;
