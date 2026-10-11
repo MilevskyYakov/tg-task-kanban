@@ -85,6 +85,11 @@ test('pair deletion: validation, roles, preserved data, stale confirmation, roll
     assert.equal((await call(owner, 'POST', '/tasks', {title: 'Нельзя'})).statusCode, 404);
     assert.equal((await call(owner, 'POST', '/projects', {name: 'Нельзя'})).statusCode, 404);
     assert.equal((await call(owner, 'PATCH', `/tasks/${task.id}`, {title: 'Нельзя'})).statusCode, 403);
+    for (const person of [owner, member]) for (const archived of [true, false]) {
+      const response = await call(person, archived ? 'DELETE' : 'POST', `/tasks/${task.id}${archived ? '' : '/reopen'}`);
+      assert.equal(response.statusCode, 403);
+      assert.equal(response.json().error, 'Задача недоступна', 'archive/restore must not disclose a deleted task state');
+    }
     assert.equal((await call(owner, 'POST', '/archive', {archived: false})).statusCode, 403);
     await assert.rejects(createPairBoard(db, owner.userId, 'На двоих', pairRequest), /удалена/);
     assert.equal(await addTaskFileAttachment(db, owner.userId, board.id, task.id, {data: bytes, fileName: 'blocked.png', mimeType: 'image/png', fileSize: bytes.length}), null);

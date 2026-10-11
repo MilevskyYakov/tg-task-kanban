@@ -976,7 +976,7 @@ function App() {
         onConfirmed={(saved) => { if ('id' in saved && activeBoardId.current === board.id) setProjects((items) => items.map((value) => value.id === saved.id ? saved : value)); }}><button className="secondary" type="button" onClick={() => void action(() => api(`/api/boards/${board.id}/projects/${item.id}`, json('PATCH', {archived: true})), 'Проект архивирован')}>В архив</button></NameSetting>)}<form className="settings-form inline-form" onSubmit={(event) => void addProject(event)}><input aria-label="Название нового проекта" name="name" placeholder="Новый проект" maxLength={120} required/><button disabled={projectCreatePending}>{projectCreatePending ? 'Добавляем…' : 'Добавить'}</button></form></section>
       <section className="settings-group" data-tone="assignee"><h2><Icon name="assignee"/>Участники</h2><div className="member-list">{members.map((member) => <div key={member.id}><Avatar initials={initials(member.first_name)} label={member.first_name}/><span><strong>{member.first_name}</strong><small>{member.username ? `@${member.username}` : 'Telegram'}</small></span></div>)}</div></section>
     </fieldset>}
-    {board && board.type !== 'personal' && <BoardDeletionAction key={board.id} boardId={board.id} onChanged={async deleted => {
+    {board && board.type !== 'personal' && <BoardDeletionAction key={`deletion:${board.id}`} boardId={board.id} onChanged={async deleted => {
       await loadBoards(); setBoardOverrideId(undefined); setTasks([]); setProjects([]); setMembers([]);
       setNavigation({screen: 'settings-workspace'}); setTaskReload(value => value + 1); setMessage(deleted ? 'Доска удалена. Данные сохранены.' : 'Доска восстановлена. Автоматизация и MCP-доступ не включены.');
     }}/>}
