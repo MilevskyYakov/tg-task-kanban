@@ -104,8 +104,17 @@ test('touch swipe scrolls columns and vertical swipe remains page scrolling', as
   await client.send('Emulation.setTouchEmulationEnabled', { enabled: true });
   const box = (await page.locator('#kanban-in_progress').boundingBox())!;
   const x = Math.round(box.x + box.width - 20), y = Math.round(box.y + 36);
-  await client.send('Input.synthesizeScrollGesture', { x, y, xDistance: -280, yDistance: 0, gestureSourceType: 'touch', speed: 600 });
+  const swipe = async (startX: number, startY: number, distanceX: number, distanceY: number) => {
+    await client.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: startX, y: startY }] });
+    for (let step = 1; step <= 14; step++) {
+      await client.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: startX + distanceX * step / 14, y: startY + distanceY * step / 14 }] });
+      // Contact cadence models a swipe; application readiness still uses assertions.
+      await page.waitForTimeout(30);
+    }
+    await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  };
+  await swipe(x, y, -280, 0);
   await expect(page.getByRole('button', { name: 'Блокер 1', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await client.send('Input.synthesizeScrollGesture', { x: 180, y, xDistance: 0, yDistance: -100, gestureSourceType: 'touch', speed: 400 });
+  await swipe(180, y, 0, -100);
   await expect(page.getByRole('button', { name: 'Блокер 1', exact: true })).toHaveAttribute('aria-pressed', 'true');
 });
